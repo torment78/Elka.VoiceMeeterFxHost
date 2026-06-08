@@ -21,6 +21,15 @@ double elapsedMicroseconds(LARGE_INTEGER start, LARGE_INTEGER end) noexcept
 }
 
 constexpr int MaxCallbackChannels = 64;
+constexpr int MaxCallbackReadChannels = 128;
+constexpr int PingStatusIdle = 0;
+constexpr int PingStatusArmed = 1;
+constexpr int PingStatusWaiting = 2;
+constexpr int PingStatusDetected = 3;
+constexpr int PingStatusTimeout = 4;
+constexpr int PingPulseSamples = 8;
+constexpr float PingPulseAmplitude = 0.80f;
+constexpr float PingDetectThreshold = 0.18f;
 
 const float* sourceChannelPointer(AudioBufferView buffer, int readOffset, int channel) noexcept
 {
@@ -60,6 +69,102 @@ const float* currentChannelPointer(AudioBufferView buffer, int readOffset, int c
 
     return sourceChannelPointer(buffer, readOffset, channel);
 }
+
+const float* readChannelPointer(AudioBufferView buffer, int channel) noexcept
+{
+    if (buffer.read == nullptr ||
+        channel < 0 ||
+        channel >= buffer.inputChannels ||
+        channel >= MaxCallbackReadChannels)
+    {
+        return nullptr;
+    }
+
+    return buffer.read[channel];
+}
+
+const float* writeChannelPointer(AudioBufferView buffer, int channel) noexcept
+{
+    if (buffer.write == nullptr ||
+        channel < 0 ||
+        channel >= buffer.outputChannels ||
+        channel >= MaxCallbackChannels)
+    {
+        return nullptr;
+    }
+
+    return buffer.write[channel];
+}
+
+int peakPercent(const float* samples, int sampleCount) noexcept
+{
+    if (samples == nullptr || sampleCount <= 0)
+        return 0;
+
+    float peak = 0.0f;
+    for (int sample = 0; sample < sampleCount; ++sample)
+    {
+        const float value = samples[sample] < 0.0f ? -samples[sample] : samples[sample];
+        if (value > peak)
+            peak = value;
+    }
+
+    return std::clamp(static_cast<int>((peak * 100.0f) + 0.5f), 0, 1000);
+}
+
+struct ProbePeak
+{
+    int channel = -1;
+    int percent = 0;
+};
+
+ProbePeak maxReadPeak(AudioBufferView buffer, int startChannel, int channelCount, int reportOffset) noexcept
+{
+    ProbePeak result {};
+    const int first = std::clamp(startChannel, 0, MaxCallbackReadChannels);
+    const int last = std::clamp(first + std::max(0, channelCount), first, std::min(buffer.inputChannels, MaxCallbackReadChannels));
+
+    for (int channel = first; channel < last; ++channel)
+    {
+        const int peak = peakPercent(readChannelPointer(buffer, channel), buffer.samplesPerFrame);
+        if (peak <= result.percent)
+            continue;
+
+        result.percent = peak;
+        result.channel = channel - reportOffset;
+    }
+
+    return result;
+}
+
+ProbePeak maxWritePeak(AudioBufferView buffer, int channelCount) noexcept
+{
+    ProbePeak result {};
+    const int last = std::clamp(channelCount, 0, std::min(buffer.outputChannels, MaxCallbackChannels));
+
+    for (int channel = 0; channel < last; ++channel)
+    {
+        const int peak = peakPercent(writeChannelPointer(buffer, channel), buffer.samplesPerFrame);
+        if (peak <= result.percent)
+            continue;
+
+        result.percent = peak;
+        result.channel = channel;
+    }
+
+    return result;
+}
+
+int delayStreamIndex(CallbackStreamKind kind) noexcept
+{
+    if (kind == CallbackStreamKind::InputInsert)
+        return 0;
+
+    if (kind == CallbackStreamKind::OutputInsert)
+        return 1;
+
+    return 2;
+}
 }
 
 RealtimeEngine::RealtimeEngine() noexcept
@@ -75,7 +180,8 @@ RealtimeEngine::RealtimeEngine() noexcept
         inputPluginGraphEnabled[channel].store(false, std::memory_order_relaxed);
         outputPluginGraphEnabled[channel].store(false, std::memory_order_relaxed);
         mainPluginGraphEnabled[channel].store(false, std::memory_order_relaxed);
-        delayWritePositions[channel] = 0;
+        for (auto& positions : delayWritePositions)
+            positions[channel] = 0;
     }
 
     for (int route = 0; route < MaxDirectRoutes; ++route)
@@ -84,7 +190,7 @@ RealtimeEngine::RealtimeEngine() noexcept
         outputDirectRoutes.gainPercent[route].store(100, std::memory_order_relaxed);
         mainDirectRoutes.gainPercent[route].store(100, std::memory_order_relaxed);
         routeReadPositions[route] = 0;
-        routeWritePositions[route] = 0;
+        routeWritePositions[route].store(0, std::memory_order_relaxed);
         routeCounts[route] = 0;
     }
 
@@ -217,12 +323,14 @@ bool RealtimeEngine::prepareDelayBuffers(int requestedSampleRate) noexcept
 {
     const int preparedSampleRate = std::clamp(requestedSampleRate, 8000, 192000);
     const int requiredLength = ((preparedSampleRate * MaxDelayMilliseconds) / 1000) + 1;
-    const int requiredRouteLength = std::max(preparedSampleRate, MaxPluginScratchSamples);
+    const int requiredRouteLength = std::max(requiredLength, MaxPluginScratchSamples);
 
     if (delayBufferSampleRate.load(std::memory_order_acquire) == preparedSampleRate &&
         delayBufferLength.load(std::memory_order_acquire) == requiredLength &&
         routeBufferLength.load(std::memory_order_acquire) == requiredRouteLength &&
-        delayBuffer.size() == static_cast<size_t>(requiredLength * MaxChannels) &&
+        delayBuffer.size() == static_cast<size_t>(requiredLength) *
+            static_cast<size_t>(MaxChannels) *
+            static_cast<size_t>(DelayStreamCount) &&
         routeBuffer.size() == static_cast<size_t>(requiredRouteLength * MaxDirectRoutes))
     {
         return true;
@@ -230,7 +338,11 @@ bool RealtimeEngine::prepareDelayBuffers(int requestedSampleRate) noexcept
 
     try
     {
-        delayBuffer.assign(static_cast<size_t>(requiredLength * MaxChannels), 0.0f);
+        delayBuffer.assign(
+            static_cast<size_t>(requiredLength) *
+                static_cast<size_t>(MaxChannels) *
+                static_cast<size_t>(DelayStreamCount),
+            0.0f);
         routeBuffer.assign(static_cast<size_t>(requiredRouteLength * MaxDirectRoutes), 0.0f);
     }
     catch (...)
@@ -243,13 +355,16 @@ bool RealtimeEngine::prepareDelayBuffers(int requestedSampleRate) noexcept
         return false;
     }
 
-    for (auto& writePosition : delayWritePositions)
-        writePosition = 0;
+    for (auto& positions : delayWritePositions)
+    {
+        for (auto& writePosition : positions)
+            writePosition = 0;
+    }
 
     for (int route = 0; route < MaxDirectRoutes; ++route)
     {
         routeReadPositions[route] = 0;
-        routeWritePositions[route] = 0;
+        routeWritePositions[route].store(0, std::memory_order_relaxed);
         routeCounts[route] = 0;
     }
 
@@ -283,14 +398,67 @@ void RealtimeEngine::setDirectRoutes(CallbackStreamKind kind, const DirectAudioR
         bank.sourceChannels[static_cast<size_t>(route)].store(routes[route].sourceChannel, std::memory_order_relaxed);
         bank.destinationChannels[static_cast<size_t>(route)].store(routes[route].destinationChannel, std::memory_order_relaxed);
         bank.delayMilliseconds[static_cast<size_t>(route)].store(std::clamp(routes[route].delayMilliseconds, 0, MaxDelayMilliseconds), std::memory_order_relaxed);
-        bank.gainPercent[static_cast<size_t>(route)].store(std::clamp(routes[route].gainPercent, 0, 200), std::memory_order_relaxed);
+        bank.gainPercent[static_cast<size_t>(route)].store(std::clamp(routes[route].gainPercent, 0, 800), std::memory_order_relaxed);
         bank.muteSource[static_cast<size_t>(route)].store(routes[route].muteSource, std::memory_order_relaxed);
-        routeReadPositions[static_cast<size_t>(route)] = 0;
-        routeWritePositions[static_cast<size_t>(route)] = 0;
-        routeCounts[static_cast<size_t>(route)] = 0;
     }
 
     bank.routeCount.store(safeCount, std::memory_order_release);
+}
+
+void RealtimeEngine::setPluginPassthroughRoutes(CallbackStreamKind kind, const DirectAudioRoute* routes, int routeCount) noexcept
+{
+    auto& bank = pluginPassthroughBankFor(kind);
+    bank.routeCount.store(0, std::memory_order_release);
+
+    const int safeCount = routes != nullptr ? std::clamp(routeCount, 0, MaxDirectRoutes) : 0;
+    for (int route = 0; route < safeCount; ++route)
+    {
+        bank.sourceChannels[static_cast<size_t>(route)].store(routes[route].sourceChannel, std::memory_order_relaxed);
+        bank.destinationChannels[static_cast<size_t>(route)].store(routes[route].destinationChannel, std::memory_order_relaxed);
+    }
+
+    bank.routeCount.store(safeCount, std::memory_order_release);
+}
+
+bool RealtimeEngine::startSinglePing(int inputChannel, int outputChannel, int timeoutMilliseconds) noexcept
+{
+    if (inputChannel < 0 ||
+        inputChannel >= MaxChannels ||
+        outputChannel < 0 ||
+        outputChannel >= MaxChannels)
+    {
+        return false;
+    }
+
+    const int safeTimeoutMilliseconds = std::clamp(timeoutMilliseconds, 100, MaxDelayMilliseconds + 2000);
+    const int currentSampleRate = std::max(8000, sampleRate.load(std::memory_order_acquire));
+    singlePingInputChannel.store(inputChannel, std::memory_order_relaxed);
+    singlePingOutputChannel.store(outputChannel, std::memory_order_relaxed);
+    singlePingSampleRate.store(currentSampleRate, std::memory_order_relaxed);
+    singlePingLatencySamples.store(-1, std::memory_order_relaxed);
+    singlePingElapsedSamples.store(0, std::memory_order_relaxed);
+    singlePingPeakPercent.store(0, std::memory_order_relaxed);
+    singlePingTimeoutMilliseconds.store(safeTimeoutMilliseconds, std::memory_order_relaxed);
+    singlePingTimeoutSamples.store(
+        static_cast<int>((static_cast<int64_t>(safeTimeoutMilliseconds) * currentSampleRate) / 1000),
+        std::memory_order_relaxed);
+    singlePingPulsePosition.store(0, std::memory_order_relaxed);
+    singlePingStatus.store(PingStatusArmed, std::memory_order_release);
+    return true;
+}
+
+SinglePingResult RealtimeEngine::singlePingResult() const noexcept
+{
+    return SinglePingResult {
+        singlePingStatus.load(std::memory_order_acquire),
+        singlePingInputChannel.load(std::memory_order_relaxed),
+        singlePingOutputChannel.load(std::memory_order_relaxed),
+        singlePingSampleRate.load(std::memory_order_relaxed),
+        singlePingLatencySamples.load(std::memory_order_relaxed),
+        singlePingElapsedSamples.load(std::memory_order_relaxed),
+        singlePingPeakPercent.load(std::memory_order_relaxed),
+        singlePingTimeoutMilliseconds.load(std::memory_order_relaxed)
+    };
 }
 
 void RealtimeEngine::clearPluginSlots() noexcept
@@ -392,6 +560,33 @@ bool RealtimeEngine::isPluginSlotEnabled(int slot) const noexcept
     return pluginSlots[static_cast<size_t>(slot)].enabled.load(std::memory_order_acquire);
 }
 
+void RealtimeEngine::setProbeChannels(int inputChannel, int outputChannel) noexcept
+{
+    probeInputChannel.store(std::clamp(inputChannel, 0, MaxChannels - 1), std::memory_order_release);
+    probeOutputChannel.store(std::clamp(outputChannel, 0, MaxChannels - 1), std::memory_order_release);
+    inputInsertReadPeakPercent.store(0, std::memory_order_relaxed);
+    inputInsertWritePeakPercent.store(0, std::memory_order_relaxed);
+    mainInputReadPeakPercent.store(0, std::memory_order_relaxed);
+    mainOutputReadPeakPercent.store(0, std::memory_order_relaxed);
+    mainWritePeakPercent.store(0, std::memory_order_relaxed);
+    outputInsertReadPeakPercent.store(0, std::memory_order_relaxed);
+    outputInsertWritePeakPercent.store(0, std::memory_order_relaxed);
+    inputInsertMaxReadPeakPercent.store(0, std::memory_order_relaxed);
+    inputInsertMaxReadChannel.store(-1, std::memory_order_relaxed);
+    inputInsertMaxWritePeakPercent.store(0, std::memory_order_relaxed);
+    inputInsertMaxWriteChannel.store(-1, std::memory_order_relaxed);
+    mainSourceMaxReadPeakPercent.store(0, std::memory_order_relaxed);
+    mainSourceMaxReadChannel.store(-1, std::memory_order_relaxed);
+    mainBusMaxReadPeakPercent.store(0, std::memory_order_relaxed);
+    mainBusMaxReadChannel.store(-1, std::memory_order_relaxed);
+    mainMaxWritePeakPercent.store(0, std::memory_order_relaxed);
+    mainMaxWriteChannel.store(-1, std::memory_order_relaxed);
+    outputInsertMaxReadPeakPercent.store(0, std::memory_order_relaxed);
+    outputInsertMaxReadChannel.store(-1, std::memory_order_relaxed);
+    outputInsertMaxWritePeakPercent.store(0, std::memory_order_relaxed);
+    outputInsertMaxWriteChannel.store(-1, std::memory_order_relaxed);
+}
+
 void RealtimeEngine::updateFormat(int newSampleRate, int newBlockSize) noexcept
 {
     sampleRate.store(newSampleRate, std::memory_order_release);
@@ -412,13 +607,21 @@ void RealtimeEngine::process(AudioBufferView buffer, CallbackStreamKind kind) no
     const int readOffset = getReadOffset(buffer, kind);
     std::array<bool, MaxChannels> pluginOutputWritten {};
 
+    captureProbeRead(buffer, kind, readOffset);
     copyPassthrough(buffer, readOffset);
+    if (kind == CallbackStreamKind::InputInsert)
+        processSinglePingInput(buffer);
+
     applyConfiguredDelays(buffer, kind, readOffset);
     const int sourceReadOffset = kind == CallbackStreamKind::Main ? 0 : readOffset;
     applyPlugins(buffer, kind, sourceReadOffset, pluginOutputWritten);
+    applyPluginPassthroughRoutes(buffer, kind, sourceReadOffset, pluginOutputWritten);
     applyPluginGraphGate(buffer, kind, pluginOutputWritten);
     applyDirectRoutes(buffer, kind, sourceReadOffset, pluginOutputWritten);
     applyConfiguredGains(buffer, kind);
+    if (kind == CallbackStreamKind::OutputInsert)
+        processSinglePingOutput(buffer);
+    captureProbeWrite(buffer, kind, readOffset);
 
     QueryPerformanceCounter(&end);
     publishTiming(elapsedMicroseconds(start, end), buffer);
@@ -435,7 +638,36 @@ RealtimeStats RealtimeEngine::getStats() const noexcept
         lastProcessUsec.load(std::memory_order_acquire),
         peakProcessUsec.load(std::memory_order_acquire),
         callbackCpuPercent.load(std::memory_order_acquire),
-        delayBufferSampleRate.load(std::memory_order_acquire)
+        delayBufferSampleRate.load(std::memory_order_acquire),
+        probeInputChannel.load(std::memory_order_acquire),
+        probeOutputChannel.load(std::memory_order_acquire),
+        inputInsertReadPeakPercent.load(std::memory_order_acquire),
+        inputInsertWritePeakPercent.load(std::memory_order_acquire),
+        mainInputReadPeakPercent.load(std::memory_order_acquire),
+        mainOutputReadPeakPercent.load(std::memory_order_acquire),
+        mainWritePeakPercent.load(std::memory_order_acquire),
+        outputInsertReadPeakPercent.load(std::memory_order_acquire),
+        outputInsertWritePeakPercent.load(std::memory_order_acquire),
+        inputInsertMaxReadPeakPercent.load(std::memory_order_acquire),
+        inputInsertMaxReadChannel.load(std::memory_order_acquire),
+        inputInsertMaxWritePeakPercent.load(std::memory_order_acquire),
+        inputInsertMaxWriteChannel.load(std::memory_order_acquire),
+        mainSourceMaxReadPeakPercent.load(std::memory_order_acquire),
+        mainSourceMaxReadChannel.load(std::memory_order_acquire),
+        mainBusMaxReadPeakPercent.load(std::memory_order_acquire),
+        mainBusMaxReadChannel.load(std::memory_order_acquire),
+        mainMaxWritePeakPercent.load(std::memory_order_acquire),
+        mainMaxWriteChannel.load(std::memory_order_acquire),
+        outputInsertMaxReadPeakPercent.load(std::memory_order_acquire),
+        outputInsertMaxReadChannel.load(std::memory_order_acquire),
+        outputInsertMaxWritePeakPercent.load(std::memory_order_acquire),
+        outputInsertMaxWriteChannel.load(std::memory_order_acquire),
+        inputInsertInputChannels.load(std::memory_order_acquire),
+        inputInsertOutputChannels.load(std::memory_order_acquire),
+        mainInputChannels.load(std::memory_order_acquire),
+        mainOutputChannels.load(std::memory_order_acquire),
+        outputInsertInputChannels.load(std::memory_order_acquire),
+        outputInsertOutputChannels.load(std::memory_order_acquire)
     };
 }
 
@@ -533,6 +765,28 @@ const RealtimeEngine::DirectRouteBank& RealtimeEngine::directRouteBankFor(Callba
     return outputDirectRoutes;
 }
 
+RealtimeEngine::DirectRouteBank& RealtimeEngine::pluginPassthroughBankFor(CallbackStreamKind kind) noexcept
+{
+    if (kind == CallbackStreamKind::InputInsert)
+        return inputPluginPassthroughRoutes;
+
+    if (kind == CallbackStreamKind::Main)
+        return mainPluginPassthroughRoutes;
+
+    return outputPluginPassthroughRoutes;
+}
+
+const RealtimeEngine::DirectRouteBank& RealtimeEngine::pluginPassthroughBankFor(CallbackStreamKind kind) const noexcept
+{
+    if (kind == CallbackStreamKind::InputInsert)
+        return inputPluginPassthroughRoutes;
+
+    if (kind == CallbackStreamKind::Main)
+        return mainPluginPassthroughRoutes;
+
+    return outputPluginPassthroughRoutes;
+}
+
 void RealtimeEngine::copyPassthrough(AudioBufferView buffer, int readOffset) noexcept
 {
     const int channels = std::max(0, std::min(buffer.outputChannels, buffer.inputChannels - readOffset));
@@ -571,6 +825,7 @@ void RealtimeEngine::applyConfiguredDelays(AudioBufferView buffer, CallbackStrea
     const int safeChannels = std::min(channels, MaxChannels);
     const auto& delayBank = delayBankFor(kind);
     const auto& enabledBank = enableBankFor(kind);
+    const int streamIndex = delayStreamIndex(kind);
 
     for (int ch = 0; ch < safeChannels; ++ch)
     {
@@ -583,8 +838,11 @@ void RealtimeEngine::applyConfiguredDelays(AudioBufferView buffer, CallbackStrea
             length - 1,
             static_cast<int>((static_cast<int64_t>(delayMs) * buffer.sampleRate) / 1000));
 
-        float* line = delayBuffer.data() + (static_cast<size_t>(ch) * static_cast<size_t>(length));
-        int write = delayWritePositions[ch];
+        const auto lineOffset =
+            ((static_cast<size_t>(streamIndex) * static_cast<size_t>(MaxChannels)) + static_cast<size_t>(ch)) *
+            static_cast<size_t>(length);
+        float* line = delayBuffer.data() + lineOffset;
+        int write = delayWritePositions[static_cast<size_t>(streamIndex)][static_cast<size_t>(ch)];
         const bool enabled = enabledBank[ch].load(std::memory_order_relaxed);
 
         for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
@@ -604,7 +862,7 @@ void RealtimeEngine::applyConfiguredDelays(AudioBufferView buffer, CallbackStrea
                 write = 0;
         }
 
-        delayWritePositions[ch] = write;
+        delayWritePositions[static_cast<size_t>(streamIndex)][static_cast<size_t>(ch)] = write;
     }
 }
 
@@ -708,7 +966,9 @@ void RealtimeEngine::applyPlugins(
             if (sourceKind == static_cast<int>(PluginRouteEndpointKind::VoiceMeeterChannel))
             {
                 if (source >= 0 && source < MaxChannels)
-                    sourcePointer = currentChannelPointer(buffer, readOffset, source);
+                    sourcePointer = kind == CallbackStreamKind::Main
+                        ? sourceChannelPointer(buffer, readOffset, source)
+                        : currentChannelPointer(buffer, readOffset, source);
             }
             else if (sourceKind == static_cast<int>(PluginRouteEndpointKind::PluginPin) &&
                      sourceSlot >= 0 &&
@@ -755,9 +1015,9 @@ void RealtimeEngine::applyPlugins(
                      destinationPin >= 0 &&
                      destinationPin < MaxPluginPins)
             {
-                destinationPointer = pluginBusPointer(destinationSlot, destinationPin);
-                resolvedDestinationSlot = destinationSlot;
-                resolvedDestinationPin = destinationPin;
+                destinationPointer = pluginBusPointer(slot, pin);
+                resolvedDestinationSlot = slot;
+                resolvedDestinationPin = pin;
             }
 
             if (destinationPointer != nullptr && pin >= 0)
@@ -889,6 +1149,132 @@ void RealtimeEngine::applyDirectRoutes(
     applySameBufferDirectRoutes(buffer, kind, readOffset, pluginOutputWritten);
 }
 
+void RealtimeEngine::applyPluginPassthroughRoutes(
+    AudioBufferView buffer,
+    CallbackStreamKind kind,
+    int readOffset,
+    std::array<bool, MaxChannels>& pluginOutputWritten) noexcept
+{
+    const auto& routeBank = pluginPassthroughBankFor(kind);
+    const int routeCount = std::clamp(routeBank.routeCount.load(std::memory_order_acquire), 0, MaxDirectRoutes);
+
+    for (int route = 0; route < routeCount; ++route)
+    {
+        const int source = routeBank.sourceChannels[static_cast<size_t>(route)].load(std::memory_order_relaxed);
+        const int destination = routeBank.destinationChannels[static_cast<size_t>(route)].load(std::memory_order_relaxed);
+
+        if (source < 0 || source >= MaxChannels)
+            continue;
+
+        if (destination < 0 || destination >= buffer.outputChannels || destination >= MaxChannels)
+            continue;
+
+        const float* input = sourceChannelPointer(buffer, readOffset, source);
+        float* output = buffer.write[destination];
+        if (input == nullptr || output == nullptr)
+            continue;
+
+        if (input == output)
+        {
+            pluginOutputWritten[static_cast<size_t>(destination)] = true;
+            continue;
+        }
+
+        if (!pluginOutputWritten[static_cast<size_t>(destination)])
+        {
+            for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+                output[sample] = 0.0f;
+        }
+
+        for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+            output[sample] += input[sample];
+
+        pluginOutputWritten[static_cast<size_t>(destination)] = true;
+    }
+}
+
+void RealtimeEngine::processSinglePingInput(AudioBufferView buffer) noexcept
+{
+    if (singlePingStatus.load(std::memory_order_acquire) != PingStatusArmed)
+        return;
+
+    const int channel = singlePingInputChannel.load(std::memory_order_relaxed);
+    if (channel < 0 || channel >= buffer.outputChannels || channel >= MaxChannels)
+    {
+        singlePingStatus.store(PingStatusTimeout, std::memory_order_release);
+        return;
+    }
+
+    float* output = buffer.write[channel];
+    if (output == nullptr)
+    {
+        singlePingStatus.store(PingStatusTimeout, std::memory_order_release);
+        return;
+    }
+
+    const int currentSampleRate = buffer.sampleRate > 0
+        ? buffer.sampleRate
+        : std::max(8000, sampleRate.load(std::memory_order_acquire));
+    const int timeoutMilliseconds = singlePingTimeoutMilliseconds.load(std::memory_order_relaxed);
+    singlePingSampleRate.store(currentSampleRate, std::memory_order_relaxed);
+    singlePingTimeoutSamples.store(
+        static_cast<int>((static_cast<int64_t>(timeoutMilliseconds) * currentSampleRate) / 1000),
+        std::memory_order_relaxed);
+    singlePingElapsedSamples.store(0, std::memory_order_relaxed);
+    singlePingLatencySamples.store(-1, std::memory_order_relaxed);
+    singlePingPeakPercent.store(0, std::memory_order_relaxed);
+
+    const int pulseSamples = std::min(PingPulseSamples, std::max(0, buffer.samplesPerFrame));
+    for (int sample = 0; sample < pulseSamples; ++sample)
+    {
+        const float sign = (sample % 2) == 0 ? 1.0f : -1.0f;
+        output[sample] += sign * PingPulseAmplitude;
+    }
+
+    singlePingPulsePosition.store(pulseSamples, std::memory_order_relaxed);
+    singlePingStatus.store(PingStatusWaiting, std::memory_order_release);
+}
+
+void RealtimeEngine::processSinglePingOutput(AudioBufferView buffer) noexcept
+{
+    if (singlePingStatus.load(std::memory_order_acquire) != PingStatusWaiting)
+        return;
+
+    const int channel = singlePingOutputChannel.load(std::memory_order_relaxed);
+    if (channel < 0 || channel >= buffer.outputChannels || channel >= MaxChannels)
+    {
+        singlePingStatus.store(PingStatusTimeout, std::memory_order_release);
+        return;
+    }
+
+    const float* input = buffer.write[channel];
+    if (input == nullptr)
+    {
+        singlePingStatus.store(PingStatusTimeout, std::memory_order_release);
+        return;
+    }
+
+    int elapsed = singlePingElapsedSamples.load(std::memory_order_relaxed);
+    for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+    {
+        const float absolute = input[sample] < 0.0f ? -input[sample] : input[sample];
+        if (absolute < PingDetectThreshold)
+            continue;
+
+        singlePingLatencySamples.store(elapsed + sample, std::memory_order_relaxed);
+        singlePingPeakPercent.store(
+            std::clamp(static_cast<int>(absolute * 100.0f), 0, 1000),
+            std::memory_order_relaxed);
+        singlePingStatus.store(PingStatusDetected, std::memory_order_release);
+        return;
+    }
+
+    elapsed += std::max(0, buffer.samplesPerFrame);
+    singlePingElapsedSamples.store(elapsed, std::memory_order_relaxed);
+    if (elapsed >= singlePingTimeoutSamples.load(std::memory_order_relaxed))
+        singlePingStatus.store(PingStatusTimeout, std::memory_order_release);
+}
+
 void RealtimeEngine::captureInputRoutes(
     AudioBufferView buffer,
     int readOffset,
@@ -919,30 +1305,17 @@ void RealtimeEngine::captureInputRoutes(
         const float gain = static_cast<float>(gainPercent) / 100.0f;
         float* fifo = routeBuffer.data() + (static_cast<size_t>(route) * static_cast<size_t>(length));
 
-        int read = routeReadPositions[static_cast<size_t>(route)];
-        int write = routeWritePositions[static_cast<size_t>(route)];
-        int count = routeCounts[static_cast<size_t>(route)];
+        int write = routeWritePositions[static_cast<size_t>(route)].load(std::memory_order_relaxed);
 
         for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
         {
-            if (count == length)
-            {
-                ++read;
-                if (read >= length)
-                    read = 0;
-                --count;
-            }
-
             fifo[write] = input[sample] * gain;
             ++write;
             if (write >= length)
                 write = 0;
-            ++count;
         }
 
-        routeReadPositions[static_cast<size_t>(route)] = read;
-        routeWritePositions[static_cast<size_t>(route)] = write;
-        routeCounts[static_cast<size_t>(route)] = count;
+        routeWritePositions[static_cast<size_t>(route)].store(write, std::memory_order_release);
 
         if (routeBank.muteSource[static_cast<size_t>(route)].load(std::memory_order_relaxed))
             muteSources[static_cast<size_t>(source)] = true;
@@ -995,22 +1368,21 @@ void RealtimeEngine::mixCapturedInputRoutes(
             length - 1);
 
         float* fifo = routeBuffer.data() + (static_cast<size_t>(route) * static_cast<size_t>(length));
-        int read = routeReadPositions[static_cast<size_t>(route)];
-        int count = routeCounts[static_cast<size_t>(route)];
-        int available = count - delaySamples;
+        const int write = routeWritePositions[static_cast<size_t>(route)].load(std::memory_order_acquire);
+        int read = write - delaySamples - buffer.samplesPerFrame;
+        while (read < 0)
+            read += length;
+        while (read >= length)
+            read -= length;
 
-        for (int sample = 0; sample < buffer.samplesPerFrame && available > 0; ++sample)
+        for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
         {
             output[sample] += fifo[read];
             ++read;
             if (read >= length)
                 read = 0;
-            --count;
-            --available;
         }
 
-        routeReadPositions[static_cast<size_t>(route)] = read;
-        routeCounts[static_cast<size_t>(route)] = count;
         pluginOutputWritten[static_cast<size_t>(destination)] = true;
     }
 }
@@ -1112,6 +1484,90 @@ void RealtimeEngine::applyConfiguredGains(AudioBufferView buffer, CallbackStream
         for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
             out[sample] *= gain;
     }
+}
+
+void RealtimeEngine::captureProbeRead(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept
+{
+    const int inputChannel = probeInputChannel.load(std::memory_order_relaxed);
+    const int outputChannel = probeOutputChannel.load(std::memory_order_relaxed);
+
+    if (kind == CallbackStreamKind::InputInsert)
+    {
+        inputInsertInputChannels.store(buffer.inputChannels, std::memory_order_relaxed);
+        inputInsertOutputChannels.store(buffer.outputChannels, std::memory_order_relaxed);
+        inputInsertReadPeakPercent.store(
+            peakPercent(readChannelPointer(buffer, inputChannel), buffer.samplesPerFrame),
+            std::memory_order_relaxed);
+        const auto inputPeak = maxReadPeak(buffer, 0, buffer.inputChannels, 0);
+        inputInsertMaxReadPeakPercent.store(inputPeak.percent, std::memory_order_relaxed);
+        inputInsertMaxReadChannel.store(inputPeak.channel, std::memory_order_relaxed);
+        return;
+    }
+
+    if (kind == CallbackStreamKind::Main)
+    {
+        mainInputChannels.store(buffer.inputChannels, std::memory_order_relaxed);
+        mainOutputChannels.store(buffer.outputChannels, std::memory_order_relaxed);
+        mainInputReadPeakPercent.store(
+            peakPercent(readChannelPointer(buffer, inputChannel), buffer.samplesPerFrame),
+            std::memory_order_relaxed);
+        mainOutputReadPeakPercent.store(
+            peakPercent(readChannelPointer(buffer, readOffset + outputChannel), buffer.samplesPerFrame),
+            std::memory_order_relaxed);
+        const int sourceChannels = std::clamp(readOffset, 0, buffer.inputChannels);
+        const int busChannels = std::clamp(buffer.inputChannels - readOffset, 0, buffer.outputChannels);
+        const auto sourcePeak = maxReadPeak(buffer, 0, sourceChannels, 0);
+        const auto busPeak = maxReadPeak(buffer, readOffset, busChannels, readOffset);
+        mainSourceMaxReadPeakPercent.store(sourcePeak.percent, std::memory_order_relaxed);
+        mainSourceMaxReadChannel.store(sourcePeak.channel, std::memory_order_relaxed);
+        mainBusMaxReadPeakPercent.store(busPeak.percent, std::memory_order_relaxed);
+        mainBusMaxReadChannel.store(busPeak.channel, std::memory_order_relaxed);
+        return;
+    }
+
+    outputInsertInputChannels.store(buffer.inputChannels, std::memory_order_relaxed);
+    outputInsertOutputChannels.store(buffer.outputChannels, std::memory_order_relaxed);
+    outputInsertReadPeakPercent.store(
+        peakPercent(readChannelPointer(buffer, outputChannel), buffer.samplesPerFrame),
+        std::memory_order_relaxed);
+    const auto outputPeak = maxReadPeak(buffer, 0, buffer.inputChannels, 0);
+    outputInsertMaxReadPeakPercent.store(outputPeak.percent, std::memory_order_relaxed);
+    outputInsertMaxReadChannel.store(outputPeak.channel, std::memory_order_relaxed);
+}
+
+void RealtimeEngine::captureProbeWrite(AudioBufferView buffer, CallbackStreamKind kind, int) noexcept
+{
+    const int inputChannel = probeInputChannel.load(std::memory_order_relaxed);
+    const int outputChannel = probeOutputChannel.load(std::memory_order_relaxed);
+
+    if (kind == CallbackStreamKind::InputInsert)
+    {
+        inputInsertWritePeakPercent.store(
+            peakPercent(writeChannelPointer(buffer, inputChannel), buffer.samplesPerFrame),
+            std::memory_order_relaxed);
+        const auto inputPeak = maxWritePeak(buffer, buffer.outputChannels);
+        inputInsertMaxWritePeakPercent.store(inputPeak.percent, std::memory_order_relaxed);
+        inputInsertMaxWriteChannel.store(inputPeak.channel, std::memory_order_relaxed);
+        return;
+    }
+
+    if (kind == CallbackStreamKind::Main)
+    {
+        mainWritePeakPercent.store(
+            peakPercent(writeChannelPointer(buffer, outputChannel), buffer.samplesPerFrame),
+            std::memory_order_relaxed);
+        const auto mainPeak = maxWritePeak(buffer, buffer.outputChannels);
+        mainMaxWritePeakPercent.store(mainPeak.percent, std::memory_order_relaxed);
+        mainMaxWriteChannel.store(mainPeak.channel, std::memory_order_relaxed);
+        return;
+    }
+
+    outputInsertWritePeakPercent.store(
+        peakPercent(writeChannelPointer(buffer, outputChannel), buffer.samplesPerFrame),
+        std::memory_order_relaxed);
+    const auto outputPeak = maxWritePeak(buffer, buffer.outputChannels);
+    outputInsertMaxWritePeakPercent.store(outputPeak.percent, std::memory_order_relaxed);
+    outputInsertMaxWriteChannel.store(outputPeak.channel, std::memory_order_relaxed);
 }
 
 void RealtimeEngine::publishTiming(double elapsedUsec, AudioBufferView buffer) noexcept

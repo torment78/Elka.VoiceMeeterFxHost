@@ -28,6 +28,35 @@ struct RealtimeStats
     double peakProcessUsec = 0.0;
     double callbackCpuPercent = 0.0;
     int delayBufferSampleRate = 0;
+    int probeInputChannel = -1;
+    int probeOutputChannel = -1;
+    int inputInsertReadPeakPercent = 0;
+    int inputInsertWritePeakPercent = 0;
+    int mainInputReadPeakPercent = 0;
+    int mainOutputReadPeakPercent = 0;
+    int mainWritePeakPercent = 0;
+    int outputInsertReadPeakPercent = 0;
+    int outputInsertWritePeakPercent = 0;
+    int inputInsertMaxReadPeakPercent = 0;
+    int inputInsertMaxReadChannel = -1;
+    int inputInsertMaxWritePeakPercent = 0;
+    int inputInsertMaxWriteChannel = -1;
+    int mainSourceMaxReadPeakPercent = 0;
+    int mainSourceMaxReadChannel = -1;
+    int mainBusMaxReadPeakPercent = 0;
+    int mainBusMaxReadChannel = -1;
+    int mainMaxWritePeakPercent = 0;
+    int mainMaxWriteChannel = -1;
+    int outputInsertMaxReadPeakPercent = 0;
+    int outputInsertMaxReadChannel = -1;
+    int outputInsertMaxWritePeakPercent = 0;
+    int outputInsertMaxWriteChannel = -1;
+    int inputInsertInputChannels = 0;
+    int inputInsertOutputChannels = 0;
+    int mainInputChannels = 0;
+    int mainOutputChannels = 0;
+    int outputInsertInputChannels = 0;
+    int outputInsertOutputChannels = 0;
 };
 
 struct DirectAudioRoute
@@ -37,6 +66,18 @@ struct DirectAudioRoute
     int delayMilliseconds = 0;
     int gainPercent = 100;
     bool muteSource = false;
+};
+
+struct SinglePingResult
+{
+    int status = 0;
+    int inputChannel = -1;
+    int outputChannel = -1;
+    int sampleRate = 0;
+    int latencySamples = -1;
+    int elapsedSamples = 0;
+    int peakPercent = 0;
+    int timeoutMilliseconds = 0;
 };
 
 class RealtimeEngine
@@ -71,6 +112,9 @@ public:
 
     void setTargetRange(CallbackStreamKind kind, int startChannel, int channelCount) noexcept;
     void setDirectRoutes(CallbackStreamKind kind, const DirectAudioRoute* routes, int routeCount) noexcept;
+    void setPluginPassthroughRoutes(CallbackStreamKind kind, const DirectAudioRoute* routes, int routeCount) noexcept;
+    bool startSinglePing(int inputChannel, int outputChannel, int timeoutMilliseconds) noexcept;
+    SinglePingResult singlePingResult() const noexcept;
     void clearPluginSlots() noexcept;
     void setPluginSlot(
         int slot,
@@ -91,12 +135,14 @@ public:
         int outputRouteCount) noexcept;
     void setPluginSlotEnabled(int slot, bool shouldEnable) noexcept;
     bool isPluginSlotEnabled(int slot) const noexcept;
+    void setProbeChannels(int inputChannel, int outputChannel) noexcept;
     void updateFormat(int sampleRate, int blockSize) noexcept;
     void process(AudioBufferView buffer, CallbackStreamKind kind) noexcept;
     RealtimeStats getStats() const noexcept;
 
 private:
     static constexpr int MaxChannels = 64;
+    static constexpr int DelayStreamCount = 3;
 
     using GainBank = std::array<std::atomic<int>, MaxChannels>;
     using DelayBank = std::array<std::atomic<int>, MaxChannels>;
@@ -125,15 +171,22 @@ private:
 
     DirectRouteBank& directRouteBankFor(CallbackStreamKind kind) noexcept;
     const DirectRouteBank& directRouteBankFor(CallbackStreamKind kind) const noexcept;
+    DirectRouteBank& pluginPassthroughBankFor(CallbackStreamKind kind) noexcept;
+    const DirectRouteBank& pluginPassthroughBankFor(CallbackStreamKind kind) const noexcept;
     void copyPassthrough(AudioBufferView buffer, int readOffset) noexcept;
     void applyConfiguredDelays(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept;
     void applyPlugins(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
+    void applyPluginPassthroughRoutes(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
+    void processSinglePingInput(AudioBufferView buffer) noexcept;
+    void processSinglePingOutput(AudioBufferView buffer) noexcept;
     void applyDirectRoutes(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void captureInputRoutes(AudioBufferView buffer, int readOffset, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void mixCapturedInputRoutes(AudioBufferView buffer, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void applySameBufferDirectRoutes(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void applyPluginGraphGate(AudioBufferView buffer, CallbackStreamKind kind, const std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void applyConfiguredGains(AudioBufferView buffer, CallbackStreamKind kind) noexcept;
+    void captureProbeRead(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept;
+    void captureProbeWrite(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept;
     void publishTiming(double elapsedUsec, AudioBufferView buffer) noexcept;
 
     struct PluginSlot
@@ -168,19 +221,61 @@ private:
     DirectRouteBank inputDirectRoutes {};
     DirectRouteBank outputDirectRoutes {};
     DirectRouteBank mainDirectRoutes {};
+    DirectRouteBank inputPluginPassthroughRoutes {};
+    DirectRouteBank outputPluginPassthroughRoutes {};
+    DirectRouteBank mainPluginPassthroughRoutes {};
     std::vector<float> pluginBusBuffer;
-    std::array<int, MaxChannels> delayWritePositions {};
+    std::array<std::array<int, MaxChannels>, DelayStreamCount> delayWritePositions {};
     std::vector<float> delayBuffer;
     std::vector<float> routeBuffer;
     std::array<int, MaxDirectRoutes> routeReadPositions {};
-    std::array<int, MaxDirectRoutes> routeWritePositions {};
+    std::array<std::atomic<int>, MaxDirectRoutes> routeWritePositions {};
     std::array<int, MaxDirectRoutes> routeCounts {};
     std::atomic<int> delayBufferSampleRate { 0 };
     std::atomic<int> delayBufferLength { 0 };
     std::atomic<int> routeBufferLength { 0 };
+    std::atomic<int> singlePingStatus { 0 };
+    std::atomic<int> singlePingInputChannel { -1 };
+    std::atomic<int> singlePingOutputChannel { -1 };
+    std::atomic<int> singlePingSampleRate { 0 };
+    std::atomic<int> singlePingLatencySamples { -1 };
+    std::atomic<int> singlePingElapsedSamples { 0 };
+    std::atomic<int> singlePingPeakPercent { 0 };
+    std::atomic<int> singlePingTimeoutMilliseconds { 0 };
+    std::atomic<int> singlePingTimeoutSamples { 0 };
+    std::atomic<int> singlePingPulsePosition { 0 };
     std::atomic<int> selectedKind { static_cast<int>(CallbackStreamKind::InputInsert) };
     std::atomic<int> targetStart { 0 };
     std::atomic<int> targetCount { 1 };
+    std::atomic<int> probeInputChannel { 0 };
+    std::atomic<int> probeOutputChannel { 0 };
+    std::atomic<int> inputInsertReadPeakPercent { 0 };
+    std::atomic<int> inputInsertWritePeakPercent { 0 };
+    std::atomic<int> mainInputReadPeakPercent { 0 };
+    std::atomic<int> mainOutputReadPeakPercent { 0 };
+    std::atomic<int> mainWritePeakPercent { 0 };
+    std::atomic<int> outputInsertReadPeakPercent { 0 };
+    std::atomic<int> outputInsertWritePeakPercent { 0 };
+    std::atomic<int> inputInsertMaxReadPeakPercent { 0 };
+    std::atomic<int> inputInsertMaxReadChannel { -1 };
+    std::atomic<int> inputInsertMaxWritePeakPercent { 0 };
+    std::atomic<int> inputInsertMaxWriteChannel { -1 };
+    std::atomic<int> mainSourceMaxReadPeakPercent { 0 };
+    std::atomic<int> mainSourceMaxReadChannel { -1 };
+    std::atomic<int> mainBusMaxReadPeakPercent { 0 };
+    std::atomic<int> mainBusMaxReadChannel { -1 };
+    std::atomic<int> mainMaxWritePeakPercent { 0 };
+    std::atomic<int> mainMaxWriteChannel { -1 };
+    std::atomic<int> outputInsertMaxReadPeakPercent { 0 };
+    std::atomic<int> outputInsertMaxReadChannel { -1 };
+    std::atomic<int> outputInsertMaxWritePeakPercent { 0 };
+    std::atomic<int> outputInsertMaxWriteChannel { -1 };
+    std::atomic<int> inputInsertInputChannels { 0 };
+    std::atomic<int> inputInsertOutputChannels { 0 };
+    std::atomic<int> mainInputChannels { 0 };
+    std::atomic<int> mainOutputChannels { 0 };
+    std::atomic<int> outputInsertInputChannels { 0 };
+    std::atomic<int> outputInsertOutputChannels { 0 };
     std::array<PluginSlot, MaxPluginSlots> pluginSlots {};
     std::atomic<int> sampleRate { 0 };
     std::atomic<int> blockSize { 0 };

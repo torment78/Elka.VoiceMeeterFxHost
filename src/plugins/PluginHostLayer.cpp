@@ -19,6 +19,10 @@ namespace elka
 {
 namespace
 {
+constexpr int ScanFormatVst3 = 1;
+constexpr int ScanFormatVst2 = 2;
+constexpr int ScanFormatAll = ScanFormatVst3 | ScanFormatVst2;
+
 std::string toUtf8(const std::wstring& value)
 {
     if (value.empty())
@@ -483,9 +487,25 @@ std::vector<std::string> PluginHostLayer::defaultVst2SearchPaths() const
 
 std::vector<std::string> PluginHostLayer::defaultPluginSearchPaths() const
 {
-    auto paths = defaultVst3SearchPaths();
-    auto vst2Paths = defaultVst2SearchPaths();
-    paths.insert(paths.end(), vst2Paths.begin(), vst2Paths.end());
+    return defaultPluginSearchPaths(ScanFormatAll);
+}
+
+std::vector<std::string> PluginHostLayer::defaultPluginSearchPaths(int formatFlags) const
+{
+    std::vector<std::string> paths;
+
+    if ((formatFlags & ScanFormatVst3) != 0)
+    {
+        auto vst3Paths = defaultVst3SearchPaths();
+        paths.insert(paths.end(), vst3Paths.begin(), vst3Paths.end());
+    }
+
+    if ((formatFlags & ScanFormatVst2) != 0)
+    {
+        auto vst2Paths = defaultVst2SearchPaths();
+        paths.insert(paths.end(), vst2Paths.begin(), vst2Paths.end());
+    }
+
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
     return paths;
@@ -514,11 +534,18 @@ int PluginHostLayer::scanVst3Folder(const std::string& folder)
 
 int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool append)
 {
+    return scanPluginPaths(paths, append, ScanFormatAll);
+}
+
+int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool append, int formatFlags)
+{
     error.clear();
     scanReport.clear();
 
     std::ostringstream report;
     report << "Plugin scan started.\n";
+    const bool scanVst3 = (formatFlags & ScanFormatVst3) != 0;
+    const bool scanVst2 = (formatFlags & ScanFormatVst2) != 0;
 
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
   #if ELKA_ENABLE_VST2_HOST
@@ -530,6 +557,15 @@ int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool
 #else
     report << "Backend: unavailable\n";
 #endif
+
+    report << "Selected formats:";
+    if (scanVst3)
+        report << " VST3";
+    if (scanVst2)
+        report << " VST2";
+    if (!scanVst3 && !scanVst2)
+        report << " none";
+    report << "\n";
 
     if (paths.empty())
     {
@@ -572,11 +608,15 @@ int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool
     for (const auto& existing : discoveredPlugins)
         seen.insert(pluginKey(existing));
 
-    scanFormatIntoList(vst3Format, paths, seen, discoveredPlugins, impl->descriptions, report);
+    if (scanVst3)
+        scanFormatIntoList(vst3Format, paths, seen, discoveredPlugins, impl->descriptions, report);
 
 #if ELKA_ENABLE_VST2_HOST && JUCE_INTERNAL_HAS_VST
-    juce::VSTPluginFormatHeadless vstFormat;
-    scanFormatIntoList(vstFormat, paths, seen, discoveredPlugins, impl->descriptions, report);
+    if (scanVst2)
+    {
+        juce::VSTPluginFormatHeadless vstFormat;
+        scanFormatIntoList(vstFormat, paths, seen, discoveredPlugins, impl->descriptions, report);
+    }
 #endif
 
     saveCachedPlugins();

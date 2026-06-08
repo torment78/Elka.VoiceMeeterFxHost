@@ -56,6 +56,7 @@ bool VoicemeeterRemoteApi::load(std::wstring& error)
            loadFunction(logoutFn, "VBVMR_Logout", error) &&
            loadFunction(getVoicemeeterTypeFn, "VBVMR_GetVoicemeeterType", error) &&
            loadFunction(getParameterFloatFn, "VBVMR_GetParameterFloat", error) &&
+           loadFunction(setParameterFloatFn, "VBVMR_SetParameterFloat", error) &&
            loadFunction(audioCallbackRegisterFn, "VBVMR_AudioCallbackRegister", error) &&
            loadFunction(audioCallbackStartFn, "VBVMR_AudioCallbackStart", error) &&
            loadFunction(audioCallbackStopFn, "VBVMR_AudioCallbackStop", error) &&
@@ -74,6 +75,7 @@ void VoicemeeterRemoteApi::unload() noexcept
     logoutFn = nullptr;
     getVoicemeeterTypeFn = nullptr;
     getParameterFloatFn = nullptr;
+    setParameterFloatFn = nullptr;
     audioCallbackRegisterFn = nullptr;
     audioCallbackStartFn = nullptr;
     audioCallbackStopFn = nullptr;
@@ -104,6 +106,11 @@ long VoicemeeterRemoteApi::getVoicemeeterType(long* type) const
 long VoicemeeterRemoteApi::getParameterFloat(const char* parameterName, float* value) const
 {
     return getParameterFloatFn != nullptr ? getParameterFloatFn(const_cast<char*>(parameterName), value) : -1;
+}
+
+long VoicemeeterRemoteApi::setParameterFloat(const char* parameterName, float value) const
+{
+    return setParameterFloatFn != nullptr ? setParameterFloatFn(const_cast<char*>(parameterName), value) : -1;
 }
 
 long VoicemeeterRemoteApi::audioCallbackRegister(

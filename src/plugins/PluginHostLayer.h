@@ -78,10 +78,12 @@ public:
     std::vector<std::string> defaultVst3SearchPaths() const;
     std::vector<std::string> defaultVst2SearchPaths() const;
     std::vector<std::string> defaultPluginSearchPaths() const;
+    std::vector<std::string> defaultPluginSearchPaths(int formatFlags) const;
     int scanDefaultVst3Locations();
     int scanDefaultPluginLocations();
     int scanVst3Folder(const std::string& folder);
     int scanPluginPaths(const std::vector<std::string>& paths, bool append);
+    int scanPluginPaths(const std::vector<std::string>& paths, bool append, int formatFlags);
     bool loadDiscoveredPlugin(size_t index, int sampleRate, int maxBlockSize, int routeChannelCount);
     void unloadPlugin() noexcept;
     int addDiscoveredPluginNode(size_t index, int sampleRate, int maxBlockSize, int mainInputPins, int sidechainInputPins, int outputPins, int layoutId, const std::string& layoutName, int kind, int sourceStart, int sourceCount);

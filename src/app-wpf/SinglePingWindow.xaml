@@ -65,14 +65,14 @@
                      FontSize="21"
                      FontWeight="SemiBold"
                      Foreground="{StaticResource DelayAccentBrush}" />
-          <TextBlock Text="Select the VoiceMeeter input to ping and the return bus to listen on."
+          <TextBlock Text="Send a Windows audio pulse into VoiceMeeter and listen back from a Windows capture endpoint."
                      Margin="0,4,0,0"
                      Style="{StaticResource MutedText}" />
         </StackPanel>
 
         <TextBlock Grid.Row="1"
                    Grid.Column="0"
-                   Text="Ping input"
+                   Text="Send device"
                    FontWeight="SemiBold"
                    VerticalAlignment="Center"
                    Margin="0,0,14,10" />
@@ -86,7 +86,7 @@
 
         <TextBlock Grid.Row="2"
                    Grid.Column="0"
-                   Text="Return output"
+                   Text="Listen device"
                    FontWeight="SemiBold"
                    VerticalAlignment="Top"
                    Margin="0,8,14,0" />
@@ -123,7 +123,8 @@
                      Grid.Column="0"
                      VerticalAlignment="Center"
                      Style="{StaticResource MutedText}" />
-          <Button Grid.Column="1"
+          <Button x:Name="PingButton"
+                  Grid.Column="1"
                   Content="Ping"
                   Width="90"
                   Style="{StaticResource RouteButton}"

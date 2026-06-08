@@ -156,6 +156,8 @@ internal sealed class RouteDestinationSnapshot
 {
     public int BusIndex { get; set; }
     public int ChannelOffset { get; set; }
+    public double DelayMilliseconds { get; set; }
+    public double GainDecibels { get; set; }
 }
 
 internal sealed class RouteBusChoice
@@ -285,15 +287,33 @@ internal sealed class EndpointChannelSettings
                 var busIndex = Math.Clamp(destination.BusIndex, 0, buses.Count - 1);
                 var bus = buses[busIndex];
                 var destinationOffset = Math.Clamp(destination.ChannelOffset, 0, bus.ChannelCount - 1);
+                var routeDelayMilliseconds = Math.Clamp(
+                    destination.DelayMilliseconds + (Enabled[offset] ? 0.0 : DelayMilliseconds[offset]),
+                    0.0,
+                    10_000.0);
+                var routeGainPercent = CombinedRouteGainPercent(VolumePercent[offset], destination.GainDecibels);
                 yield return new DirectRouteSummary(
                     Endpoint.Range.Start + offset,
                     bus.Range.Start + destinationOffset,
-                    (int)Math.Round(DelayMilliseconds[offset]),
-                    (int)Math.Round(VolumePercent[offset]),
+                    (int)Math.Round(routeDelayMilliseconds),
+                    routeGainPercent,
                     RouteMuteNormal[offset],
-                    $"{Endpoint.Name} Ch {offset + 1} -> {bus.Name} Ch {destinationOffset + 1}");
+                    $"{Endpoint.Name} Ch {offset + 1} -> {bus.Name} Ch {destinationOffset + 1} ({VolumePercent[offset]:0}% x {Math.Clamp(destination.GainDecibels, -60.0, 12.0):0.0} dB)");
             }
         }
+    }
+
+    public static int GainPercentFromDecibels(double decibels)
+    {
+        var clamped = Math.Clamp(decibels, -60.0, 12.0);
+        return (int)Math.Round(100.0 * Math.Pow(10.0, clamped / 20.0));
+    }
+
+    private static int CombinedRouteGainPercent(double mainVolumePercent, double sendDecibels)
+    {
+        var mainGain = Math.Clamp(mainVolumePercent, 0.0, 200.0) / 100.0;
+        var sendGain = GainPercentFromDecibels(sendDecibels) / 100.0;
+        return (int)Math.Round(Math.Clamp(mainGain * sendGain * 100.0, 0.0, 800.0));
     }
 
     private static RouteDestinationSnapshot CloneDestination(RouteDestinationSnapshot destination)
@@ -301,7 +321,9 @@ internal sealed class EndpointChannelSettings
         return new RouteDestinationSnapshot
         {
             BusIndex = destination.BusIndex,
-            ChannelOffset = destination.ChannelOffset
+            ChannelOffset = destination.ChannelOffset,
+            DelayMilliseconds = Math.Clamp(destination.DelayMilliseconds, 0.0, 10_000.0),
+            GainDecibels = Math.Clamp(destination.GainDecibels, -60.0, 12.0)
         };
     }
 }
@@ -314,7 +336,20 @@ internal sealed record DirectRouteSummary(
     bool MuteNormal,
     string Name);
 
-internal sealed record PluginChoice(int Index, string Name)
+internal sealed record PluginPassthroughRouteSummary(
+    CallbackMode Mode,
+    int SourceChannel,
+    int DestinationChannel,
+    string Name);
+
+internal enum PluginFormatFilter
+{
+    Vst3 = 1,
+    Vst2 = 2,
+    All = Vst3 | Vst2
+}
+
+internal sealed record PluginChoice(int Index, string Name, string Format)
 {
     public override string ToString() => Name;
 }
@@ -357,6 +392,7 @@ internal sealed class FxHostSettings
     public CallbackMode SelectedMode { get; set; } = CallbackMode.Input;
     public string? SelectedEndpointName { get; set; }
     public string PluginSearchText { get; set; } = string.Empty;
+    public PluginFormatFilter PluginFormatFilter { get; set; } = PluginFormatFilter.All;
     public List<string> PluginScanFolders { get; set; } = [];
     public bool VbanControlEnabled { get; set; }
     public int VbanControlPort { get; set; } = 6981;
@@ -475,6 +511,35 @@ internal sealed class NativeEngineClient : IDisposable
         }
     }
 
+    public string ProbeText
+    {
+        get
+        {
+            if (!_attached)
+            {
+                return "Probe unavailable until the native bridge is attached.";
+            }
+
+            var stats = GetStats();
+            return $"Probe In {stats.ProbeInputChannel + 1} / Out {stats.ProbeOutputChannel + 1}: " +
+                   $"Input {stats.InputInsertReadPeakPercent}/{stats.InputInsertWritePeakPercent}% " +
+                   $"({stats.InputInsertInputChannels}/{stats.InputInsertOutputChannels}) | " +
+                   $"Main src {stats.MainInputReadPeakPercent}% bus {stats.MainOutputReadPeakPercent}/{stats.MainWritePeakPercent}% " +
+                   $"({stats.MainInputChannels}/{stats.MainOutputChannels}) | " +
+                   $"Output {stats.OutputInsertReadPeakPercent}/{stats.OutputInsertWritePeakPercent}% " +
+                   $"({stats.OutputInsertInputChannels}/{stats.OutputInsertOutputChannels}) | " +
+                   $"Max: In {ProbeMax(stats.InputInsertMaxReadChannel, stats.InputInsertMaxReadPeakPercent)} " +
+                   $"MainSrc {ProbeMax(stats.MainSourceMaxReadChannel, stats.MainSourceMaxReadPeakPercent)} " +
+                   $"Bus {ProbeMax(stats.MainBusMaxReadChannel, stats.MainBusMaxReadPeakPercent)} " +
+                   $"Out {ProbeMax(stats.OutputInsertMaxWriteChannel, stats.OutputInsertMaxWritePeakPercent)}";
+        }
+    }
+
+    private static string ProbeMax(int channel, int peakPercent)
+    {
+        return channel >= 0 ? $"ch {channel + 1} {peakPercent}%" : "none";
+    }
+
     public IReadOnlyList<PluginChoice> PluginChoices()
     {
         if (!_attached)
@@ -489,14 +554,18 @@ internal sealed class NativeEngineClient : IDisposable
             var buffer = new StringBuilder(512);
             if (ElkaFx_GetPluginName(index, buffer, buffer.Capacity) == 0 && buffer.Length > 0)
             {
-                plugins.Add(new PluginChoice(index, buffer.ToString()));
+                var formatBuffer = new StringBuilder(64);
+                var format = ElkaFx_GetPluginFormat(index, formatBuffer, formatBuffer.Capacity) == 0
+                    ? NormalizePluginFormat(formatBuffer.ToString())
+                    : string.Empty;
+                plugins.Add(new PluginChoice(index, buffer.ToString(), format));
             }
         }
 
         return plugins;
     }
 
-    public string ScanPlugins(IEnumerable<string> customFolders)
+    public string ScanPlugins(IEnumerable<string> customFolders, PluginFormatFilter formatFilter)
     {
         if (!_attached)
         {
@@ -508,15 +577,35 @@ internal sealed class NativeEngineClient : IDisposable
             .Where(static folder => !string.IsNullOrWhiteSpace(folder))
             .Select(static folder => folder.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase));
-        var result = ElkaFx_ScanPluginFolders(folderText, includeDefaults: 1, status, status.Capacity);
+        var result = ElkaFx_ScanPluginFoldersEx(folderText, includeDefaults: 1, (int)formatFilter, status, status.Capacity);
         _lastStatus = status.ToString();
         return result >= 0 ? _lastStatus : $"Scan failed: {_lastStatus}";
+    }
+
+    private static string NormalizePluginFormat(string format)
+    {
+        if (format.Equals("VST", StringComparison.OrdinalIgnoreCase))
+        {
+            return "VST2";
+        }
+
+        return format.Trim();
     }
 
     public void SetRequestedMode(CallbackMode mode)
     {
         _requestedMode = mode == CallbackMode.None ? CallbackMode.Input : mode;
         SetMode(_requestedMode);
+    }
+
+    public void SetProbeChannels(int inputChannel, int outputChannel)
+    {
+        if (!_attached)
+        {
+            return;
+        }
+
+        ElkaFx_SetProbeChannels(Math.Max(0, inputChannel), Math.Max(0, outputChannel));
     }
 
     public void ApplyChannelSettings(EndpointChannelSettings settings)
@@ -561,6 +650,28 @@ internal sealed class NativeEngineClient : IDisposable
             ? _requestedMode | CallbackMode.Input | CallbackMode.Output
             : _requestedMode;
         SetMode(effectiveMode);
+    }
+
+    public void ApplyPluginPassthroughRoutes(IEnumerable<PluginPassthroughRouteSummary> routes)
+    {
+        if (!_attached)
+        {
+            return;
+        }
+
+        foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output, CallbackMode.Main })
+        {
+            var routeArray = routes
+                .Where(route => route.Mode == mode)
+                .Select(static route => new NativePluginPassthroughRoute
+                {
+                    SourceChannel = route.SourceChannel,
+                    DestinationChannel = route.DestinationChannel
+                })
+                .ToArray();
+
+            ElkaFx_SetPluginPassthroughRoutes((int)mode, routeArray, routeArray.Length);
+        }
     }
 
     public PluginNodeSnapshot? AddPluginNode(
@@ -724,6 +835,13 @@ internal sealed class NativeEngineClient : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct NativePluginPassthroughRoute
+    {
+        public int SourceChannel;
+        public int DestinationChannel;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct NativeStats
     {
         public int ConnectionState;
@@ -737,6 +855,35 @@ internal sealed class NativeEngineClient : IDisposable
         public double PeakProcessUsec;
         public double CallbackCpuPercent;
         public int DelayBufferSampleRate;
+        public int ProbeInputChannel;
+        public int ProbeOutputChannel;
+        public int InputInsertReadPeakPercent;
+        public int InputInsertWritePeakPercent;
+        public int MainInputReadPeakPercent;
+        public int MainOutputReadPeakPercent;
+        public int MainWritePeakPercent;
+        public int OutputInsertReadPeakPercent;
+        public int OutputInsertWritePeakPercent;
+        public int InputInsertMaxReadPeakPercent;
+        public int InputInsertMaxReadChannel;
+        public int InputInsertMaxWritePeakPercent;
+        public int InputInsertMaxWriteChannel;
+        public int MainSourceMaxReadPeakPercent;
+        public int MainSourceMaxReadChannel;
+        public int MainBusMaxReadPeakPercent;
+        public int MainBusMaxReadChannel;
+        public int MainMaxWritePeakPercent;
+        public int MainMaxWriteChannel;
+        public int OutputInsertMaxReadPeakPercent;
+        public int OutputInsertMaxReadChannel;
+        public int OutputInsertMaxWritePeakPercent;
+        public int OutputInsertMaxWriteChannel;
+        public int InputInsertInputChannels;
+        public int InputInsertOutputChannels;
+        public int MainInputChannels;
+        public int MainOutputChannels;
+        public int OutputInsertInputChannels;
+        public int OutputInsertOutputChannels;
     }
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
@@ -766,6 +913,15 @@ internal sealed class NativeEngineClient : IDisposable
         int routeCount);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void ElkaFx_SetPluginPassthroughRoutes(
+        int kind,
+        [In] NativePluginPassthroughRoute[] routes,
+        int routeCount);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void ElkaFx_SetProbeChannels(int inputChannel, int outputChannel);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_GetStats(ref NativeStats stats);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -775,12 +931,23 @@ internal sealed class NativeEngineClient : IDisposable
     private static extern int ElkaFx_GetPluginName(int index, StringBuilder buffer, int bufferChars);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPluginFormat(int index, StringBuilder buffer, int bufferChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_ScanDefaultVst3(StringBuilder status, int statusChars);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_ScanPluginFolders(
         string folders,
         int includeDefaults,
+        StringBuilder status,
+        int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_ScanPluginFoldersEx(
+        string folders,
+        int includeDefaults,
+        int formatFlags,
         StringBuilder status,
         int statusChars);
 

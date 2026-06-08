@@ -24,6 +24,7 @@ public:
     long logout() const;
     long getVoicemeeterType(long* type) const;
     long getParameterFloat(const char* parameterName, float* value) const;
+    long setParameterFloat(const char* parameterName, float value) const;
     long audioCallbackRegister(long mode, vmr::AudioCallback callback, void* user, char clientName[64]) const;
     long audioCallbackStart() const;
     long audioCallbackStop() const;
@@ -36,6 +37,7 @@ private:
     using LogoutFn = long(__stdcall*)();
     using GetVoicemeeterTypeFn = long(__stdcall*)(long*);
     using GetParameterFloatFn = long(__stdcall*)(char*, float*);
+    using SetParameterFloatFn = long(__stdcall*)(char*, float);
     using AudioCallbackRegisterFn = long(__stdcall*)(long, vmr::AudioCallback, void*, char[64]);
     using AudioCallbackStartFn = long(__stdcall*)();
     using AudioCallbackStopFn = long(__stdcall*)();
@@ -64,6 +66,7 @@ private:
     LogoutFn logoutFn = nullptr;
     GetVoicemeeterTypeFn getVoicemeeterTypeFn = nullptr;
     GetParameterFloatFn getParameterFloatFn = nullptr;
+    SetParameterFloatFn setParameterFloatFn = nullptr;
     AudioCallbackRegisterFn audioCallbackRegisterFn = nullptr;
     AudioCallbackStartFn audioCallbackStartFn = nullptr;
     AudioCallbackStopFn audioCallbackStopFn = nullptr;

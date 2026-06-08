@@ -116,6 +116,18 @@
                          Grid.Column="1"
                          Margin="0,0,0,12" />
 
+              <TextBlock Grid.Row="2"
+                         Grid.Column="0"
+                         Text="Probe"
+                         VerticalAlignment="Top"
+                         FontWeight="SemiBold" />
+              <TextBlock x:Name="ProbeStatusTextBlock"
+                         Grid.Row="2"
+                         Grid.Column="1"
+                         Text="Select an input strip to probe callback stages."
+                         Style="{StaticResource MutedText}"
+                         TextWrapping="Wrap" />
+
             </Grid>
           </Border>
 
@@ -142,6 +154,7 @@
                            Foreground="{StaticResource RouteAccentBrush}"
                            VerticalAlignment="Center" />
                 <Button Grid.Column="1"
+                        x:Name="AddNodeButton"
                         Content="Add Node"
                         Width="92"
                         Style="{StaticResource RouteButton}"
@@ -152,6 +165,7 @@
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto" />
                   <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
                   <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button Content="Add Folder"
@@ -164,7 +178,34 @@
                          Grid.Column="1"
                          ToolTip="Filter the scanned plugin list by name."
                          TextChanged="PluginSearchTextBox_TextChanged" />
-                <Button Grid.Column="2"
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Margin="8,0,0,0">
+                  <Button x:Name="PluginFormatAllButton"
+                          Content="All"
+                          Width="50"
+                          Padding="8,6"
+                          Style="{StaticResource RouteButton}"
+                          Tag="All"
+                          Click="PluginFormatFilterButton_Click" />
+                  <Button x:Name="PluginFormatVst3Button"
+                          Content="VST3"
+                          Width="58"
+                          Padding="8,6"
+                          Margin="6,0,0,0"
+                          Style="{StaticResource RouteButton}"
+                          Tag="Vst3"
+                          Click="PluginFormatFilterButton_Click" />
+                  <Button x:Name="PluginFormatVst2Button"
+                          Content="VST2"
+                          Width="58"
+                          Padding="8,6"
+                          Margin="6,0,0,0"
+                          Style="{StaticResource RouteButton}"
+                          Tag="Vst2"
+                          Click="PluginFormatFilterButton_Click" />
+                </StackPanel>
+                <Button Grid.Column="3"
                         x:Name="ScanButton"
                         Content="Scan"
                         Width="72"
@@ -417,12 +458,25 @@
                     BorderThickness="1"
                     CornerRadius="6"
                     Padding="10">
-              <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                            VerticalScrollBarVisibility="Disabled">
-                <StackPanel x:Name="ChannelStripPanel"
-                            Orientation="Horizontal"
-                            MinHeight="248" />
-              </ScrollViewer>
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="ChannelStripTitleTextBlock"
+                           Grid.Row="0"
+                           Text="Channels"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource RouteAccentBrush}"
+                           Margin="0,0,0,8" />
+                <ScrollViewer Grid.Row="1"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                  <StackPanel x:Name="ChannelStripPanel"
+                              Orientation="Horizontal"
+                              MinHeight="248" />
+                </ScrollViewer>
+              </Grid>
             </Border>
 
             <Border Grid.Row="2"

@@ -10,25 +10,28 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(ELKA_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE")
-set(ELKA_VST2_SDK_PATH "" CACHE PATH "Optional legacy VST2 SDK folder containing pluginterfaces/vst2.x/aeffect.h")
+set(ELKA_VST2_SDK_PATH "" CACHE PATH "Required legacy VST2 SDK folder containing pluginterfaces/vst2.x/aeffect.h and aeffectx.h")
 set(ELKA_ENABLE_VST2_HOST OFF)
 if (EXISTS "${ELKA_JUCE_DIR}/CMakeLists.txt")
     set(JUCE_MODULES_ONLY ON CACHE BOOL "Build JUCE modules only" FORCE)
     add_subdirectory("${ELKA_JUCE_DIR}" external/JUCE-build EXCLUDE_FROM_ALL)
     set(ELKA_ENABLE_JUCE_PLUGIN_HOST ON)
 
-    if (ELKA_VST2_SDK_PATH)
-        if (EXISTS "${ELKA_VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h")
-            set(ELKA_ENABLE_VST2_HOST ON)
-            if (COMMAND juce_set_vst2_sdk_path)
-                juce_set_vst2_sdk_path("${ELKA_VST2_SDK_PATH}")
-            endif()
-        else()
-            message(WARNING "ELKA_VST2_SDK_PATH does not contain pluginterfaces/vst2.x/aeffect.h; VST2 hosting stays disabled.")
-        endif()
+    if (NOT ELKA_VST2_SDK_PATH)
+        message(FATAL_ERROR "VST2 hosting is required. Set ELKA_VST2_SDK_PATH to a legacy VST2 SDK folder, for example external/VST2_SDK, containing pluginterfaces/vst2.x/aeffect.h and pluginterfaces/vst2.x/aeffectx.h.")
+    endif()
+
+    if (NOT EXISTS "${ELKA_VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h"
+        OR NOT EXISTS "${ELKA_VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffectx.h")
+        message(FATAL_ERROR "VST2 hosting is required, but ELKA_VST2_SDK_PATH='${ELKA_VST2_SDK_PATH}' does not contain pluginterfaces/vst2.x/aeffect.h and aeffectx.h.")
+    endif()
+
+    set(ELKA_ENABLE_VST2_HOST ON)
+    if (COMMAND juce_set_vst2_sdk_path)
+        juce_set_vst2_sdk_path("${ELKA_VST2_SDK_PATH}")
     endif()
 else()
-    set(ELKA_ENABLE_JUCE_PLUGIN_HOST OFF)
+    message(FATAL_ERROR "JUCE is required for VST2/VST3 hosting. Put JUCE in external/JUCE before configuring this project.")
 endif()
 
 set(ELKA_NATIVE_CORE_SOURCES
@@ -62,7 +65,9 @@ foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native)
         Advapi32
         Comctl32
         Gdi32
+        Mmdevapi
         Ole32
+        Propsys
         Shell32
         User32
     )

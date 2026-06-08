@@ -18,9 +18,8 @@
     <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</RepoRoot>
     <NativeBridgePath>$(RepoRoot)\build-vs2019\$(NativeBuildConfiguration)\ElkaVoiceMeeterFxHost.Native.dll</NativeBridgePath>
     <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and '$(ELKA_VST2_SDK_PATH)' != ''">$(ELKA_VST2_SDK_PATH)</Vst2SdkPath>
-    <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h')">$(RepoRoot)\external\VST2_SDK</Vst2SdkPath>
-    <NativeVst2ConfigureArg Condition="'$(Vst2SdkPath)' != ''">-DELKA_VST2_SDK_PATH=&quot;$(Vst2SdkPath)&quot;</NativeVst2ConfigureArg>
-    <NativeVst2ConfigureArg Condition="'$(NativeVst2ConfigureArg)' == ''">-DELKA_VST2_SDK_PATH=</NativeVst2ConfigureArg>
+    <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h') and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffectx.h')">$(RepoRoot)\external\VST2_SDK</Vst2SdkPath>
+    <NativeVst2ConfigureArg>-DELKA_VST2_SDK_PATH=&quot;$(Vst2SdkPath)&quot;</NativeVst2ConfigureArg>
     <ElkaCreateReleaseArtifacts Condition="'$(ElkaCreateReleaseArtifacts)' == ''">false</ElkaCreateReleaseArtifacts>
     <ElkaUploadGitHubRelease Condition="'$(ElkaUploadGitHubRelease)' == ''">false</ElkaUploadGitHubRelease>
     <GitHubRepository Condition="'$(GitHubRepository)' == ''">torment78/Elka.VoiceMeeterFxHost</GitHubRepository>
@@ -40,7 +39,13 @@
     <Resource Include="Assets\VoicemeeterDelay.ico" />
     <Resource Include="Assets\VoicemeeterDelayIconPreview.png" />
   </ItemGroup>
-  <Target Name="BuildNativeBridge" BeforeTargets="Build">
+  <Target Name="ValidateVst2SdkPath" BeforeTargets="BuildNativeBridge">
+    <Error Condition="'$(Vst2SdkPath)' == ''"
+           Text="VST2 hosting is required. Put the legacy VST2 SDK headers in $(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h and aeffectx.h, or set Vst2SdkPath / ELKA_VST2_SDK_PATH to a valid SDK folder." />
+    <Error Condition="!Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffect.h') or !Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffectx.h')"
+           Text="VST2 hosting is required, but Vst2SdkPath='$(Vst2SdkPath)' does not contain pluginterfaces\vst2.x\aeffect.h and aeffectx.h." />
+  </Target>
+  <Target Name="BuildNativeBridge" BeforeTargets="Build" DependsOnTargets="ValidateVst2SdkPath">
     <Message Importance="high" Text="Configuring native VoiceMeeter bridge: $(NativeVst2ConfigureArg)" />
     <Exec Command="&quot;$(CMakeExe)&quot; --preset vs2019-x64 $(NativeVst2ConfigureArg)"
           WorkingDirectory="$(RepoRoot)" />

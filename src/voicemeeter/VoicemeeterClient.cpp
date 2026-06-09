@@ -163,11 +163,34 @@ std::wstring VoicemeeterClient::dllPath() const
 bool VoicemeeterClient::getConfiguredSampleRate(int& sampleRate) const noexcept
 {
     float value = 0.0f;
-    if (api.getParameterFloat("Option.sr", &value) != 0 || value <= 0.0f)
+    if (!getParameterFloat("Option.sr", value) || value <= 0.0f)
         return false;
 
     sampleRate = static_cast<int>(value + 0.5f);
     return true;
+}
+
+bool VoicemeeterClient::refreshParameters() const noexcept
+{
+    return api.isParametersDirty() >= 0;
+}
+
+bool VoicemeeterClient::getParameterFloat(const char* parameterName, float& value) const noexcept
+{
+    value = 0.0f;
+    if (parameterName == nullptr)
+        return false;
+
+    return api.getParameterFloat(parameterName, &value) == 0;
+}
+
+bool VoicemeeterClient::getLevel(int type, int channel, float& value) const noexcept
+{
+    value = 0.0f;
+    if (type < 0 || channel < 0)
+        return false;
+
+    return api.getLevel(type, channel, &value) == 0;
 }
 
 long __stdcall VoicemeeterClient::audioCallback(void* user, long command, void* data, long reserved) noexcept

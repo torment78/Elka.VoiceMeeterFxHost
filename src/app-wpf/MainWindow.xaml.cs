@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
     private Path? _crossRoutePreview;
     private int _expandedCrossRouteBusIndex = -1;
     private int _selectedCrossRouteBusIndex = -1;
+    private bool? _lastSelectedPatchBypassState;
     private string? _draggingEndpointKey;
     private CallbackMode _draggingEndpointMode = CallbackMode.None;
     private IoEndpoint? _draggingEndpoint;
@@ -934,7 +936,14 @@ public partial class MainWindow : Window
         {
             if (_settingsByEndpoint.TryGetValue(key, out var settings))
             {
-                _engine.ApplyChannelSettings(settings);
+                if (IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
+                {
+                    _engine.ClearChannelSettings(settings.Mode, settings.Endpoint);
+                }
+                else
+                {
+                    _engine.ApplyChannelSettings(settings);
+                }
             }
         }
 
@@ -956,8 +965,172 @@ public partial class MainWindow : Window
 
     private void UpdateLiveStatusText()
     {
+        _engine.RefreshVoicemeeterParameters();
         StatusTextBlock.Text = _engine.StatusText;
-        ProbeStatusTextBlock.Text = _engine.ProbeText;
+        var probeText = _engine.ProbeText;
+        var patchExplanation = string.Empty;
+        var selectedPatchBypassed = _selectedChannelSettings is not null &&
+                                    IsInputPatchBypassEndpoint(
+                                        _selectedChannelSettings.Mode,
+                                        _selectedChannelSettings.Endpoint,
+                                        out patchExplanation);
+
+        if (_lastSelectedPatchBypassState != selectedPatchBypassed)
+        {
+            var wasInitialized = _lastSelectedPatchBypassState.HasValue;
+            _lastSelectedPatchBypassState = selectedPatchBypassed;
+            RefreshEndpointButtonSelection();
+            if (wasInitialized)
+            {
+                BuildChannelStrips();
+                RebuildRoutingCanvas();
+            }
+        }
+
+        RefreshEndpointButtonSelection();
+
+        if (_engine.SelectedStripSignalStatus is { Length: > 0 } signalStatus)
+        {
+            probeText += $"{Environment.NewLine}{signalStatus}";
+        }
+
+        if (selectedPatchBypassed)
+        {
+            probeText += $"{Environment.NewLine}{patchExplanation}";
+        }
+
+        if (HasSelectedInputOutputCallbackRoutes() && _engine.InputSourceVisibilityWarning is { Length: > 0 } inputWarning)
+        {
+            probeText += $"{Environment.NewLine}{inputWarning}";
+        }
+
+        if (HasSelectedMainCallbackRoutes() && _engine.MainSourceVisibilityWarning is { Length: > 0 } warning)
+        {
+            probeText += $"{Environment.NewLine}{warning}";
+        }
+
+        ProbeStatusTextBlock.Text = probeText;
+    }
+
+    private void CopyDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        FlushQueuedChannelChanges();
+        ApplyEngineState();
+        UpdateLiveStatusText();
+
+        var text = BuildDiagnosticsText();
+        Clipboard.SetText(text);
+        AppendLog("Diagnostics copied to clipboard.");
+    }
+
+    private string BuildDiagnosticsText()
+    {
+        var routes = AllDirectRoutes().ToArray();
+        var pluginPassthroughRoutes = AllVstCanvasPassthroughRoutes().ToArray();
+        var buses = VoicemeeterIoLayout.GetEndpoints(CallbackMode.Output, _kind);
+        var builder = new StringBuilder();
+
+        builder.AppendLine("Elka VoiceMeeter FX Host diagnostics");
+        builder.AppendLine($"Time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        builder.AppendLine($"Voicemeeter kind: {_kind}");
+        builder.AppendLine($"Selected side: {_selectedMode}");
+        builder.AppendLine($"Workspace view: {_workspaceView}");
+        builder.AppendLine($"Computed callback mode: {ComputeActiveCallbackMode()}");
+        builder.AppendLine($"Engine requested mode: {_engine.RequestedMode}");
+        builder.AppendLine($"Engine status: {_engine.StatusText}");
+        builder.AppendLine($"Probe: {_engine.ProbeText}");
+        if (_engine.SelectedStripSignalStatus is { Length: > 0 } signalStatus)
+        {
+            builder.AppendLine($"Signal status: {signalStatus}");
+        }
+
+        if (routes.Any(static route => route.Mode == CallbackMode.Input) &&
+            _engine.InputSourceVisibilityWarning is { Length: > 0 } inputWarning)
+        {
+            builder.AppendLine($"Warning: {inputWarning}");
+        }
+
+        if (routes.Any(static route => route.Mode == CallbackMode.Main) &&
+            _engine.MainSourceVisibilityWarning is { Length: > 0 } warning)
+        {
+            builder.AppendLine($"Warning: {warning}");
+        }
+
+        builder.AppendLine($"Route summary: {RouteSummaryTextBlock.Text}");
+        builder.AppendLine($"Channel route summary: {CrossRouteSummaryTextBlock.Text}");
+        builder.AppendLine();
+
+        if (_selectedChannelSettings is null)
+        {
+            builder.AppendLine("Selected endpoint: none");
+        }
+        else
+        {
+            var settings = _selectedChannelSettings;
+            builder.AppendLine("Selected endpoint");
+            builder.AppendLine($"  Name: {settings.Endpoint.DisplayName}");
+            builder.AppendLine($"  Mode: {settings.Mode}");
+            builder.AppendLine($"  Key: {settings.Key}");
+            builder.AppendLine($"  Channel range zero-based: {settings.Endpoint.Range.Start}-{settings.Endpoint.Range.End}");
+            builder.AppendLine($"  Channel count: {settings.Endpoint.ChannelCount}");
+            if (IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out var patchExplanation))
+            {
+                builder.AppendLine($"  Input FX unavailable: {patchExplanation}");
+            }
+
+            builder.AppendLine($"  Main callback send: {settings.PostInsertSend}");
+            builder.AppendLine($"  Pin mode: {settings.PinMode}");
+            builder.AppendLine($"  Selected route bus index: {_selectedCrossRouteBusIndex}");
+            builder.AppendLine($"  Expanded route bus index: {_expandedCrossRouteBusIndex}");
+            builder.AppendLine("  Channels:");
+            for (var offset = 0; offset < settings.Endpoint.ChannelCount; offset++)
+            {
+                var destinations = settings.RouteDestinations[offset]
+                    .Select(destination =>
+                    {
+                        var busIndex = Math.Clamp(destination.BusIndex, 0, Math.Max(0, buses.Count - 1));
+                        var busName = buses.Count > 0 ? buses[busIndex].Name : "no bus";
+                        return $"{busName} ch {destination.ChannelOffset + 1} delay {destination.DelayMilliseconds:0.0} ms gain {destination.GainDecibels:0.0} dB";
+                    });
+                builder.AppendLine(
+                    $"    {offset + 1}: enabled={settings.Enabled[offset]}, vol={settings.VolumePercent[offset]:0.0}%, delay={settings.DelayMilliseconds[offset]:0.0} ms, route={settings.RouteEnabled[offset]}, muteNormal={settings.RouteMuteNormal[offset]}, destinations=[{string.Join("; ", destinations)}]");
+            }
+
+            builder.AppendLine();
+        }
+
+        builder.AppendLine($"Direct routes: {routes.Length}");
+        builder.AppendLine($"  Input+Output callback routes: {routes.Count(static route => route.Mode == CallbackMode.Input)}");
+        builder.AppendLine($"  Main callback routes: {routes.Count(static route => route.Mode == CallbackMode.Main)}");
+        builder.AppendLine($"  Output routes: {routes.Count(static route => route.Mode == CallbackMode.Output)}");
+        foreach (var route in routes)
+        {
+            builder.AppendLine(
+                $"  {route.Mode}: src {route.SourceChannel + 1} -> dst {route.DestinationChannel + 1}, delay {route.DelayMilliseconds} ms, gain {route.GainPercent}%, muteNormal={route.MuteNormal}, name={route.Name}");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine($"VST canvas passthrough routes: {pluginPassthroughRoutes.Length}");
+        foreach (var route in pluginPassthroughRoutes)
+        {
+            builder.AppendLine($"  {route.Mode}: src {route.SourceChannel + 1} -> dst {route.DestinationChannel + 1}");
+        }
+
+        return builder.ToString();
+    }
+
+    private bool HasSelectedMainCallbackRoutes()
+    {
+        return _selectedChannelSettings is { PostInsertSend: true } settings &&
+               !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _) &&
+               settings.RouteEnabled.Any(static enabled => enabled);
+    }
+
+    private bool HasSelectedInputOutputCallbackRoutes()
+    {
+        return _selectedChannelSettings is { PostInsertSend: false } settings &&
+               !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _) &&
+               settings.RouteEnabled.Any(static enabled => enabled);
     }
 
     private void SelectWorkspaceView(WorkspaceView view)
@@ -1045,7 +1218,7 @@ public partial class MainWindow : Window
 
         foreach (var settings in _settingsByEndpoint.Values)
         {
-            if (settings.HasActiveChannels)
+            if (settings.HasActiveChannels && !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
             {
                 active |= settings.Mode;
             }
@@ -1061,9 +1234,15 @@ public partial class MainWindow : Window
             active |= EndpointToEndpointRouteMode(connection.FromMode, connection.ToMode);
         }
 
-        if (_settingsByEndpoint.Values.SelectMany(settings => settings.ToDirectRoutes(_kind)).Any())
+        var directRoutes = AllDirectRoutes().ToArray();
+        if (directRoutes.Any(static route => route.Mode == CallbackMode.Input))
         {
             active |= CallbackMode.Input | CallbackMode.Output;
+        }
+
+        foreach (var mode in directRoutes.Select(static route => route.Mode).Distinct())
+        {
+            active |= mode;
         }
 
         return active == CallbackMode.None ? CallbackMode.Input : active;
@@ -1081,11 +1260,14 @@ public partial class MainWindow : Window
         {
             var key = endpoint.Key(endpointMode);
             var selected = endpoint == endpointToSelect;
-            var active = _settingsByEndpoint.TryGetValue(key, out var settings) && settings.HasActiveChannels;
+            var patchBypassed = IsInputPatchBypassEndpoint(endpointMode, endpoint, out var patchExplanation);
+            var active = !patchBypassed &&
+                         _settingsByEndpoint.TryGetValue(key, out var settings) &&
+                         settings.HasActiveChannels;
             var hueStroke = EndpointHueStrokeBrush(key);
             var button = new Button
             {
-                Content = endpoint.DisplayName,
+                Content = patchBypassed ? $"{endpoint.DisplayName}  bus only" : endpoint.DisplayName,
                 Tag = key,
                 Margin = new Thickness(0, 0, 8, 8),
                 MinWidth = 104,
@@ -1099,7 +1281,9 @@ public partial class MainWindow : Window
                     : (Brush)FindResource("TextBrush"),
                 BorderBrush = hueStroke ?? (Brush)FindResource("StrokeBrush"),
                 BorderThickness = hueStroke is null ? new Thickness(1) : new Thickness(2),
-                ContextMenu = BuildEndpointContextMenu(endpointMode, endpoint)
+                ContextMenu = BuildEndpointContextMenu(endpointMode, endpoint),
+                Opacity = patchBypassed ? 0.54 : 1.0,
+                ToolTip = patchBypassed ? patchExplanation : null
             };
             button.Click += (_, _) => SelectEndpoint(endpointMode, endpoint);
             EndpointButtonsPanel.Children.Add(button);
@@ -1116,6 +1300,65 @@ public partial class MainWindow : Window
         return _selectedMode == CallbackMode.Output ? CallbackMode.Output : CallbackMode.Input;
     }
 
+    private bool IsInputPatchBypassEndpoint(CallbackMode mode, IoEndpoint endpoint, out string explanation)
+    {
+        explanation = string.Empty;
+        if (mode != CallbackMode.Input)
+        {
+            return false;
+        }
+
+        var asioPatches = new List<string>();
+        var insertChannels = new List<int>();
+        for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
+        {
+            var asioChannel = _engine.GetPatchAsioChannel(channel);
+            if (asioChannel > 0)
+            {
+                asioPatches.Add($"CH {channel + 1}->ASIO {asioChannel}");
+            }
+
+            if (_engine.GetPatchInsertEnabled(channel) > 0)
+            {
+                insertChannels.Add(channel + 1);
+            }
+        }
+
+        if (asioPatches.Count == 0 && insertChannels.Count == 0)
+        {
+            return false;
+        }
+
+        var parts = new List<string>();
+        if (asioPatches.Count > 0)
+        {
+            parts.Add($"ASIO patch {string.Join(", ", asioPatches)}");
+        }
+
+        if (insertChannels.Count > 0)
+        {
+            var postFx = _engine.GetPatchPostFxInsertEnabled() switch
+            {
+                0 => "pre-FX",
+                1 => "post-FX",
+                _ => "unknown insert point"
+            };
+            parts.Add($"Virtual ASIO insert on CH {string.Join("/", insertChannels)} ({postFx})");
+        }
+
+        explanation =
+            $"{endpoint.DisplayName}: Input FX is unavailable because VoiceMeeter reports {string.Join("; ", parts)}. " +
+            "This ASIO/insert path is not exposed as isolated input-callback audio here; use the Output/Bus canvas for this source.";
+        return true;
+    }
+
+    private bool IsInputPatchBypassChannel(CallbackMode mode, int channel, out string explanation)
+    {
+        explanation = string.Empty;
+        var endpoint = EndpointForChannel(mode, channel);
+        return endpoint is not null && IsInputPatchBypassEndpoint(mode, endpoint, out explanation);
+    }
+
     private void SelectEndpoint(CallbackMode endpointMode, IoEndpoint endpoint)
     {
         _selectedEndpoint = endpoint;
@@ -1123,6 +1366,7 @@ public partial class MainWindow : Window
         _selectedChannelSettings = GetOrCreateChannelSettings(endpointMode, endpoint);
         _selectedCrossRouteBusIndex = -1;
         _expandedCrossRouteBusIndex = -1;
+        _lastSelectedPatchBypassState = null;
         UpdateProbeSelection(endpointMode, endpoint);
         RefreshEndpointButtonSelection();
         BuildChannelStrips();
@@ -1145,8 +1389,13 @@ public partial class MainWindow : Window
         {
             var key = child.Tag as string;
             var selected = key == selectedKey;
+            var endpoint = EndpointForKey(key);
+            var mode = EndpointModeForCurrentSide();
+            var patchExplanation = string.Empty;
+            var patchBypassed = endpoint is not null && IsInputPatchBypassEndpoint(mode, endpoint, out patchExplanation);
             var active = key is not null &&
                          _settingsByEndpoint.TryGetValue(key, out var settings) &&
+                         !patchBypassed &&
                          settings.HasActiveChannels;
             var hueStroke = key is null ? null : EndpointHueStrokeBrush(key);
             child.Background = active
@@ -1159,6 +1408,12 @@ public partial class MainWindow : Window
                 : (Brush)FindResource("TextBrush");
             child.BorderBrush = hueStroke ?? (Brush)FindResource("StrokeBrush");
             child.BorderThickness = hueStroke is null ? new Thickness(1) : new Thickness(2);
+            child.Opacity = patchBypassed ? 0.54 : 1.0;
+            child.ToolTip = patchBypassed ? patchExplanation : null;
+            if (endpoint is not null)
+            {
+                child.Content = patchBypassed ? $"{endpoint.DisplayName}  bus only" : endpoint.DisplayName;
+            }
         }
     }
 
@@ -1167,16 +1422,29 @@ public partial class MainWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(CreateNodeMenuItem("Select Section", () => SelectEndpoint(mode, endpoint)));
         menu.Items.Add(new Separator());
+        var patchBypassed = IsInputPatchBypassEndpoint(mode, endpoint, out var patchExplanation);
+        if (patchBypassed)
+        {
+            menu.Items.Add(new MenuItem
+            {
+                Header = "Input FX unavailable: patch/bus path",
+                IsEnabled = false,
+                ToolTip = patchExplanation
+            });
+            menu.Items.Add(new Separator());
+        }
 
         var currentMode = EndpointPinModeFor(mode, endpoint);
         var stereo = CreateNodeMenuItem("Stereo", () => SetEndpointPinMode(mode, endpoint, EndpointPinMode.Stereo));
         stereo.IsCheckable = true;
         stereo.IsChecked = currentMode == EndpointPinMode.Stereo;
+        stereo.IsEnabled = !patchBypassed;
         menu.Items.Add(stereo);
 
         var full = CreateNodeMenuItem(endpoint.ChannelCount > 2 ? $"Advanced / Full ({endpoint.ChannelCount})" : "Full", () => SetEndpointPinMode(mode, endpoint, EndpointPinMode.Full));
         full.IsCheckable = true;
         full.IsChecked = currentMode == EndpointPinMode.Full;
+        full.IsEnabled = !patchBypassed;
         menu.Items.Add(full);
         menu.Items.Add(new Separator());
 
@@ -1214,6 +1482,12 @@ public partial class MainWindow : Window
 
     private void SetEndpointPinMode(CallbackMode mode, IoEndpoint endpoint, EndpointPinMode pinMode)
     {
+        if (IsInputPatchBypassEndpoint(mode, endpoint, out var explanation))
+        {
+            AppendLog(explanation);
+            return;
+        }
+
         var settings = GetOrCreateChannelSettings(mode, endpoint);
         settings.PinMode = pinMode;
 
@@ -1307,6 +1581,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (IsInputPatchBypassEndpoint(_selectedChannelSettings.Mode, _selectedChannelSettings.Endpoint, out var explanation))
+        {
+            ChannelStripTitleTextBlock.Text = $"{_selectedChannelSettings.Endpoint.Name} input FX unavailable";
+            ChannelStripPanel.Children.Add(CreatePatchBypassNotice(explanation));
+            BuildCrossRoutingPanel();
+            ApplyEngineState();
+            return;
+        }
+
         ChannelStripTitleTextBlock.Text = CurrentChannelStripTitle(_selectedChannelSettings);
         for (var offset = 0; offset < _selectedChannelSettings.Endpoint.ChannelCount; offset++)
         {
@@ -1315,6 +1598,45 @@ public partial class MainWindow : Window
 
         BuildCrossRoutingPanel();
         ApplyEngineState();
+    }
+
+    private UIElement CreatePatchBypassNotice(string explanation)
+    {
+        var border = new Border
+        {
+            Width = 560,
+            MinHeight = 120,
+            Margin = new Thickness(0, 0, 10, 0),
+            Background = (Brush)FindResource("PanelBrush"),
+            BorderBrush = (Brush)FindResource("SubtleBorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14)
+        };
+
+        var stack = new StackPanel();
+        border.Child = stack;
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Bus-only source",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)FindResource("RouteAccentBrush")
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = explanation,
+            Style = (Style)FindResource("MutedText"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0)
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Use Output/Bus FX for this source, or turn off the VoiceMeeter patch path to use Input FX.",
+            Foreground = (Brush)FindResource("VolumeAccentBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0)
+        });
+        return border;
     }
 
     private string CurrentChannelStripTitle(EndpointChannelSettings settings)
@@ -1873,6 +2195,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out var patchExplanation))
+        {
+            RoutingCanvasTitleTextBlock.Text = $"{settings.Endpoint.Name} bus-only source";
+            DrawCrossRouteEmptyState(patchExplanation);
+            return;
+        }
+
         var buses = VoicemeeterIoLayout.GetEndpoints(CallbackMode.Output, _kind);
         if (_selectedCrossRouteBusIndex >= buses.Count)
         {
@@ -1905,7 +2234,9 @@ public partial class MainWindow : Window
         {
             Text = text,
             Style = (Style)FindResource("MutedText"),
-            FontSize = 14
+            FontSize = 14,
+            TextWrapping = TextWrapping.Wrap,
+            Width = 760
         };
         CrossRouteCanvas.Children.Add(textBlock);
         CrossRouteCanvas.Width = 980;
@@ -1956,12 +2287,24 @@ public partial class MainWindow : Window
             FontSize = 11,
             Margin = new Thickness(0, 3, 0, 0)
         });
+        var postInsertSend = new CheckBox
+        {
+            Content = "Main callback send",
+            IsChecked = settings.PostInsertSend,
+            Foreground = (Brush)FindResource("RouteAccentBrush"),
+            Margin = new Thickness(0, 10, 0, 0),
+            ToolTip = "Experimental console-style route. Leave this off to test the normal Input+Output callback route suggested for ASIO insert checks."
+        };
+        postInsertSend.Checked += (_, _) => SetEndpointPostInsertSend(settings, true);
+        postInsertSend.Unchecked += (_, _) => SetEndpointPostInsertSend(settings, false);
+        stack.Children.Add(postInsertSend);
+
         var muteStandard = new CheckBox
         {
             Content = "Mute standard routing",
             IsChecked = settings.RouteMuteNormal.All(static muted => muted),
             Foreground = (Brush)FindResource("VolumeAccentBrush"),
-            Margin = new Thickness(0, 10, 0, 0),
+            Margin = new Thickness(0, 6, 0, 0),
             ToolTip = "When routed, replace the normal VoiceMeeter path for this block instead of layering on top."
         };
         muteStandard.Checked += (_, _) => SetEndpointMuteStandardRouting(settings, true);
@@ -2173,6 +2516,8 @@ public partial class MainWindow : Window
                 ChannelOffset = destination.DestinationOffset
             });
             settings.RouteEnabled[source.SourceOffset] = true;
+            _selectedCrossRouteBusIndex = destination.BusIndex;
+            _expandedCrossRouteBusIndex = destination.BusIndex;
             AppendLog($"Connected {source.Label} -> {destination.Label}.");
         }
 
@@ -2194,6 +2539,27 @@ public partial class MainWindow : Window
         RefreshEndpointButtonSelection();
         RebuildCrossRouteCanvas();
         QueueSave();
+    }
+
+    private void SetEndpointPostInsertSend(EndpointChannelSettings settings, bool enabled)
+    {
+        settings.PostInsertSend = enabled;
+
+        ApplyEngineState();
+        RefreshEndpointButtonSelection();
+        BuildChannelStrips();
+        RebuildCrossRouteCanvas();
+        QueueSave();
+        var routeCount = settings.RouteEnabled.Count(static route => route);
+        AppendLog(enabled
+            ? $"{settings.Endpoint.Name}: Main callback send enabled for existing/drawn routes only. Draw a send if no destination is connected."
+            : $"{settings.Endpoint.Name}: Input+Output callback send enabled.");
+        if (enabled && routeCount == 0)
+        {
+            AppendLog($"{settings.Endpoint.Name}: no main callback destinations are armed yet.");
+        }
+
+        AppendLog(CrossRouteSummaryTextBlock.Text);
     }
 
     private void UpdateCrossRoutePreview(Point current)
@@ -2683,7 +3049,8 @@ public partial class MainWindow : Window
     }
     private void DrawEndpointCard(IoEndpoint endpoint, CallbackMode mode, double x, double y, bool outputSide, int pinCount)
     {
-        var height = pinCount <= 2 ? 74.0 : 154.0;
+        var patchBypassed = IsInputPatchBypassEndpoint(mode, endpoint, out var patchExplanation);
+        var height = patchBypassed ? 88.0 : pinCount <= 2 ? 74.0 : 154.0;
         var endpointMenu = BuildEndpointContextMenu(mode, endpoint);
         var endpointKey = endpoint.Key(mode);
         var hueStroke = EndpointHueStrokeBrush(endpointKey);
@@ -2694,12 +3061,18 @@ public partial class MainWindow : Window
         {
             Width = VstEndpointCardWidth,
             Height = height,
-            Background = hueFill ?? (Brush)FindResource("PanelBrush"),
-            BorderBrush = hueStroke ?? (Brush)FindResource("SubtleBorderBrush"),
+            Background = patchBypassed
+                ? (Brush)FindResource("NeutralBrush")
+                : hueFill ?? (Brush)FindResource("PanelBrush"),
+            BorderBrush = patchBypassed
+                ? (Brush)FindResource("SubtleBorderBrush")
+                : hueStroke ?? (Brush)FindResource("SubtleBorderBrush"),
             BorderThickness = hueStroke is null ? new Thickness(1) : new Thickness(2),
             CornerRadius = new CornerRadius(6),
             ContextMenu = endpointMenu,
-            Tag = new EndpointDragInfo(mode, endpoint)
+            Tag = new EndpointDragInfo(mode, endpoint),
+            Opacity = patchBypassed ? 0.50 : 1.0,
+            ToolTip = patchBypassed ? patchExplanation : null
         };
         Canvas.SetLeft(border, x);
         Canvas.SetTop(border, y);
@@ -2720,12 +3093,23 @@ public partial class MainWindow : Window
         });
         endpointStack.Children.Add(new TextBlock
         {
-            Text = EndpointPinModeLabel(mode, endpoint),
+            Text = patchBypassed ? "Bus only" : EndpointPinModeLabel(mode, endpoint),
             Style = (Style)FindResource("MutedText"),
             FontSize = 11,
             Margin = new Thickness(textLeft, 2, textRight, 0)
         });
         border.Child = endpointStack;
+        if (patchBypassed)
+        {
+            endpointStack.Children.Add(new TextBlock
+            {
+                Text = "Use Output FX",
+                Foreground = (Brush)FindResource("RouteAccentBrush"),
+                FontSize = 11,
+                Margin = new Thickness(textLeft, 8, textRight, 0)
+            });
+            return;
+        }
 
         for (var offset = 0; offset < pinCount; offset++)
         {
@@ -3270,6 +3654,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (IsInputPatchBypassChannel(pinInfo.Mode, pinInfo.Channel, out var explanation))
+        {
+            AppendLog(explanation);
+            e.Handled = true;
+            return;
+        }
+
         _wireDragStart = pinInfo;
         UpdateWirePreview(pinInfo.Point);
         e.Handled = true;
@@ -3323,6 +3714,18 @@ public partial class MainWindow : Window
 
         if (source is null || PinPositionKey(source) == PinPositionKey(target))
         {
+            return;
+        }
+
+        if (IsInputPatchBypassChannel(source.Mode, source.Channel, out var sourceExplanation))
+        {
+            AppendLog(sourceExplanation);
+            return;
+        }
+
+        if (IsInputPatchBypassChannel(target.Mode, target.Channel, out var targetExplanation))
+        {
+            AppendLog(targetExplanation);
             return;
         }
 
@@ -3389,7 +3792,7 @@ public partial class MainWindow : Window
                 To = EndpointDestinationKey(target.Mode, target.Channel)
             });
             AppendLog(routeMode == CallbackMode.Main
-                ? $"Connected post-insert main route {source.Label} -> {target.Label}."
+                ? $"Connected main callback route {source.Label} -> {target.Label}."
                 : $"Connected passthrough {source.Label} -> {target.Label}.");
         }
         else
@@ -3639,6 +4042,11 @@ public partial class MainWindow : Window
         {
             if (connection.Kind == ConnectionEndpointToNode && connection.ToSlot == slot)
             {
+                if (IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _))
+                {
+                    continue;
+                }
+
                 if (targetNode is not null && IsSidechainVisualInputPin(targetNode, connection.ToPin))
                 {
                     continue;
@@ -3681,6 +4089,11 @@ public partial class MainWindow : Window
         {
             if (connection.Kind == ConnectionEndpointToNode && connection.ToSlot == slot)
             {
+                if (IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _))
+                {
+                    continue;
+                }
+
                 if (targetNode is not null && IsSidechainVisualInputPin(targetNode, connection.ToPin))
                 {
                     continue;
@@ -3711,6 +4124,27 @@ public partial class MainWindow : Window
         return VoicemeeterIoLayout
             .GetEndpoints(mode, _kind)
             .FirstOrDefault(endpoint => channel >= endpoint.Range.Start && channel <= endpoint.Range.End);
+    }
+
+    private IoEndpoint? EndpointForKey(string? key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return null;
+        }
+
+        foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output })
+        {
+            var endpoint = VoicemeeterIoLayout
+                .GetEndpoints(mode, _kind)
+                .FirstOrDefault(candidate => candidate.Key(mode) == key);
+            if (endpoint is not null)
+            {
+                return endpoint;
+            }
+        }
+
+        return null;
     }
 
     private void DrawDefaultPassthroughConnections()
@@ -3941,7 +4375,9 @@ public partial class MainWindow : Window
 
     private IEnumerable<DirectRouteSummary> AllDirectRoutes()
     {
-        return _settingsByEndpoint.Values.SelectMany(settings => settings.ToDirectRoutes(_kind));
+        return _settingsByEndpoint.Values
+            .Where(settings => !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
+            .SelectMany(settings => settings.ToDirectRoutes(_kind));
     }
 
     private IEnumerable<PluginPassthroughRouteSummary> AllVstCanvasPassthroughRoutes()
@@ -3960,6 +4396,12 @@ public partial class MainWindow : Window
             }
 
             if (connection.FromChannel < 0 || connection.ToChannel < 0)
+            {
+                continue;
+            }
+
+            if (IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _) ||
+                IsInputPatchBypassChannel(connection.ToMode, connection.ToChannel, out _))
             {
                 continue;
             }
@@ -4112,7 +4554,14 @@ public partial class MainWindow : Window
 
         foreach (var settings in _settingsByEndpoint.Values)
         {
-            _engine.ApplyChannelSettings(settings);
+            if (IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
+            {
+                _engine.ClearChannelSettings(settings.Mode, settings.Endpoint);
+            }
+            else
+            {
+                _engine.ApplyChannelSettings(settings);
+            }
         }
 
         var routes = AllDirectRoutes().ToArray();
@@ -4123,12 +4572,14 @@ public partial class MainWindow : Window
     private void UpdateRouteSummary()
     {
         var routes = AllDirectRoutes().ToArray();
+        var normalRouteCount = routes.Count(static route => route.Mode == CallbackMode.Input);
+        var mainCallbackRouteCount = routes.Count(static route => route.Mode == CallbackMode.Main);
         RouteSummaryTextBlock.Text = routes.Length == 0
             ? "No direct routes armed."
-            : $"{routes.Length} direct route(s) armed.";
+            : $"{routes.Length} direct route(s) armed. Input+Output: {normalRouteCount}. Main callback: {mainCallbackRouteCount}.";
         CrossRouteSummaryTextBlock.Text = routes.Length == 0
             ? "Route selected input channels directly to output buses, with optional mute-normal."
-            : $"{routes.Length} direct route(s) armed after the VST section.";
+            : $"{routes.Length} direct route(s) armed after the VST section. Input+Output: {normalRouteCount}. Main callback: {mainCallbackRouteCount}.";
     }
 
     private void AppendLog(string message)

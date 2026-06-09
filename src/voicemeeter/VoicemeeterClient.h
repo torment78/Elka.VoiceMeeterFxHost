@@ -41,6 +41,9 @@ public:
     std::wstring statusText() const;
     std::wstring dllPath() const;
     bool getConfiguredSampleRate(int& sampleRate) const noexcept;
+    bool refreshParameters() const noexcept;
+    bool getParameterFloat(const char* parameterName, float& value) const noexcept;
+    bool getLevel(int type, int channel, float& value) const noexcept;
 
 private:
     static long __stdcall audioCallback(void* user, long command, void* data, long reserved) noexcept;

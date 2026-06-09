@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cwchar>
 #include <cstring>
@@ -84,6 +85,15 @@ struct NativeStats
     int mainOutputChannels = 0;
     int outputInsertInputChannels = 0;
     int outputInsertOutputChannels = 0;
+    int voicemeeterPreFaderLevelPercent = -1;
+    int voicemeeterPostFaderLevelPercent = -1;
+    int voicemeeterPostMuteLevelPercent = -1;
+    int voicemeeterNextPreFaderLevelPercent = -1;
+    int voicemeeterNextPostFaderLevelPercent = -1;
+    int voicemeeterNextPostMuteLevelPercent = -1;
+    int voicemeeterInputMaxLevelPercent = -1;
+    int voicemeeterInputMaxChannel = -1;
+    int voicemeeterOutputLevelPercent = -1;
 };
 
 struct NativeSinglePingResult
@@ -192,6 +202,28 @@ CallbackStreamKind streamKindFromApi(int mode) noexcept
 int apiModeFromCallbackMode(CallbackMode mode) noexcept
 {
     return static_cast<int>(mode);
+}
+
+int readRoundedParameter(NativeHost& target, const char* parameterName) noexcept
+{
+    float value = 0.0f;
+    if (!target.client.getParameterFloat(parameterName, value))
+        return -1;
+
+    return static_cast<int>(std::lround(value));
+}
+
+int readIndexedParameter(NativeHost& target, const char* format, int index) noexcept
+{
+    if (index < 0)
+        return -1;
+
+    char parameterName[64] {};
+    const int written = std::snprintf(parameterName, sizeof(parameterName), format, index);
+    if (written <= 0 || written >= static_cast<int>(sizeof(parameterName)))
+        return -1;
+
+    return readRoundedParameter(target, parameterName);
 }
 
 void writeWide(const std::wstring& text, wchar_t* buffer, int bufferChars) noexcept
@@ -1182,6 +1214,75 @@ __declspec(dllexport) void __cdecl ElkaFx_GetStats(NativeStats* stats)
     stats->mainOutputChannels = realtimeStats.mainOutputChannels;
     stats->outputInsertInputChannels = realtimeStats.outputInsertInputChannels;
     stats->outputInsertOutputChannels = realtimeStats.outputInsertOutputChannels;
+
+    const auto readLevelPercent = [&target](int type, int channel) noexcept {
+        float value = 0.0f;
+        if (!target.client.getLevel(type, channel, value))
+            return -1;
+
+        return std::clamp(static_cast<int>((std::max(0.0f, value) * 100.0f) + 0.5f), 0, 1000);
+    };
+
+    stats->voicemeeterPreFaderLevelPercent = readLevelPercent(0, realtimeStats.probeInputChannel);
+    stats->voicemeeterPostFaderLevelPercent = readLevelPercent(1, realtimeStats.probeInputChannel);
+    stats->voicemeeterPostMuteLevelPercent = readLevelPercent(2, realtimeStats.probeInputChannel);
+    stats->voicemeeterNextPreFaderLevelPercent = readLevelPercent(0, realtimeStats.probeInputChannel + 1);
+    stats->voicemeeterNextPostFaderLevelPercent = readLevelPercent(1, realtimeStats.probeInputChannel + 1);
+    stats->voicemeeterNextPostMuteLevelPercent = readLevelPercent(2, realtimeStats.probeInputChannel + 1);
+    stats->voicemeeterInputMaxLevelPercent = -1;
+    stats->voicemeeterInputMaxChannel = -1;
+    for (int channel = 0; channel < 64; ++channel)
+    {
+        const int pre = readLevelPercent(0, channel);
+        const int post = readLevelPercent(1, channel);
+        const int mute = readLevelPercent(2, channel);
+        const int level = std::max(pre, std::max(post, mute));
+        if (level > stats->voicemeeterInputMaxLevelPercent)
+        {
+            stats->voicemeeterInputMaxLevelPercent = level;
+            stats->voicemeeterInputMaxChannel = channel;
+        }
+    }
+
+    stats->voicemeeterOutputLevelPercent = readLevelPercent(3, realtimeStats.probeOutputChannel);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetPatchAsioChannel(int inputChannel)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    return readIndexedParameter(target, "patch.asio[%d]", inputChannel);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_RefreshVoicemeeterParameters()
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    return target.client.refreshParameters() ? 0 : -1;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetPatchInsertEnabled(int inputChannel)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+
+    auto result = readIndexedParameter(target, "Patch.insert[%d]", inputChannel);
+    if (result < 0)
+        result = readIndexedParameter(target, "patch.insert[%d]", inputChannel);
+
+    return result < 0 ? -1 : (result != 0 ? 1 : 0);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetPatchPostFxInsertEnabled()
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+
+    auto result = readRoundedParameter(target, "Patch.PostFxInsert");
+    if (result < 0)
+        result = readRoundedParameter(target, "patch.PostFxInsert");
+
+    return result < 0 ? -1 : (result != 0 ? 1 : 0);
 }
 
 __declspec(dllexport) int __cdecl ElkaFx_StartSinglePing(

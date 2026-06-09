@@ -4,7 +4,7 @@
         Title="Elka VoiceMeeter FX Host"
         Icon="Assets/VoicemeeterDelay.ico"
         Width="1600"
-        Height="900"
+        Height="951"
         MinWidth="1180"
         MinHeight="760"
         WindowStartupLocation="CenterScreen">
@@ -121,12 +121,19 @@
                          Text="Probe"
                          VerticalAlignment="Top"
                          FontWeight="SemiBold" />
-              <TextBlock x:Name="ProbeStatusTextBlock"
-                         Grid.Row="2"
-                         Grid.Column="1"
-                         Text="Select an input strip to probe callback stages."
-                         Style="{StaticResource MutedText}"
-                         TextWrapping="Wrap" />
+              <StackPanel Grid.Row="2"
+                          Grid.Column="1">
+                <TextBlock x:Name="ProbeStatusTextBlock"
+                           Text="Select an input strip to probe callback stages."
+                           Style="{StaticResource MutedText}"
+                           TextWrapping="Wrap" />
+                <Button Content="Copy Diagnostics"
+                        Width="138"
+                        HorizontalAlignment="Left"
+                        Margin="0,8,0,0"
+                        Style="{StaticResource RouteButton}"
+                        Click="CopyDiagnosticsButton_Click" />
+              </StackPanel>
 
             </Grid>
           </Border>

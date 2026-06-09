@@ -1407,7 +1407,9 @@ void RealtimeEngine::applySameBufferDirectRoutes(
         if (destination < 0 || destination >= buffer.outputChannels || destination >= MaxChannels)
             continue;
 
-        const float* input = currentChannelPointer(buffer, readOffset, source);
+        const float* input = kind == CallbackStreamKind::Main
+            ? sourceChannelPointer(buffer, readOffset, source)
+            : currentChannelPointer(buffer, readOffset, source);
         float* output = buffer.write[destination];
         if (input == nullptr || output == nullptr)
             continue;
@@ -1416,11 +1418,20 @@ void RealtimeEngine::applySameBufferDirectRoutes(
         {
             const int gainPercent = routeBank.gainPercent[static_cast<size_t>(route)].load(std::memory_order_relaxed);
             const float gain = static_cast<float>(gainPercent) / 100.0f;
-            for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
-                output[sample] = input[sample] * gain;
+            if (kind == CallbackStreamKind::Main)
+            {
+                for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+                    output[sample] += input[sample] * gain;
+            }
+            else
+            {
+                for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+                    output[sample] = input[sample] * gain;
+            }
         }
 
-        if (routeBank.muteSource[static_cast<size_t>(route)].load(std::memory_order_relaxed) &&
+        if (kind != CallbackStreamKind::Main &&
+            routeBank.muteSource[static_cast<size_t>(route)].load(std::memory_order_relaxed) &&
             source < buffer.outputChannels)
         {
             float* sourceOutput = buffer.write[source];

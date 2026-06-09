@@ -148,6 +148,7 @@ internal sealed class ChannelSettingsSnapshot
     public double[] VolumePercent { get; set; } = [];
     public bool[] RouteEnabled { get; set; } = [];
     public bool[] RouteMuteNormal { get; set; } = [];
+    public bool PostInsertSend { get; set; }
     public List<List<RouteDestinationSnapshot>> RouteDestinations { get; set; } = [];
     public EndpointPinMode PinMode { get; set; } = EndpointPinMode.Stereo;
 }
@@ -201,6 +202,7 @@ internal sealed class EndpointChannelSettings
     public bool[] RouteMuteNormal { get; }
     public List<RouteDestinationSnapshot>[] RouteDestinations { get; }
     public EndpointPinMode PinMode { get; set; } = EndpointPinMode.Stereo;
+    public bool PostInsertSend { get; set; }
     public bool HasActiveChannels => Enabled.Any(static enabled => enabled) || RouteEnabled.Any(static enabled => enabled);
     public int CanvasPinCount => PinMode == EndpointPinMode.Full ? Endpoint.ChannelCount : Math.Min(2, Endpoint.ChannelCount);
 
@@ -228,6 +230,7 @@ internal sealed class EndpointChannelSettings
             VolumePercent = [.. VolumePercent],
             RouteEnabled = [.. RouteEnabled],
             RouteMuteNormal = [.. RouteMuteNormal],
+            PostInsertSend = PostInsertSend,
             PinMode = PinMode,
             RouteDestinations = RouteDestinations
                 .Select(static destinations => destinations.Select(CloneDestination).ToList())
@@ -248,6 +251,7 @@ internal sealed class EndpointChannelSettings
                 : 100.0;
             RouteEnabled[offset] = offset < snapshot.RouteEnabled.Length && snapshot.RouteEnabled[offset];
             RouteMuteNormal[offset] = offset < snapshot.RouteMuteNormal.Length && snapshot.RouteMuteNormal[offset];
+            PostInsertSend = snapshot.PostInsertSend;
             PinMode = snapshot.PinMode;
             RouteDestinations[offset].Clear();
 
@@ -293,12 +297,13 @@ internal sealed class EndpointChannelSettings
                     10_000.0);
                 var routeGainPercent = CombinedRouteGainPercent(VolumePercent[offset], destination.GainDecibels);
                 yield return new DirectRouteSummary(
+                    PostInsertSend ? CallbackMode.Main : CallbackMode.Input,
                     Endpoint.Range.Start + offset,
                     bus.Range.Start + destinationOffset,
                     (int)Math.Round(routeDelayMilliseconds),
                     routeGainPercent,
                     RouteMuteNormal[offset],
-                    $"{Endpoint.Name} Ch {offset + 1} -> {bus.Name} Ch {destinationOffset + 1} ({VolumePercent[offset]:0}% x {Math.Clamp(destination.GainDecibels, -60.0, 12.0):0.0} dB)");
+                    $"{Endpoint.Name} Ch {offset + 1} -> {bus.Name} Ch {destinationOffset + 1} ({(PostInsertSend ? "main callback send, " : "input/output callback send, ")}{VolumePercent[offset]:0}% x {Math.Clamp(destination.GainDecibels, -60.0, 12.0):0.0} dB)");
             }
         }
     }
@@ -329,6 +334,7 @@ internal sealed class EndpointChannelSettings
 }
 
 internal sealed record DirectRouteSummary(
+    CallbackMode Mode,
     int SourceChannel,
     int DestinationChannel,
     int DelayMilliseconds,
@@ -531,13 +537,106 @@ internal sealed class NativeEngineClient : IDisposable
                    $"Max: In {ProbeMax(stats.InputInsertMaxReadChannel, stats.InputInsertMaxReadPeakPercent)} " +
                    $"MainSrc {ProbeMax(stats.MainSourceMaxReadChannel, stats.MainSourceMaxReadPeakPercent)} " +
                    $"Bus {ProbeMax(stats.MainBusMaxReadChannel, stats.MainBusMaxReadPeakPercent)} " +
-                   $"Out {ProbeMax(stats.OutputInsertMaxWriteChannel, stats.OutputInsertMaxWritePeakPercent)}";
+                   $"Out {ProbeMax(stats.OutputInsertMaxWriteChannel, stats.OutputInsertMaxWritePeakPercent)} | " +
+                   $"VM ch {stats.ProbeInputChannel + 1} {ProbeLevel(stats.VoicemeeterPreFaderLevelPercent)}/" +
+                   $"{ProbeLevel(stats.VoicemeeterPostFaderLevelPercent)}/" +
+                   $"{ProbeLevel(stats.VoicemeeterPostMuteLevelPercent)} " +
+                   $"ch {stats.ProbeInputChannel + 2} {ProbeLevel(stats.VoicemeeterNextPreFaderLevelPercent)}/" +
+                   $"{ProbeLevel(stats.VoicemeeterNextPostFaderLevelPercent)}/" +
+                   $"{ProbeLevel(stats.VoicemeeterNextPostMuteLevelPercent)} " +
+                   $"maxIn {ProbeMax(stats.VoicemeeterInputMaxChannel, stats.VoicemeeterInputMaxLevelPercent)} " +
+                   $"Out {ProbeLevel(stats.VoicemeeterOutputLevelPercent)}";
         }
+    }
+
+    public string? MainSourceVisibilityWarning
+    {
+        get
+        {
+            if (!_attached)
+            {
+                return null;
+            }
+
+            var stats = GetStats();
+            var voicemeeterSeesInput = MaxSelectedVoiceMeeterInputLevel(stats) >= 5;
+            var callbackSourceIsSilent =
+                stats.MainInputReadPeakPercent <= 1 &&
+                stats.MainSourceMaxReadPeakPercent <= 1;
+
+            return voicemeeterSeesInput && callbackSourceIsSilent
+                ? "VoiceMeeter meters see this strip, but the Main callback source buffer is silent. ASIO/Patch Insert return audio is not exposed here as an isolated input source."
+                : null;
+        }
+    }
+
+    public string? SelectedStripSignalStatus
+    {
+        get
+        {
+            if (!_attached)
+            {
+                return null;
+            }
+
+            var stats = GetStats();
+            var selectedVmInputLevel = MaxSelectedVoiceMeeterInputLevel(stats);
+            var voicemeeterSeesInput = selectedVmInputLevel >= 5;
+            var callbackSeesInput =
+                Math.Max(stats.InputInsertReadPeakPercent, stats.MainInputReadPeakPercent) >= 5 ||
+                Math.Max(stats.InputInsertMaxReadPeakPercent, stats.MainSourceMaxReadPeakPercent) >= 5;
+
+            if (voicemeeterSeesInput || callbackSeesInput)
+            {
+                return null;
+            }
+
+            return stats.VoicemeeterInputMaxLevelPercent >= 5
+                ? $"VoiceMeeter input audio is detected on channel {stats.VoicemeeterInputMaxChannel + 1}, but not on the selected probe pair {stats.ProbeInputChannel + 1}/{stats.ProbeInputChannel + 2}."
+                : "Selected strip signal is not detected in VoiceMeeter meters or callback source buffers. This capture is inconclusive for route testing.";
+        }
+    }
+
+    public string? InputSourceVisibilityWarning
+    {
+        get
+        {
+            if (!_attached)
+            {
+                return null;
+            }
+
+            var stats = GetStats();
+            var voicemeeterSeesInput = MaxSelectedVoiceMeeterInputLevel(stats) >= 5;
+            var callbackSourceIsSilent =
+                stats.InputInsertReadPeakPercent <= 1 &&
+                stats.InputInsertMaxReadPeakPercent <= 1;
+
+            return voicemeeterSeesInput && callbackSourceIsSilent
+                ? "VoiceMeeter meters see this strip, but the Input callback source buffer is silent. This ASIO/Patch Insert return is not available to the input-callback route."
+                : null;
+        }
+    }
+
+    private static int MaxSelectedVoiceMeeterInputLevel(NativeStats stats)
+    {
+        return Math.Max(
+            Math.Max(
+                Math.Max(stats.VoicemeeterPreFaderLevelPercent, stats.VoicemeeterPostFaderLevelPercent),
+                stats.VoicemeeterPostMuteLevelPercent),
+            Math.Max(
+                Math.Max(stats.VoicemeeterNextPreFaderLevelPercent, stats.VoicemeeterNextPostFaderLevelPercent),
+                stats.VoicemeeterNextPostMuteLevelPercent));
     }
 
     private static string ProbeMax(int channel, int peakPercent)
     {
         return channel >= 0 ? $"ch {channel + 1} {peakPercent}%" : "none";
+    }
+
+    private static string ProbeLevel(int peakPercent)
+    {
+        return peakPercent >= 0 ? $"{peakPercent}%" : "--";
     }
 
     public IReadOnlyList<PluginChoice> PluginChoices()
@@ -598,6 +697,8 @@ internal sealed class NativeEngineClient : IDisposable
         SetMode(_requestedMode);
     }
 
+    public CallbackMode RequestedMode => _requestedMode;
+
     public void SetProbeChannels(int inputChannel, int outputChannel)
     {
         if (!_attached)
@@ -606,6 +707,26 @@ internal sealed class NativeEngineClient : IDisposable
         }
 
         ElkaFx_SetProbeChannels(Math.Max(0, inputChannel), Math.Max(0, outputChannel));
+    }
+
+    public bool RefreshVoicemeeterParameters()
+    {
+        return _attached && ElkaFx_RefreshVoicemeeterParameters() == 0;
+    }
+
+    public int GetPatchAsioChannel(int inputChannel)
+    {
+        return _attached ? ElkaFx_GetPatchAsioChannel(Math.Max(0, inputChannel)) : -1;
+    }
+
+    public int GetPatchInsertEnabled(int inputChannel)
+    {
+        return _attached ? ElkaFx_GetPatchInsertEnabled(Math.Max(0, inputChannel)) : -1;
+    }
+
+    public int GetPatchPostFxInsertEnabled()
+    {
+        return _attached ? ElkaFx_GetPatchPostFxInsertEnabled() : -1;
     }
 
     public void ApplyChannelSettings(EndpointChannelSettings settings)
@@ -627,6 +748,20 @@ internal sealed class NativeEngineClient : IDisposable
         }
     }
 
+    public void ClearChannelSettings(CallbackMode mode, IoEndpoint endpoint)
+    {
+        if (!_attached)
+        {
+            return;
+        }
+
+        ElkaFx_SetTargetRange((int)mode, endpoint.Range.Start, endpoint.ChannelCount);
+        for (var offset = 0; offset < endpoint.ChannelCount; offset++)
+        {
+            ElkaFx_SetChannelSettings((int)mode, endpoint.Range.Start + offset, 0, 0, 100);
+        }
+    }
+
     public void ApplyRoutes(IEnumerable<DirectRouteSummary> routes)
     {
         if (!_attached)
@@ -634,21 +769,40 @@ internal sealed class NativeEngineClient : IDisposable
             return;
         }
 
-        var routeArray = routes
-            .Select(static route => new NativeDirectRoute
-            {
-                SourceChannel = route.SourceChannel,
-                DestinationChannel = route.DestinationChannel,
-                DelayMilliseconds = route.DelayMilliseconds,
-                GainPercent = route.GainPercent,
-                MuteSource = route.MuteNormal ? 1 : 0
-            })
-            .ToArray();
+        var routeList = routes.ToList();
+        foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output, CallbackMode.Main })
+        {
+            var routeArray = routeList
+                .Where(route => route.Mode == mode)
+                .Select(static route => new NativeDirectRoute
+                {
+                    SourceChannel = route.SourceChannel,
+                    DestinationChannel = route.DestinationChannel,
+                    DelayMilliseconds = route.DelayMilliseconds,
+                    GainPercent = route.GainPercent,
+                    MuteSource = route.MuteNormal ? 1 : 0
+                })
+                .ToArray();
 
-        ElkaFx_SetDirectRoutes((int)CallbackMode.Input, routeArray, routeArray.Length);
-        var effectiveMode = routeArray.Length > 0
-            ? _requestedMode | CallbackMode.Input | CallbackMode.Output
-            : _requestedMode;
+            ElkaFx_SetDirectRoutes((int)mode, routeArray, routeArray.Length);
+        }
+
+        var effectiveMode = _requestedMode;
+        if (routeList.Any(static route => route.Mode == CallbackMode.Input))
+        {
+            effectiveMode |= CallbackMode.Input | CallbackMode.Output;
+        }
+
+        if (routeList.Any(static route => route.Mode == CallbackMode.Output))
+        {
+            effectiveMode |= CallbackMode.Output;
+        }
+
+        if (routeList.Any(static route => route.Mode == CallbackMode.Main))
+        {
+            effectiveMode |= CallbackMode.Main;
+        }
+
         SetMode(effectiveMode);
     }
 
@@ -884,6 +1038,15 @@ internal sealed class NativeEngineClient : IDisposable
         public int MainOutputChannels;
         public int OutputInsertInputChannels;
         public int OutputInsertOutputChannels;
+        public int VoicemeeterPreFaderLevelPercent;
+        public int VoicemeeterPostFaderLevelPercent;
+        public int VoicemeeterPostMuteLevelPercent;
+        public int VoicemeeterNextPreFaderLevelPercent;
+        public int VoicemeeterNextPostFaderLevelPercent;
+        public int VoicemeeterNextPostMuteLevelPercent;
+        public int VoicemeeterInputMaxLevelPercent;
+        public int VoicemeeterInputMaxChannel;
+        public int VoicemeeterOutputLevelPercent;
     }
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
@@ -923,6 +1086,18 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_GetStats(ref NativeStats stats);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPatchAsioChannel(int inputChannel);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_RefreshVoicemeeterParameters();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPatchInsertEnabled(int inputChannel);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPatchPostFxInsertEnabled();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginCount();

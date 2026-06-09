@@ -51,9 +51,11 @@ bool VoicemeeterRemoteApi::load(std::wstring& error)
     }
 
     loadedDllPath = path;
+    getLevelFn = reinterpret_cast<GetLevelFn>(GetProcAddress(module, "VBVMR_GetLevel"));
 
     return loadFunction(loginFn, "VBVMR_Login", error) &&
            loadFunction(logoutFn, "VBVMR_Logout", error) &&
+           loadFunction(isParametersDirtyFn, "VBVMR_IsParametersDirty", error) &&
            loadFunction(getVoicemeeterTypeFn, "VBVMR_GetVoicemeeterType", error) &&
            loadFunction(getParameterFloatFn, "VBVMR_GetParameterFloat", error) &&
            loadFunction(setParameterFloatFn, "VBVMR_SetParameterFloat", error) &&
@@ -73,9 +75,11 @@ void VoicemeeterRemoteApi::unload() noexcept
 
     loginFn = nullptr;
     logoutFn = nullptr;
+    isParametersDirtyFn = nullptr;
     getVoicemeeterTypeFn = nullptr;
     getParameterFloatFn = nullptr;
     setParameterFloatFn = nullptr;
+    getLevelFn = nullptr;
     audioCallbackRegisterFn = nullptr;
     audioCallbackStartFn = nullptr;
     audioCallbackStopFn = nullptr;
@@ -98,6 +102,11 @@ long VoicemeeterRemoteApi::logout() const
     return logoutFn != nullptr ? logoutFn() : -1;
 }
 
+long VoicemeeterRemoteApi::isParametersDirty() const
+{
+    return isParametersDirtyFn != nullptr ? isParametersDirtyFn() : -1;
+}
+
 long VoicemeeterRemoteApi::getVoicemeeterType(long* type) const
 {
     return getVoicemeeterTypeFn != nullptr ? getVoicemeeterTypeFn(type) : -1;
@@ -111,6 +120,11 @@ long VoicemeeterRemoteApi::getParameterFloat(const char* parameterName, float* v
 long VoicemeeterRemoteApi::setParameterFloat(const char* parameterName, float value) const
 {
     return setParameterFloatFn != nullptr ? setParameterFloatFn(const_cast<char*>(parameterName), value) : -1;
+}
+
+long VoicemeeterRemoteApi::getLevel(long type, long channel, float* value) const
+{
+    return getLevelFn != nullptr ? getLevelFn(type, channel, value) : -1;
 }
 
 long VoicemeeterRemoteApi::audioCallbackRegister(

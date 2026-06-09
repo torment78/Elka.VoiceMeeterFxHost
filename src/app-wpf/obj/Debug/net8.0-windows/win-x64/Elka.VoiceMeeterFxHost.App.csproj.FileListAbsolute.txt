@@ -29,3 +29,7 @@ C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost\src\app-wpf\obj\Debug\net8.0-
 C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost\src\app-wpf\obj\Debug\net8.0-windows\win-x64\refint\Elka.VoiceMeeterFxHost.App.dll
 C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost\src\app-wpf\obj\Debug\net8.0-windows\win-x64\Elka.VoiceMeeterFxHost.App.pdb
 C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost\src\app-wpf\obj\Debug\net8.0-windows\win-x64\ref\Elka.VoiceMeeterFxHost.App.dll
+C:\Users\torme\Documents\Codex\2026-06-06\okay-so-this-chat-will-be\build-check\debug\Elka.VoiceMeeterFxHost.App.deps.json
+C:\Users\torme\Documents\Codex\2026-06-06\okay-so-this-chat-will-be\build-check\debug\Elka.VoiceMeeterFxHost.App.runtimeconfig.json
+C:\Users\torme\Documents\Codex\2026-06-06\okay-so-this-chat-will-be\build-check\debug\Elka.VoiceMeeterFxHost.App.dll
+C:\Users\torme\Documents\Codex\2026-06-06\okay-so-this-chat-will-be\build-check\debug\Elka.VoiceMeeterFxHost.App.pdb

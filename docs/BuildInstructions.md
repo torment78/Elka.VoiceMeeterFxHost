@@ -7,18 +7,21 @@ For launching the current WPF app from Visual Studio, use
 ## Prerequisites
 
 - Windows 10 or Windows 11.
-- Visual Studio 2022 with C++ desktop workload.
+- Visual Studio 2026 Insider or Visual Studio 2022 with C++ desktop workload.
 - VoiceMeeter installed.
 - VoiceMeeter running for runtime testing.
 - JUCE under `external/JUCE` for VST3 plugin discovery.
 - Optional VST2 SDK path; see `docs/VST2Workflow.md`.
 
-This machine has Visual Studio Community 2022 installed, but that installation
-currently reports as incomplete. The verified build path is Visual Studio 2019
-Build Tools using Visual Studio's bundled CMake at:
+The preferred native build path is Visual Studio 2026 Insider. Visual Studio
+2022 is the supported fallback. The WPF project automatically selects
+`vs2026-x64` first, then `vs2022-x64` if VS 2026 is not available. There is no
+VS 2019 fallback.
+
+Example Visual Studio 2026 CMake path:
 
 ```text
-C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
 ```
 
 ## Configure
@@ -26,23 +29,22 @@ C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtens
 From `C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost`:
 
 ```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --preset vs2019-x64
+& "C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --preset vs2026-x64
 ```
 
-If `external/JUCE` exists, CMake enables the JUCE VST3 discovery layer. If it is
-missing, the callback, delay, and gain prototype still builds without plugin
-hosting.
+If you are using Visual Studio 2022 instead, use `--preset vs2022-x64`.
+`external/JUCE` is required for VST hosting.
 
 To configure VST2 hosting with a local SDK:
 
 ```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --preset vs2019-x64 -DELKA_VST2_SDK_PATH="D:\AudioSDKs\VST2_SDK"
+& "C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --preset vs2026-x64 -DELKA_VST2_SDK_PATH="D:\AudioSDKs\VST2_SDK"
 ```
 
 ## Build
 
 ```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build --preset debug --target ElkaVoiceMeeterFxHost.Native
+& "C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build --preset debug-vs2026 --target ElkaVoiceMeeterFxHost.Native
 ```
 
 ## Run

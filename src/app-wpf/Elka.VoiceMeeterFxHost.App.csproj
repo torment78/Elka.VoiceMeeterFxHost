@@ -16,16 +16,16 @@
     <NativeBuildConfiguration Condition="'$(NativeBuildConfiguration)' == ''">Debug</NativeBuildConfiguration>
     <NativeCMakePreset Condition="'$(NativeCMakePreset)' == '' and Exists('C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')">vs2026-x64</NativeCMakePreset>
     <NativeCMakePreset Condition="'$(NativeCMakePreset)' == '' and (Exists('C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe') or Exists('C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe') or Exists('C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'))">vs2022-x64</NativeCMakePreset>
-    <NativeCMakePreset Condition="'$(NativeCMakePreset)' == ''">vs2019-x64</NativeCMakePreset>
+    <NativeCMakePreset Condition="'$(NativeCMakePreset)' == ''">vs2026-x64</NativeCMakePreset>
     <NativeBuildDir Condition="'$(NativeCMakePreset)' == 'vs2026-x64'">build-vs2026</NativeBuildDir>
     <NativeBuildDir Condition="'$(NativeCMakePreset)' == 'vs2022-x64'">build-vs2022</NativeBuildDir>
-    <NativeBuildDir Condition="'$(NativeBuildDir)' == ''">build-vs2019</NativeBuildDir>
+    <NativeBuildDir Condition="'$(NativeBuildDir)' == ''">build-vs2026</NativeBuildDir>
     <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">release-vs2026</NativeBuildPreset>
     <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">debug-vs2026</NativeBuildPreset>
     <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">release-vs2022</NativeBuildPreset>
     <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">debug-vs2022</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release'">release-vs2019</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == ''">debug-vs2019</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release'">release-vs2026</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == ''">debug-vs2026</NativeBuildPreset>
     <NativeBridgePath>$(RepoRoot)\$(NativeBuildDir)\$(NativeBuildConfiguration)\ElkaVoiceMeeterFxHost.Native.dll</NativeBridgePath>
     <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and '$(ELKA_VST2_SDK_PATH)' != ''">$(ELKA_VST2_SDK_PATH)</Vst2SdkPath>
     <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h') and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffectx.h')">$(RepoRoot)\external\VST2_SDK</Vst2SdkPath>

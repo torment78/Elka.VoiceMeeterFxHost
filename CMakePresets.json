@@ -14,13 +14,6 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build-vs2022"
-    },
-    {
-      "name": "vs2019-x64",
-      "displayName": "Visual Studio 2019 x64",
-      "generator": "Visual Studio 16 2019",
-      "architecture": "x64",
-      "binaryDir": "${sourceDir}/build-vs2019"
     }
   ],
   "buildPresets": [
@@ -42,16 +35,6 @@
     {
       "name": "release-vs2022",
       "configurePreset": "vs2022-x64",
-      "configuration": "Release"
-    },
-    {
-      "name": "debug-vs2019",
-      "configurePreset": "vs2019-x64",
-      "configuration": "Debug"
-    },
-    {
-      "name": "release-vs2019",
-      "configurePreset": "vs2019-x64",
       "configuration": "Release"
     },
     {

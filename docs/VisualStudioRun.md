@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Windows 10 or Windows 11.
-- Visual Studio 2022 with:
+- Visual Studio 2026 Insider or Visual Studio 2022 with:
   - `.NET desktop development`
   - `Desktop development with C++`
   - CMake tools for Windows
@@ -41,6 +41,9 @@ The WPF project re-runs CMake configure before the native bridge build. This is
 intentional: it keeps the native build cache synchronized with the current VST2
 SDK setting instead of leaving stale CMake settings behind.
 
+Native CMake uses `vs2026-x64` by default, with `vs2022-x64` as the fallback.
+The project should not use the old `vs2019-x64` preset.
+
 If the app fails before the main window appears, check:
 
 ```text
@@ -69,7 +72,7 @@ locations, set `Vst2SdkPath` or `ELKA_VST2_SDK_PATH`; see
 4. Use `Channels` to verify delay, volume, and direct routing.
 5. Use `VST` to add a plugin node and drag cables from the left endpoint pins
    through the plugin to the right endpoint pins.
-6. Right-click an endpoint card to switch between `Stereo`, `Advanced / Full`,
+6. Right-click an endpoint card to switch between `Minimize Pins`, `Expand Pins`,
    and route hue colors.
 7. Right-click a VST node to open the editor, bypass it, change pin layout, add
    sidechain input, or remove it.

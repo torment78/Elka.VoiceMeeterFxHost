@@ -13,6 +13,12 @@ set(ELKA_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE")
 set(ELKA_VST2_SDK_PATH "" CACHE PATH "Required legacy VST2 SDK folder containing pluginterfaces/vst2.x/aeffect.h and aeffectx.h")
 set(ELKA_ENABLE_VST2_HOST OFF)
 if (EXISTS "${ELKA_JUCE_DIR}/CMakeLists.txt")
+    if (NOT EXISTS "${ELKA_JUCE_DIR}/extras/Build/CMake/JUCEModuleSupport.cmake")
+        message(FATAL_ERROR
+            "The JUCE checkout in external/JUCE is incomplete. Missing extras/Build/CMake/JUCEModuleSupport.cmake. "
+            "If this was cloned from Git, make sure external/JUCE/extras/Build is committed/pulled, or replace external/JUCE with a full JUCE checkout.")
+    endif()
+
     set(JUCE_MODULES_ONLY ON CACHE BOOL "Build JUCE modules only" FORCE)
     add_subdirectory("${ELKA_JUCE_DIR}" external/JUCE-build EXCLUDE_FROM_ALL)
     set(ELKA_ENABLE_JUCE_PLUGIN_HOST ON)

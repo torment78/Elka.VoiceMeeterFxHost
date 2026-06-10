@@ -1,7 +1,8 @@
 # Build outputs
-build*/
-out/
-artifacts/
+/build*/
+/out/
+/artifacts/
+**/Builds/
 **/bin/
 **/obj/
 

@@ -7343,7 +7343,7 @@ public partial class MainWindow : Window
         var maxX = (int)Math.Max(minX, RoutingCanvas.Width - VstEndpointCardWidth - VstGroupWidth - (VstCanvasWallMargin * 2));
         _draggingGroup.X = Math.Clamp((int)(point.X - _dragOffset.X), minX, maxX);
         _draggingGroup.Y = Math.Max(30, (int)(point.Y - _dragOffset.Y));
-        MoveDragElements(_draggingGroup.X - _dragElementOrigins.Values.Min(static point => point.X), _draggingGroup.Y - _dragElementOrigins.Values.Min(static point => point.Y));
+        MoveDragElements(_draggingGroup.X - _dragElementOrigins.Values.Min(static point => point.X) - 6, _draggingGroup.Y - _dragElementOrigins.Values.Min(static point => point.Y));
         e.Handled = true;
     }
 
@@ -7368,13 +7368,21 @@ public partial class MainWindow : Window
             return;
         }
 
-        SelectPluginNode(node.Slot, rebuildCanvas: false);
-        _draggingNode = node;
-        var point = e.GetPosition(RoutingCanvas);
-        _dragOffset = new Point(point.X - node.X, point.Y - node.Y);
-        CaptureDragOrigins(_nodeVisualElements.TryGetValue(node.Slot, out var elements) ? elements : [border]);
-        border.CaptureMouse();
-        e.Handled = true;
+        if (e.ClickCount > 1)
+        {
+            AppendLog(_engine.OpenPluginEditor(node.Slot));
+            e.Handled = true;
+        }
+        else
+        {
+            SelectPluginNode(node.Slot, rebuildCanvas: false);
+            _draggingNode = node;
+            var point = e.GetPosition(RoutingCanvas);
+            _dragOffset = new Point(point.X - node.X, point.Y - node.Y);
+            CaptureDragOrigins(_nodeVisualElements.TryGetValue(node.Slot, out var elements) ? elements : [border]);
+            border.CaptureMouse();
+            e.Handled = true;
+        }
     }
 
     private void Node_MouseMove(object sender, MouseEventArgs e)
@@ -7389,7 +7397,7 @@ public partial class MainWindow : Window
         var maxX = (int)Math.Max(minX, RoutingCanvas.Width - VstEndpointCardWidth - VstNodeWidth - (VstCanvasWallMargin * 2));
         _draggingNode.X = Math.Clamp((int)(point.X - _dragOffset.X), minX, maxX);
         _draggingNode.Y = Math.Max(30, (int)(point.Y - _dragOffset.Y));
-        MoveDragElements(_draggingNode.X - _dragElementOrigins.Values.Min(static point => point.X), _draggingNode.Y - _dragElementOrigins.Values.Min(static point => point.Y));
+        MoveDragElements(_draggingNode.X - _dragElementOrigins.Values.Min(static point => point.X) - 6, _draggingNode.Y - _dragElementOrigins.Values.Min(static point => point.Y));
         e.Handled = true;
     }
 

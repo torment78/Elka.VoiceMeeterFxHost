@@ -11,8 +11,10 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $repoRoot "src\app-wpf\Elka.VoiceMeeterFxHost.App.csproj"
 $publishDir = Join-Path $repoRoot "artifacts\publish\ElkaVoiceMeeterFxHost\$Runtime"
+$standaloneDir = Join-Path $repoRoot "artifacts\publish\ElkaVoiceMeeterFxHost\$Runtime-standalone"
 $releaseDir = Join-Path $repoRoot "artifacts\release"
 $publishExe = Join-Path $publishDir "Elka.VoiceMeeterFxHost.App.exe"
+$standaloneExe = Join-Path $standaloneDir "Elka.VoiceMeeterFxHost.App.exe"
 $releaseExe = Join-Path $releaseDir "ElkaVoiceMeeterFxHost.exe"
 $zipPath = Join-Path $releaseDir "ElkaVoiceMeeterFxHost-$Runtime-framework-dependent.zip"
 
@@ -20,14 +22,18 @@ if (Test-Path $publishDir) {
     Remove-Item -LiteralPath $publishDir -Recurse -Force
 }
 
-New-Item -ItemType Directory -Force -Path $publishDir, $releaseDir | Out-Null
+if (Test-Path $standaloneDir) {
+    Remove-Item -LiteralPath $standaloneDir -Recurse -Force
+}
+
+New-Item -ItemType Directory -Force -Path $publishDir, $standaloneDir, $releaseDir | Out-Null
 
 dotnet publish $project `
     -c $Configuration `
     -r $Runtime `
     --self-contained false `
     -o $publishDir `
-    -p:PublishSingleFile=true `
+    -p:PublishSingleFile=false `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:IncludeAllContentForSelfExtract=true
 
@@ -39,7 +45,29 @@ if (!(Test-Path $publishExe)) {
     throw "Publish did not create $publishExe"
 }
 
-Copy-Item -LiteralPath $publishExe -Destination $releaseExe -Force
+dotnet publish $project `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained true `
+    -o $standaloneDir `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:IncludeAllContentForSelfExtract=true `
+    -p:ElkaCreateReleaseArtifacts=false `
+    -p:ElkaUploadGitHubRelease=false
+
+if ($LASTEXITCODE -ne 0) {
+    throw "standalone dotnet publish failed with exit code $LASTEXITCODE"
+}
+
+if (!(Test-Path $standaloneExe)) {
+    throw "Standalone publish did not create $standaloneExe"
+}
+
+Copy-Item -LiteralPath $standaloneExe -Destination $releaseExe -Force
+if ((Get-Item -LiteralPath $releaseExe).Length -lt 10000000) {
+    throw "Release EXE is too small and is probably the framework-dependent apphost stub."
+}
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
@@ -49,6 +77,7 @@ Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath -Fo
 
 Write-Host "Published:"
 Write-Host "  $publishExe"
+Write-Host "  $standaloneExe"
 Write-Host "  $releaseExe"
 Write-Host "  $zipPath"
 

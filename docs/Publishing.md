@@ -1,12 +1,15 @@
 # Publishing and GitHub Releases
 
-The app publishes as a framework-dependent Windows x64 single-file EXE. It is
-not self-contained, so the target PC must have the .NET 8 Desktop Runtime
-installed.
+The release flow creates two Windows x64 artifacts:
 
-The native VoiceMeeter/VST bridge is bundled into the single-file publish and
-extracted by `.NET` at runtime. The release zip is still useful because it can
-carry future extra files without changing the release flow.
+- `ElkaVoiceMeeterFxHost.exe`: a self-contained standalone EXE for direct
+  download from GitHub.
+- `ElkaVoiceMeeterFxHost-win-x64-framework-dependent.zip`: a smaller
+  framework-dependent folder package. This requires the .NET 8 Desktop Runtime.
+
+The ZIP is the best package for normal installs because it keeps helper files
+visible beside the app. The standalone EXE is built separately so it is not the
+small framework-dependent apphost stub.
 
 ## Local Publish
 
@@ -22,9 +25,9 @@ In Visual Studio, use the publish profile:
 src\app-wpf\Properties\PublishProfiles\win-x64-framework-dependent.pubxml
 ```
 
-That profile creates the release EXE/ZIP and uploads both files to the GitHub
-release automatically. The default release tag is `v$(Version)` from the app
-project, for example `v0.2.0`.
+That profile creates the release ZIP and the standalone release EXE, then uploads
+both files to the GitHub release automatically. The default release tag is
+`v$(Version)` from the app project, for example `v0.2.0`.
 The upload log is written to:
 
 ```text
@@ -72,7 +75,5 @@ dotnet publish .\src\app-wpf\Elka.VoiceMeeterFxHost.App.csproj `
   -c Release `
   -r win-x64 `
   --self-contained false `
-  -p:PublishSingleFile=true `
-  -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:IncludeAllContentForSelfExtract=true
+  -p:PublishSingleFile=false
 ```

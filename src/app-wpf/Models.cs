@@ -376,6 +376,7 @@ internal sealed class PluginNodeSnapshot
     public int OutputPins { get; set; } = 2;
     public bool Bypassed { get; set; }
     public bool PinsCollapsed { get; set; }
+    public bool Sandboxed { get; set; }
     public CallbackMode Mode { get; set; } = CallbackMode.Input;
 }
 
@@ -819,6 +820,25 @@ internal sealed class NativeEngineClient : IDisposable
         return _lastStatus;
     }
 
+    public int RestartInsertAsioIfFormatChanged(VoicemeeterKind kind, out string restartStatus)
+    {
+        if (!_attached)
+        {
+            restartStatus = _lastStatus;
+            return -1;
+        }
+
+        var status = new StringBuilder(1024);
+        var result = ElkaFx_RestartInsertAsioIfFormatChanged(ExpectedInsertAsioChannelCount(kind), status, status.Capacity);
+        restartStatus = status.ToString();
+        if (result != 0)
+        {
+            _lastStatus = restartStatus;
+        }
+
+        return result;
+    }
+
     public string StopInsertAsio()
     {
         if (!_attached)
@@ -1047,6 +1067,7 @@ internal sealed class NativeEngineClient : IDisposable
             SidechainInputPins = Math.Max(0, loadedInputPins - loadedMainInputPins),
             InputPins = Math.Max(1, loadedInputPins),
             OutputPins = Math.Max(1, loadedOutputPins),
+            Sandboxed = sandboxed,
             Mode = mode
         };
     }
@@ -1373,6 +1394,9 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_StartInsertAsio(int expectedChannelCount, StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_RestartInsertAsioIfFormatChanged(int expectedChannelCount, StringBuilder status, int statusChars);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_StopInsertAsio(StringBuilder status, int statusChars);

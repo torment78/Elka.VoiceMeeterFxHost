@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private int _selectedCrossRouteBusIndex = -1;
     private bool? _lastSelectedPatchBypassState;
     private bool _updatingInsertAsioControls;
+    private bool _insertAsioFormatRestartInProgress;
+    private DateTimeOffset _lastInsertAsioFormatCheck = DateTimeOffset.MinValue;
     private string? _draggingEndpointKey;
     private CallbackMode _draggingEndpointMode = CallbackMode.None;
     private IoEndpoint? _draggingEndpoint;
@@ -1538,6 +1540,7 @@ public partial class MainWindow : Window
         _engine.RefreshVoicemeeterParameters();
         StatusTextBlock.Text = _engine.StatusText;
         InsertAsioStatusTextBlock.Text = _engine.InsertAsioStatus();
+        MaybeRestartInsertAsioAfterFormatChange();
         var probeText = _engine.ProbeText;
         var patchExplanation = string.Empty;
         var selectedPatchBypassed = _selectedChannelSettings is not null &&
@@ -1581,6 +1584,67 @@ public partial class MainWindow : Window
         }
 
         ProbeStatusTextBlock.Text = probeText;
+    }
+
+    private void MaybeRestartInsertAsioAfterFormatChange()
+    {
+        if (!_engine.IsInsertAsioRunning || _insertAsioFormatRestartInProgress)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.Now;
+        if (now - _lastInsertAsioFormatCheck < TimeSpan.FromSeconds(1))
+        {
+            return;
+        }
+
+        _lastInsertAsioFormatCheck = now;
+        _insertAsioFormatRestartInProgress = true;
+        var kind = _kind;
+
+        System.Threading.Tasks.Task
+            .Run(() =>
+            {
+                var result = _engine.RestartInsertAsioIfFormatChanged(kind, out var restartStatus);
+                return (result, restartStatus);
+            })
+            .ContinueWith(task =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        if (task.IsFaulted)
+                        {
+                            var message = task.Exception?.GetBaseException().Message ?? "unknown error";
+                            AppendLog($"Insert ASIO format monitor failed: {message}");
+                            return;
+                        }
+
+                        var (result, restartStatus) = task.Result;
+                        if (result == 0)
+                        {
+                            return;
+                        }
+
+                        InsertAsioStatusTextBlock.Text = restartStatus;
+                        AppendLog(result > 0
+                            ? restartStatus
+                            : $"Insert ASIO format monitor restart failed: {restartStatus}");
+
+                        if (result > 0)
+                        {
+                            ApplyInsertAsioPatchSelection();
+                            RefreshEndpointButtonSelection();
+                        }
+                    }
+                    finally
+                    {
+                        _insertAsioFormatRestartInProgress = false;
+                    }
+                }));
+            });
     }
 
     private void ShowPluginScanWindow()
@@ -4832,6 +4896,7 @@ public partial class MainWindow : Window
         if (targetGroup is not null)
         {
             AddNodeToGroup(node, targetGroup);
+            QueueSave();
             return node;
         }
 
@@ -4913,7 +4978,8 @@ public partial class MainWindow : Window
                 savedNode.X,
                 savedNode.Y,
                 savedNode.PluginStateBase64,
-                savedNode.PluginPresetBase64);
+                savedNode.PluginPresetBase64,
+                sandboxed: savedNode.Sandboxed || PluginProbeGuard.RequiresSandboxedHosting(choice));
             if (restored is null)
             {
                 AppendLog($"{savedNode.Name}: saved VST restore failed. {_engine.StatusText}");
@@ -5117,6 +5183,9 @@ public partial class MainWindow : Window
         restored.Mode = saved.Mode == CallbackMode.None ? CallbackMode.Input : saved.Mode;
         restored.Bypassed = saved.Bypassed;
         restored.PinsCollapsed = saved.PinsCollapsed;
+        restored.Sandboxed = restored.Sandboxed ||
+                             saved.Sandboxed ||
+                             PluginProbeGuard.RequiresSandboxedHosting(new PluginChoice(restored.PluginIndex, restored.Name, string.Empty));
         restored.PluginStateBase64 = saved.PluginStateBase64;
         restored.PluginPresetBase64 = saved.PluginPresetBase64;
         restored.PluginParameterStateBase64 = saved.PluginParameterStateBase64;
@@ -5278,6 +5347,7 @@ public partial class MainWindow : Window
             OutputPins = node.OutputPins,
             Bypassed = node.Bypassed,
             PinsCollapsed = node.PinsCollapsed,
+            Sandboxed = node.Sandboxed,
             Mode = node.Mode
         };
     }
@@ -7041,7 +7111,8 @@ public partial class MainWindow : Window
                 member.X + 28,
                 member.Y + 28,
                 member.PluginStateBase64,
-                member.PluginPresetBase64);
+                member.PluginPresetBase64,
+                sandboxed: member.Sandboxed);
             if (copy is null)
             {
                 AppendLog(_engine.StatusText);
@@ -7052,6 +7123,7 @@ public partial class MainWindow : Window
             copy.PluginStateBase64 = member.PluginStateBase64;
             copy.PluginPresetBase64 = member.PluginPresetBase64;
             copy.PluginParameterStateBase64 = member.PluginParameterStateBase64;
+            copy.Sandboxed = member.Sandboxed;
             VerifyRestoredPluginState(copy, member);
             copy.Bypassed = member.Bypassed;
             copy.PinsCollapsed = member.PinsCollapsed;
@@ -7253,7 +7325,8 @@ public partial class MainWindow : Window
             node.X,
             node.Y,
             node.PluginStateBase64,
-            node.PluginPresetBase64);
+            node.PluginPresetBase64,
+            sandboxed: node.Sandboxed);
 
         if (replacement is null)
         {
@@ -7268,6 +7341,7 @@ public partial class MainWindow : Window
         node.MainInputPins = Math.Clamp(safeMainInputs, 1, node.InputPins);
         node.SidechainInputPins = Math.Min(safeSidechainInputs, Math.Max(0, node.InputPins - node.MainInputPins));
         node.Bypassed = wasBypassed;
+        node.Sandboxed = replacement.Sandboxed;
         if (hadPendingSavedDataApply && HasSavedPluginData(node))
         {
             _pluginNodesPendingSavedDataApply.Add(node.Slot);

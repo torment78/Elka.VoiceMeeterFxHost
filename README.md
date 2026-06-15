@@ -352,9 +352,9 @@ artifacts\release\ElkaVoiceMeeterFxHost.exe
 artifacts\release\ElkaVoiceMeeterFxHost-win-x64-framework-dependent.zip
 ```
 
-The release EXE is framework-dependent and single-file, with the native bridge
-bundled for extraction at runtime. The target PC still needs the .NET 8 Desktop
-Runtime installed.
+The release EXE is self-contained for direct GitHub download. The ZIP is the
+smaller framework-dependent package and needs the .NET 8 Desktop Runtime
+installed on the target PC.
 
 ## Architecture
 

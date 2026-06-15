@@ -497,6 +497,15 @@ bool pathExtensionIs(const std::filesystem::path& path, const char* extension)
     return lowerAscii(path.extension().string()) == extension;
 }
 
+bool isUnsupported32BitBinary(const std::filesystem::path& path) noexcept
+{
+    DWORD binaryType = 0;
+    if (!GetBinaryTypeW(path.c_str(), &binaryType))
+        return false;
+
+    return binaryType == SCS_32BIT_BINARY;
+}
+
 bool hasVst3Ancestor(std::filesystem::path path)
 {
     for (auto parent = path.parent_path(); !parent.empty();)
@@ -619,6 +628,14 @@ std::vector<juce::String> collectPluginCandidates(
 
             if (entry.is_regular_file() && pathExtensionIs(path, ".dll") && !hasVst3Ancestor(path))
             {
+                if (isUnsupported32BitBinary(path))
+                {
+                    report << "  Skipping 32-bit VST2 DLL in x64 host: " << pathText << "\n";
+                    if (progress)
+                        progress("Skipping 32-bit VST2 DLL", pathText, visited, 0);
+                    continue;
+                }
+
                 candidates.emplace_back(pathText);
                 if (progress)
                     progress("Found " + formatText + " candidate", pathText, static_cast<int>(candidates.size()), 0);

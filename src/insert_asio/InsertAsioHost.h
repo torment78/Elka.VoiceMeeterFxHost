@@ -28,6 +28,8 @@ public:
     void stop(std::wstring& status) noexcept;
     void status(std::wstring& status) const;
     bool isRunning() const noexcept { return running.load(std::memory_order_acquire); }
+    int currentSampleRate() const noexcept { return sampleRate.load(std::memory_order_acquire); }
+    int currentBlockSize() const noexcept { return blockSize.load(std::memory_order_acquire); }
 
 private:
     void audioDeviceIOCallbackWithContext(

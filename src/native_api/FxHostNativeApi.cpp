@@ -982,6 +982,21 @@ int activeVoiceMeeterSampleRate(NativeHost& target) noexcept
     return configuredVoiceMeeterSampleRate(target);
 }
 
+int desiredInsertAsioSampleRate(NativeHost& target) noexcept
+{
+    const int configuredSampleRate = configuredVoiceMeeterSampleRate(target);
+    if (configuredSampleRate > 0)
+        return configuredSampleRate;
+
+    return activeVoiceMeeterSampleRate(target);
+}
+
+int desiredInsertAsioBlockSize(NativeHost& target) noexcept
+{
+    const auto stats = target.engine.getStats();
+    return stats.blockSize > 0 ? stats.blockSize : 512;
+}
+
 bool startLocked(NativeHost& target, std::wstring& error)
 {
     if (!target.client.connect(error))
@@ -1008,6 +1023,62 @@ bool startLocked(NativeHost& target, std::wstring& error)
 
     target.lastStatus = target.client.statusText();
     return true;
+}
+
+int restartInsertAsioForFormatChangeLocked(NativeHost& target, int expectedChannelCount, std::wstring& message)
+{
+    if (!target.insertAsio.isRunning())
+    {
+        message = L"Insert ASIO host is not running.";
+        return 0;
+    }
+
+    const int desiredSampleRate = desiredInsertAsioSampleRate(target);
+    if (desiredSampleRate <= 0)
+    {
+        message = L"Insert ASIO format check skipped: VoiceMeeter has not reported a sample rate yet.";
+        return 0;
+    }
+
+    const int currentSampleRate = target.insertAsio.currentSampleRate();
+    const int desiredBlockSize = desiredInsertAsioBlockSize(target);
+    const int currentBlockSize = target.insertAsio.currentBlockSize();
+    const bool sampleRateChanged = currentSampleRate > 0 && currentSampleRate != desiredSampleRate;
+    const bool blockSizeChanged = currentBlockSize > 0 && desiredBlockSize > 0 && currentBlockSize != desiredBlockSize;
+    if (!sampleRateChanged && !blockSizeChanged)
+    {
+        message = L"Insert ASIO format is current.";
+        return 0;
+    }
+
+    if (!target.engine.prepareDelayBuffers(desiredSampleRate))
+    {
+        message = L"Insert ASIO restart skipped: failed to allocate delay buffers for " +
+            std::to_wstring(desiredSampleRate) + L" Hz.";
+        return -1;
+    }
+
+    std::wstring stopped;
+    target.insertAsio.stop(stopped);
+
+    std::wstring started;
+    const bool ok = target.insertAsio.start(desiredSampleRate, desiredBlockSize, expectedChannelCount, started);
+    std::wostringstream details;
+    details << L"Insert ASIO format changed from "
+            << (currentSampleRate > 0 ? std::to_wstring(currentSampleRate) : L"?") << L" Hz / "
+            << (currentBlockSize > 0 ? std::to_wstring(currentBlockSize) : L"?") << L" spl to "
+            << desiredSampleRate << L" Hz / " << desiredBlockSize << L" spl. ";
+
+    if (!ok)
+    {
+        details << L"Restart failed: " << started;
+        message = details.str();
+        return -1;
+    }
+
+    details << L"Restarted. " << started;
+    message = details.str();
+    return 1;
 }
 
 bool setModeLocked(NativeHost& target, CallbackMode mode, std::wstring& error)
@@ -1247,9 +1318,17 @@ __declspec(dllexport) int __cdecl ElkaFx_StartInsertAsio(int expectedChannelCoun
         return -1;
     }
 
-    const auto stats = target.engine.getStats();
-    const int requestedSampleRate = activeVoiceMeeterSampleRate(target);
-    const int requestedBlockSize = stats.blockSize > 0 ? stats.blockSize : 512;
+    const int requestedSampleRate = desiredInsertAsioSampleRate(target);
+    const int requestedBlockSize = desiredInsertAsioBlockSize(target);
+    if (requestedSampleRate > 0 && !target.engine.prepareDelayBuffers(requestedSampleRate))
+    {
+        writeWide(
+            L"Insert ASIO start failed: failed to allocate delay buffers for " +
+                std::to_wstring(requestedSampleRate) + L" Hz.",
+            status,
+            statusChars);
+        return -1;
+    }
 
     std::wstring message;
     const bool ok = target.insertAsio.start(requestedSampleRate, requestedBlockSize, expectedChannelCount, message);
@@ -1258,6 +1337,24 @@ __declspec(dllexport) int __cdecl ElkaFx_StartInsertAsio(int expectedChannelCoun
 
     writeWide(message, status, statusChars);
     return ok ? 0 : -1;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_RestartInsertAsioIfFormatChanged(int expectedChannelCount, wchar_t* status, int statusChars)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+
+    std::wstring error;
+    if (!target.client.connect(error))
+    {
+        writeWide(error.empty() ? L"Could not connect to VoiceMeeter Remote API." : error, status, statusChars);
+        return -1;
+    }
+
+    std::wstring message;
+    const int result = restartInsertAsioForFormatChangeLocked(target, expectedChannelCount, message);
+    writeWide(message, status, statusChars);
+    return result;
 }
 
 __declspec(dllexport) void __cdecl ElkaFx_StopInsertAsio(wchar_t* status, int statusChars)
@@ -1855,12 +1952,12 @@ int addPluginNodeNative(
     const std::string layoutName =
         layoutChannels == 1 ? "Mono" : layoutChannels == 2 ? "Stereo" : std::to_string(layoutChannels) + " channel";
 
-    int sampleRate = activeVoiceMeeterSampleRate(target);
+    int sampleRate = desiredInsertAsioSampleRate(target);
     if (sampleRate <= 0)
     {
         std::wstring startError;
         startLocked(target, startError);
-        sampleRate = activeVoiceMeeterSampleRate(target);
+        sampleRate = desiredInsertAsioSampleRate(target);
     }
 
     if (sampleRate <= 0)

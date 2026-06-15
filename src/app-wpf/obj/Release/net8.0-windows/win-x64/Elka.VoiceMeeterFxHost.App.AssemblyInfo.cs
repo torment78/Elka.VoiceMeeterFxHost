@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("Elka.VoiceMeeterFxHost.App")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("0.6.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.6.0+f7c8ba3284c3f783aa803f64bf0c58528c725cd7")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("0.7.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.7.0+c05f07f668b9fef5add18c877fed91b73a529c11")]
 [assembly: System.Reflection.AssemblyProductAttribute("Elka.VoiceMeeterFxHost.App")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Elka.VoiceMeeterFxHost.App")]
-[assembly: System.Reflection.AssemblyVersionAttribute("0.6.0.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("0.7.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

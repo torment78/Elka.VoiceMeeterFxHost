@@ -129,6 +129,12 @@
     <Copy SourceFiles="$(SingleFilePublishedExePath)"
           DestinationFiles="$(ReleaseExePath)"
           OverwriteReadOnlyFiles="true" />
+    <ItemGroup>
+      <SingleFileWorkerSidecar Include="$(SingleFilePublishDir)Elka.PluginWorker.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SingleFileWorkerSidecar)"
+          DestinationFolder="$(ReleaseDir)"
+          SkipUnchangedFiles="true" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$length = (Get-Item -LiteralPath '$(ReleaseExePath)').Length; if ($length -lt 1000000 -or $length -gt 50000000) { throw ('Release EXE size ' + $length + ' is outside the expected framework-dependent single-file range.') }&quot;" />
     <Message Importance="high" Text="Release EXE: $(ReleaseExePath)" />
     <Message Importance="high" Text="Release ZIP: $(ReleaseZipPath)" />

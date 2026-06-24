@@ -63,6 +63,16 @@ Write-UploadLog "Release tag: $Tag"
 Write-UploadLog "ZIP: $ZipPath"
 Write-UploadLog "EXE: $ExePath"
 
+$releaseDirectory = Split-Path -Path $ExePath -Parent
+$workerSidecars = @(
+    Get-ChildItem -LiteralPath $releaseDirectory -Filter "Elka.PluginWorker.*" -File -ErrorAction SilentlyContinue
+)
+if ($workerSidecars.Count -gt 0) {
+    foreach ($sidecar in $workerSidecars) {
+        Write-UploadLog "Worker sidecar: $($sidecar.FullName)"
+    }
+}
+
 & $gh auth status
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub CLI is not authenticated. Run: gh auth login"
@@ -85,7 +95,8 @@ else {
     Write-UploadLog "Release $Tag already exists. Uploading assets with --clobber."
 }
 
-& $gh release upload $Tag --repo $Repository $ZipPath $ExePath --clobber
+$uploadAssets = @($ZipPath, $ExePath) + @($workerSidecars | ForEach-Object { $_.FullName })
+& $gh release upload $Tag --repo $Repository @uploadAssets --clobber
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub release upload failed with exit code $LASTEXITCODE."
 }

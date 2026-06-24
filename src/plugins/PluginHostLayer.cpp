@@ -1256,8 +1256,20 @@ std::wstring quoteWindowsArg(const std::wstring& value)
     return result;
 }
 
-std::wstring sameDirectoryWorkerPath()
+std::wstring configuredWorkerPath()
 {
+    std::array<wchar_t, 32768> envBuffer {};
+    const DWORD envLength = GetEnvironmentVariableW(
+        L"ELKA_PLUGIN_WORKER_EXE",
+        envBuffer.data(),
+        static_cast<DWORD>(envBuffer.size()));
+    if (envLength > 0 && envLength < envBuffer.size())
+    {
+        std::filesystem::path configured(std::wstring(envBuffer.data(), envLength));
+        if (std::filesystem::exists(configured))
+            return configured.wstring();
+    }
+
     std::array<wchar_t, MAX_PATH> buffer {};
     const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (length == 0 || length >= buffer.size())
@@ -1461,10 +1473,10 @@ private:
     void start(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, std::string& error)
     {
         error.clear();
-        const auto workerPath = sameDirectoryWorkerPath();
+        const auto workerPath = configuredWorkerPath();
         if (workerPath.empty() || !std::filesystem::exists(workerPath))
         {
-            error = "Elka.PluginWorker.exe was not found beside the main app.";
+            error = "Elka.PluginWorker.exe was not found beside the main app or in the embedded worker cache.";
             return;
         }
 

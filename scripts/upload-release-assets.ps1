@@ -63,15 +63,6 @@ Write-UploadLog "Release tag: $Tag"
 Write-UploadLog "ZIP: $ZipPath"
 Write-UploadLog "EXE: $ExePath"
 
-$releaseDirectory = Split-Path -Path $ExePath -Parent
-$workerSidecars = @(
-    Get-ChildItem -LiteralPath $releaseDirectory -Filter "Elka.PluginWorker.*" -File -ErrorAction SilentlyContinue
-)
-if ($workerSidecars.Count -gt 0) {
-    foreach ($sidecar in $workerSidecars) {
-        Write-UploadLog "Worker sidecar: $($sidecar.FullName)"
-    }
-}
 
 & $gh auth status
 if ($LASTEXITCODE -ne 0) {
@@ -95,7 +86,21 @@ else {
     Write-UploadLog "Release $Tag already exists. Uploading assets with --clobber."
 }
 
-$uploadAssets = @($ZipPath, $ExePath) + @($workerSidecars | ForEach-Object { $_.FullName })
+$releaseJson = & $gh release view $Tag --repo $Repository --json assets
+if ($LASTEXITCODE -eq 0 -and ![string]::IsNullOrWhiteSpace($releaseJson)) {
+    $releaseInfo = $releaseJson | ConvertFrom-Json
+    foreach ($asset in @($releaseInfo.assets)) {
+        if ($asset.name -like "Elka.PluginWorker.*") {
+            Write-UploadLog "Deleting stale worker sidecar asset: $($asset.name)"
+            & $gh release delete-asset $Tag $asset.name --repo $Repository --yes
+            if ($LASTEXITCODE -ne 0) {
+                throw "GitHub stale sidecar delete failed with exit code $LASTEXITCODE."
+            }
+        }
+    }
+}
+
+$uploadAssets = @($ZipPath, $ExePath)
 & $gh release upload $Tag --repo $Repository @uploadAssets --clobber
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub release upload failed with exit code $LASTEXITCODE."

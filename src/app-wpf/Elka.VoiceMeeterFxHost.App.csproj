@@ -55,6 +55,23 @@
     <Resource Include="Assets\VoicemeeterDelay.ico" />
     <Resource Include="Assets\VoicemeeterDelayIconPreview.png" />
   </ItemGroup>
+  <ItemGroup Condition="'$(SkipPluginWorkerBuild)' != 'true' and Exists('$(PluginWorkerProject)')">
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.exe">
+      <LogicalName>ElkaPluginWorker/Elka.PluginWorker.exe</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.dll">
+      <LogicalName>ElkaPluginWorker/Elka.PluginWorker.dll</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.deps.json">
+      <LogicalName>ElkaPluginWorker/Elka.PluginWorker.deps.json</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.runtimeconfig.json">
+      <LogicalName>ElkaPluginWorker/Elka.PluginWorker.runtimeconfig.json</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.pdb" Condition="Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.pdb')">
+      <LogicalName>ElkaPluginWorker/Elka.PluginWorker.pdb</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
   <Target Name="ValidateVst2SdkPath" BeforeTargets="BuildNativeBridge">
     <Error Condition="'$(Vst2SdkPath)' == ''"
            Text="VST2 hosting is required. Put the legacy VST2 SDK headers in $(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h and aeffectx.h, or set Vst2SdkPath / ELKA_VST2_SDK_PATH to a valid SDK folder." />
@@ -75,7 +92,7 @@
           SkipUnchangedFiles="true" />
   </Target>
   <Target Name="BuildPluginWorker"
-          AfterTargets="Build"
+          BeforeTargets="PrepareResources"
           Condition="'$(SkipPluginWorkerBuild)' != 'true' and Exists('$(PluginWorkerProject)')">
     <Message Importance="high" Text="Building Elka plugin worker" />
     <MSBuild Projects="$(PluginWorkerProject)"
@@ -84,6 +101,7 @@
     <ItemGroup>
       <PluginWorkerBuildOutput Include="$(PluginWorkerOutputDir)Elka.PluginWorker.*" />
     </ItemGroup>
+    <MakeDir Directories="$(OutDir)" />
     <Copy SourceFiles="@(PluginWorkerBuildOutput)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
@@ -97,27 +115,15 @@
       </ResolvedFileToPublish>
     </ItemGroup>
   </Target>
-  <Target Name="AddPluginWorkerToPublish"
-          BeforeTargets="ComputeFilesToPublish"
-          Condition="Exists('$(PluginWorkerProject)')">
-    <Message Importance="high" Text="Building Elka plugin worker for publish" />
-    <MSBuild Projects="$(PluginWorkerProject)"
-             Targets="Restore;Build"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained)" />
-    <ItemGroup>
-      <PluginWorkerPublishFile Include="$(PluginWorkerOutputDir)Elka.PluginWorker.*" />
-      <ResolvedFileToPublish Include="@(PluginWorkerPublishFile)">
-        <RelativePath>%(Filename)%(Extension)</RelativePath>
-        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-        <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
-      </ResolvedFileToPublish>
-    </ItemGroup>
-  </Target>
   <Target Name="ElkaAfterPublishReleaseArtifacts"
           AfterTargets="Publish"
           Condition="'$(ElkaCreateReleaseArtifacts)' == 'true'">
     <Message Importance="high" Text="Creating Elka release artifacts in $(ReleaseDir)" />
     <MakeDir Directories="$(ReleaseDir)" />
+    <ItemGroup>
+      <StaleReleaseWorkerSidecar Include="$(ReleaseDir)Elka.PluginWorker.*" />
+    </ItemGroup>
+    <Delete Files="@(StaleReleaseWorkerSidecar)" />
     <Delete Files="$(ReleaseZipPath)" Condition="Exists('$(ReleaseZipPath)')" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(PublishOutputDir)*' -DestinationPath '$(ReleaseZipPath)' -Force&quot;" />
     <RemoveDir Directories="$(SingleFilePublishDir)" Condition="Exists('$(SingleFilePublishDir)')" />
@@ -129,12 +135,7 @@
     <Copy SourceFiles="$(SingleFilePublishedExePath)"
           DestinationFiles="$(ReleaseExePath)"
           OverwriteReadOnlyFiles="true" />
-    <ItemGroup>
-      <SingleFileWorkerSidecar Include="$(SingleFilePublishDir)Elka.PluginWorker.*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(SingleFileWorkerSidecar)"
-          DestinationFolder="$(ReleaseDir)"
-          SkipUnchangedFiles="true" />
+
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$length = (Get-Item -LiteralPath '$(ReleaseExePath)').Length; if ($length -lt 1000000 -or $length -gt 50000000) { throw ('Release EXE size ' + $length + ' is outside the expected framework-dependent single-file range.') }&quot;" />
     <Message Importance="high" Text="Release EXE: $(ReleaseExePath)" />
     <Message Importance="high" Text="Release ZIP: $(ReleaseZipPath)" />

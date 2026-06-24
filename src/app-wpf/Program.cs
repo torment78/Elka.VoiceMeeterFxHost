@@ -16,6 +16,8 @@ internal static class Program
                 return PluginProbeCli.Run(args);
             }
 
+            PluginWorkerLocator.ConfigureForCurrentProcess();
+
             var app = new App();
             app.InitializeComponent();
             return app.Run();

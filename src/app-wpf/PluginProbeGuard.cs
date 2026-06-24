@@ -151,19 +151,7 @@ internal static class PluginProbeGuard
         return format.Equals("VST2", StringComparison.OrdinalIgnoreCase) ? "VST" : format;
     }
 
-    private static string WorkerExecutablePath()
-    {
-        var appPath = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(appPath))
-        {
-            return string.Empty;
-        }
-
-        var directory = Path.GetDirectoryName(appPath);
-        return string.IsNullOrWhiteSpace(directory)
-            ? string.Empty
-            : Path.Combine(directory, "Elka.PluginWorker.exe");
-    }
+    private static string WorkerExecutablePath() => PluginWorkerLocator.WorkerExecutablePath();
 
     private static void TryKill(Process process)
     {

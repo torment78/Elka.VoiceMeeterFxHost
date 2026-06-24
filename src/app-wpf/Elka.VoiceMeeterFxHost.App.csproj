@@ -71,6 +71,9 @@
     <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.pdb" Condition="Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.pdb')">
       <LogicalName>ElkaPluginWorker/Elka.PluginWorker.pdb</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="$(NativeBridgePath)">
+      <LogicalName>ElkaPluginWorker/ElkaVoiceMeeterFxHost.Native.dll</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <Target Name="ValidateVst2SdkPath" BeforeTargets="BuildNativeBridge">
     <Error Condition="'$(Vst2SdkPath)' == ''"
@@ -78,7 +81,7 @@
     <Error Condition="!Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffect.h') or !Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffectx.h')"
            Text="VST2 hosting is required, but Vst2SdkPath='$(Vst2SdkPath)' does not contain pluginterfaces\vst2.x\aeffect.h and aeffectx.h." />
   </Target>
-  <Target Name="BuildNativeBridge" BeforeTargets="Build" DependsOnTargets="ValidateVst2SdkPath">
+  <Target Name="BuildNativeBridge" BeforeTargets="PrepareResources" DependsOnTargets="ValidateVst2SdkPath">
     <Message Importance="high" Text="Configuring native VoiceMeeter bridge: $(NativeVst2ConfigureArg)" />
     <Exec Command="&quot;$(CMakeExe)&quot; --preset $(NativeCMakePreset) $(NativeVst2ConfigureArg)"
           WorkingDirectory="$(RepoRoot)" />
@@ -125,7 +128,6 @@
     </ItemGroup>
     <Delete Files="@(StaleReleaseWorkerSidecar)" />
     <Delete Files="$(ReleaseZipPath)" Condition="Exists('$(ReleaseZipPath)')" />
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(PublishOutputDir)*' -DestinationPath '$(ReleaseZipPath)' -Force&quot;" />
     <RemoveDir Directories="$(SingleFilePublishDir)" Condition="Exists('$(SingleFilePublishDir)')" />
     <MakeDir Directories="$(SingleFilePublishDir)" />
     <Message Importance="high" Text="Creating framework-dependent single-file release EXE in $(SingleFilePublishDir)" />
@@ -135,7 +137,7 @@
     <Copy SourceFiles="$(SingleFilePublishedExePath)"
           DestinationFiles="$(ReleaseExePath)"
           OverwriteReadOnlyFiles="true" />
-
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(ReleaseExePath)' -DestinationPath '$(ReleaseZipPath)' -Force&quot;" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$length = (Get-Item -LiteralPath '$(ReleaseExePath)').Length; if ($length -lt 1000000 -or $length -gt 50000000) { throw ('Release EXE size ' + $length + ' is outside the expected framework-dependent single-file range.') }&quot;" />
     <Message Importance="high" Text="Release EXE: $(ReleaseExePath)" />
     <Message Importance="high" Text="Release ZIP: $(ReleaseZipPath)" />

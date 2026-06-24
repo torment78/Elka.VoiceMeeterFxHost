@@ -12,10 +12,14 @@ internal static class PluginWorkerLocator
 
     public static string ConfigureForCurrentProcess()
     {
-        var workerPath = WorkerExecutablePath();
+        var sameDirectory = SameDirectoryWorkerPath();
+        var workerPath = !string.IsNullOrWhiteSpace(sameDirectory) && File.Exists(sameDirectory)
+            ? sameDirectory
+            : ExtractEmbeddedWorker();
+
         if (string.IsNullOrWhiteSpace(workerPath))
         {
-            workerPath = ExtractEmbeddedWorker();
+            workerPath = WorkerExecutablePath();
         }
 
         if (!string.IsNullOrWhiteSpace(workerPath) && File.Exists(workerPath))

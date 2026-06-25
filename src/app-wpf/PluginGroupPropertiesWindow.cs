@@ -27,6 +27,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Func<int, int, int, int, bool> _toggleModuleRoute;
     private readonly Action<PluginNodeSnapshot> _removePluginNode;
     private readonly Action<PluginNodeSnapshot> _openPluginEditor;
+    private readonly Action<PluginNodeSnapshot> _showPluginNodeProperties;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeBypass;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
@@ -35,7 +36,6 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly ComboBox _outputPinsCombo = new();
     private readonly CheckBox _sidechainPortsCheckBox = new();
     private readonly ComboBox _sidechainInputPinsCombo = new();
-    private readonly ComboBox _sidechainOutputPinsCombo = new();
     private readonly Canvas _canvas = new();
     private ScrollViewer? _canvasScrollViewer;
     private readonly Dictionary<string, Point> _pinPositions = [];
@@ -59,6 +59,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Func<int, int, int, int, bool> toggleModuleRoute,
         Action<PluginNodeSnapshot> removePluginNode,
         Action<PluginNodeSnapshot> openPluginEditor,
+        Action<PluginNodeSnapshot> showPluginNodeProperties,
         Action<PluginNodeSnapshot, bool> setPluginNodeBypass)
     {
         _group = group;
@@ -67,6 +68,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _toggleModuleRoute = toggleModuleRoute;
         _removePluginNode = removePluginNode;
         _openPluginEditor = openPluginEditor;
+        _showPluginNodeProperties = showPluginNodeProperties;
         _setPluginNodeBypass = setPluginNodeBypass;
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
@@ -81,11 +83,11 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Closing += (_, _) => RestoreOriginalStateIfNeeded();
 
         GroupName = group.Name;
-        InputPins = Math.Clamp(group.InputPins, 1, 8);
-        OutputPins = Math.Clamp(group.OutputPins, 1, 8);
+        InputPins = Math.Clamp(group.InputPins, 0, 8);
+        OutputPins = Math.Clamp(group.OutputPins, 0, 8);
         SidechainPortsEnabled = group.SidechainPortsEnabled;
-        SidechainInputPins = Math.Clamp(group.SidechainInputPins, 1, 8);
-        SidechainOutputPins = Math.Clamp(group.SidechainOutputPins, 1, 8);
+        SidechainInputPins = SidechainPortsEnabled ? 2 : 0;
+        SidechainOutputPins = 0;
         MemberSlots = group.MemberSlots.ToList();
 
         EnsureMemberPositions();
@@ -200,7 +202,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private static void AddPinCombo(Grid header, ComboBox combo, int selectedValue, int column)
     {
-        foreach (var value in new[] { 1, 2, 4, 6, 8 })
+        foreach (var value in new[] { 0, 2, 4, 6, 8 })
         {
             combo.Items.Add(value);
         }
@@ -214,7 +216,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void AddSidechainControls(Grid header)
     {
-        _sidechainPortsCheckBox.Content = "Sidechain";
+        _sidechainPortsCheckBox.Content = "Stereo sidechain";
         _sidechainPortsCheckBox.IsChecked = SidechainPortsEnabled;
         _sidechainPortsCheckBox.VerticalAlignment = VerticalAlignment.Center;
         _sidechainPortsCheckBox.Foreground = BrushFrom("#E7EEF0");
@@ -226,19 +228,14 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         AddHeaderLabel(header, "SC In", 7);
         AddSidechainPinCombo(header, _sidechainInputPinsCombo, SidechainInputPins, 8);
-        AddHeaderLabel(header, "SC Out", 9);
-        AddSidechainPinCombo(header, _sidechainOutputPinsCombo, SidechainOutputPins, 10);
         UpdateSidechainControls(rebuild: false);
     }
 
     private void AddSidechainPinCombo(Grid header, ComboBox combo, int selectedValue, int column)
     {
-        for (var value = 1; value <= 8; value++)
-        {
-            combo.Items.Add(value);
-        }
+        combo.Items.Add(2);
 
-        combo.SelectedItem = combo.Items.Contains(selectedValue) ? selectedValue : 2;
+        combo.SelectedItem = 2;
         combo.MinWidth = 64;
         combo.Margin = new Thickness(0, 0, 16, 0);
         combo.SelectionChanged += (_, _) => UpdateSidechainControls(rebuild: true);
@@ -249,10 +246,10 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private void UpdateSidechainControls(bool rebuild)
     {
         SidechainPortsEnabled = _sidechainPortsCheckBox.IsChecked == true;
-        SidechainInputPins = SelectedPinCount(_sidechainInputPinsCombo, SidechainInputPins);
-        SidechainOutputPins = SelectedPinCount(_sidechainOutputPinsCombo, SidechainOutputPins);
+        SidechainInputPins = SidechainPortsEnabled ? 2 : 0;
+        SidechainOutputPins = 0;
+        _sidechainInputPinsCombo.SelectedItem = 2;
         _sidechainInputPinsCombo.IsEnabled = SidechainPortsEnabled;
-        _sidechainOutputPinsCombo.IsEnabled = SidechainPortsEnabled;
 
         if (rebuild && Content is not null)
         {
@@ -450,6 +447,11 @@ internal sealed class PluginGroupPropertiesWindow : Window
     {
         var menu = new ContextMenu();
         menu.Items.Add(CreateMenuItem("Open Editor", () => _openPluginEditor(node)));
+        menu.Items.Add(CreateMenuItem("Port Setup", () =>
+        {
+            _showPluginNodeProperties(node);
+            RebuildCanvas();
+        }));
         menu.Items.Add(CreateMenuItem(node.Bypassed ? "Turn On" : "Shut Off / Bypass", () => SetNodeBypass(node, !node.Bypassed)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Remove From Group", () => RemoveNodeFromGroup(node)));
@@ -561,7 +563,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         var label = new TextBlock
         {
-            Text = input ? InputPinLabel(node, pinIndex) : PinLabel(node.OutputPins, pinIndex),
+            Text = input ? InputPinLabel(node, pinIndex) : PinLabel(node.OutputPins, pinIndex, node.OutputLayoutId),
             Foreground = BrushFrom("#8AA0A6"),
             FontSize = 10,
             FontWeight = FontWeights.SemiBold,
@@ -1059,8 +1061,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         InputPins = SelectedPinCount(_inputPinsCombo, InputPins);
         OutputPins = SelectedPinCount(_outputPinsCombo, OutputPins);
         SidechainPortsEnabled = _sidechainPortsCheckBox.IsChecked == true;
-        SidechainInputPins = SelectedPinCount(_sidechainInputPinsCombo, SidechainInputPins);
-        SidechainOutputPins = SelectedPinCount(_sidechainOutputPinsCombo, SidechainOutputPins);
+        SidechainInputPins = SidechainPortsEnabled ? 2 : 0;
+        SidechainOutputPins = 0;
         MemberSlots = _members.Select(static node => node.Slot).ToList();
         _accepted = true;
         Applied?.Invoke(this, EventArgs.Empty);
@@ -1268,14 +1270,103 @@ internal sealed class PluginGroupPropertiesWindow : Window
             };
         }
 
-        return PinLabel(node.MainInputPins, Math.Max(0, visualPin - node.SidechainInputPins));
+        return PinLabel(node.MainInputPins, Math.Max(0, visualPin - node.SidechainInputPins), node.MainInputLayoutId);
     }
 
-    private static string PinLabel(int pinCount, int pin)
+    private static string PinLabel(int pinCount, int pin, int layoutId = -1)
     {
-        return pinCount == 2
-            ? pin == 0 ? "L" : "R"
-            : $"{pin + 1}";
+        if (layoutId == 4 && pinCount == 8)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Sl",
+                4 => "Sr",
+                5 => "Lsr",
+                6 => "Rsr",
+                7 => "LFE",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId == 7 && pinCount == 8)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Ls",
+                4 => "Rs",
+                5 => "Lc",
+                6 => "Rc",
+                7 => "LFE",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId == 5 && pinCount == 12)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Sl",
+                4 => "Sr",
+                5 => "Lsr",
+                6 => "Rsr",
+                7 => "LFE",
+                8 => "TFL",
+                9 => "TFR",
+                10 => "TRL",
+                11 => "TRR",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId >= 1000)
+        {
+            return $"{pin + 1}";
+        }
+
+        return pinCount switch
+        {
+            2 => pin == 0 ? "L" : "R",
+            4 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "Ls",
+                3 => "Rs",
+                _ => $"{pin + 1}"
+            },
+            6 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "LFE",
+                4 => "Ls",
+                5 => "Rs",
+                _ => $"{pin + 1}"
+            },
+            8 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "LFE",
+                4 => "Ls",
+                5 => "Rs",
+                6 => "Sl",
+                7 => "Sr",
+                _ => $"{pin + 1}"
+            },
+            _ => $"{pin + 1}"
+        };
     }
 
     private static int NativeInputPinForVisualPin(PluginNodeSnapshot node, int visualPin)
@@ -1302,7 +1393,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private IEnumerable<int> GroupInputPinIds()
     {
-        for (var pin = 0; pin < Math.Clamp(InputPins, 1, 8); pin++)
+        for (var pin = 0; pin < Math.Clamp(InputPins, 0, 8); pin++)
         {
             yield return pin;
         }
@@ -1312,7 +1403,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             yield break;
         }
 
-        for (var pin = 0; pin < Math.Clamp(SidechainInputPins, 1, 8); pin++)
+        for (var pin = 0; pin < (SidechainPortsEnabled ? 2 : 0); pin++)
         {
             yield return GroupSidechainPinBase + pin;
         }
@@ -1320,41 +1411,26 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private IEnumerable<int> GroupOutputPinIds()
     {
-        for (var pin = 0; pin < Math.Clamp(OutputPins, 1, 8); pin++)
+        for (var pin = 0; pin < Math.Clamp(OutputPins, 0, 8); pin++)
         {
             yield return pin;
         }
-
-        if (!SidechainPortsEnabled)
-        {
-            yield break;
-        }
-
-        for (var pin = 0; pin < Math.Clamp(SidechainOutputPins, 1, 8); pin++)
-        {
-            yield return GroupSidechainPinBase + pin;
-        }
     }
 
-    private static string GroupPinLabel(int pin, bool input)
+    private string GroupPinLabel(int pin, bool input)
     {
         if (pin >= GroupSidechainPinBase)
         {
             var sidechainPin = pin - GroupSidechainPinBase;
             return sidechainPin switch
             {
-                0 => input ? "SL" : "SO-L",
-                1 => input ? "SR" : "SO-R",
-                _ => input ? $"S{sidechainPin + 1}" : $"SO{sidechainPin + 1}"
+                0 => "SL",
+                1 => "SR",
+                _ => $"S{sidechainPin + 1}"
             };
         }
 
-        return pin switch
-        {
-            0 => "L",
-            1 => "R",
-            _ => $"{pin + 1}"
-        };
+        return PinLabel(input ? InputPins : OutputPins, pin);
     }
 
     private static string PinKey(CanvasPin pin)

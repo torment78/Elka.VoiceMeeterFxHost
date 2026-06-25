@@ -2280,6 +2280,8 @@ __declspec(dllexport) int __cdecl ElkaFx_WorkerCreatePlugin(
     int blockSize,
     int inputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     wchar_t* status,
     int statusChars)
 {
@@ -2291,6 +2293,8 @@ __declspec(dllexport) int __cdecl ElkaFx_WorkerCreatePlugin(
         blockSize,
         inputPins,
         outputPins,
+        inputLayoutId,
+        outputLayoutId,
         error);
 
     if (handle > 0)
@@ -2446,12 +2450,48 @@ __declspec(dllexport) void __cdecl ElkaFx_WorkerDestroyPlugin(int handle)
     destroyWorkerPluginProcessor(handle);
 }
 
+}
+
+int pluginLayoutIdForChannelCount(int channels)
+{
+    switch (std::clamp(channels, 1, RealtimeEngine::MaxPluginPins))
+    {
+    case 1: return 0;
+    case 2: return 1;
+    case 4: return 2;
+    case 6: return 3;
+    case 8: return 4;
+    case 12: return 5;
+    default: return 1000 + std::clamp(channels, 1, RealtimeEngine::MaxPluginPins);
+    }
+}
+
+std::string pluginLayoutNameForId(int layoutId, int fallbackChannels)
+{
+    if (layoutId >= 1000 && layoutId <= 1000 + RealtimeEngine::MaxPluginPins)
+        return "Discrete " + std::to_string(layoutId - 1000);
+
+    switch (layoutId)
+    {
+    case 0: return "Mono";
+    case 1: return "Stereo";
+    case 2: return "Quad";
+    case 3: return "5.1";
+    case 4: return "7.1";
+    case 5: return "7.1.4";
+    case 7: return "7.1 SDDS";
+    default: return std::to_string(std::clamp(fallbackChannels, 1, RealtimeEngine::MaxPluginPins)) + " channel";
+    }
+}
+
 int addPluginNodeNative(
     int pluginIndex,
     int mode,
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     int x,
     int y,
     const wchar_t* initialStateBase64,
@@ -2470,14 +2510,15 @@ int addPluginNodeNative(
     setPluginLoadProgress(true, sandboxed ? "Starting sandboxed plugin node load" : "Starting plugin node load", "index " + std::to_string(pluginIndex));
 
     const auto streamKind = streamKindFromApi(mode);
-    const int safeMainInputPins = std::clamp(mainInputPins, 1, 8);
+    const int safeMainInputPins = std::clamp(mainInputPins, 1, RealtimeEngine::MaxPluginPins);
     const int safeSidechainInputPins = std::clamp(sidechainInputPins, 0, RealtimeEngine::MaxPluginPins - safeMainInputPins);
     const int safeInputPins = std::clamp(safeMainInputPins + safeSidechainInputPins, 1, RealtimeEngine::MaxPluginPins);
-    const int safeOutputPins = std::clamp(outputPins, 1, 8);
-    const int layoutChannels = std::max(safeMainInputPins, safeOutputPins);
-    const int layoutId = layoutChannels == 1 ? 0 : layoutChannels == 2 ? 1 : layoutChannels;
-    const std::string layoutName =
-        layoutChannels == 1 ? "Mono" : layoutChannels == 2 ? "Stereo" : std::to_string(layoutChannels) + " channel";
+    const int safeOutputPins = std::clamp(outputPins, 1, RealtimeEngine::MaxPluginPins);
+    const int safeInputLayoutId = inputLayoutId >= 0 ? inputLayoutId : pluginLayoutIdForChannelCount(safeMainInputPins);
+    const int safeOutputLayoutId = outputLayoutId >= 0 ? outputLayoutId : pluginLayoutIdForChannelCount(safeOutputPins);
+    const std::string inputLayoutName = pluginLayoutNameForId(safeInputLayoutId, safeMainInputPins);
+    const std::string outputLayoutName = pluginLayoutNameForId(safeOutputLayoutId, safeOutputPins);
+    const int sourceChannels = std::max(safeMainInputPins, safeOutputPins);
 
     int sampleRate = desiredInsertAsioSampleRate(target);
     if (sampleRate <= 0)
@@ -2504,11 +2545,13 @@ int addPluginNodeNative(
             safeMainInputPins,
             safeSidechainInputPins,
             safeOutputPins,
-            layoutId,
-            layoutName,
+            safeInputLayoutId,
+            inputLayoutName,
+            safeOutputLayoutId,
+            outputLayoutName,
             static_cast<int>(streamKind),
             0,
-            layoutChannels,
+            sourceChannels,
             narrowWide(initialStateBase64),
             narrowWide(initialPresetBase64),
             [](const std::string& stage, const std::string& detail) {
@@ -2521,11 +2564,13 @@ int addPluginNodeNative(
             safeMainInputPins,
             safeSidechainInputPins,
             safeOutputPins,
-            layoutId,
-            layoutName,
+            safeInputLayoutId,
+            inputLayoutName,
+            safeOutputLayoutId,
+            outputLayoutName,
             static_cast<int>(streamKind),
             0,
-            layoutChannels,
+            sourceChannels,
             narrowWide(initialStateBase64),
             narrowWide(initialPresetBase64),
             [](const std::string& stage, const std::string& detail) {
@@ -2583,12 +2628,16 @@ int addPluginNodeNative(
     }
 }
 
+extern "C"
+{
 __declspec(dllexport) int __cdecl ElkaFx_AddPluginNode(
     int pluginIndex,
     int mode,
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     int x,
     int y,
     int* slotOut,
@@ -2603,6 +2652,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddPluginNode(
         mainInputPins,
         sidechainInputPins,
         outputPins,
+        inputLayoutId,
+        outputLayoutId,
         x,
         y,
         nullptr,
@@ -2620,6 +2671,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddSandboxedPluginNode(
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     int x,
     int y,
     int* slotOut,
@@ -2634,6 +2687,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddSandboxedPluginNode(
         mainInputPins,
         sidechainInputPins,
         outputPins,
+        inputLayoutId,
+        outputLayoutId,
         x,
         y,
         nullptr,
@@ -2652,6 +2707,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddSandboxedPluginNodeWithState(
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     int x,
     int y,
     const wchar_t* initialStateBase64,
@@ -2668,6 +2725,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddSandboxedPluginNodeWithState(
         mainInputPins,
         sidechainInputPins,
         outputPins,
+        inputLayoutId,
+        outputLayoutId,
         x,
         y,
         initialStateBase64,
@@ -2686,6 +2745,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddPluginNodeWithState(
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     int x,
     int y,
     const wchar_t* initialStateBase64,
@@ -2702,6 +2763,8 @@ __declspec(dllexport) int __cdecl ElkaFx_AddPluginNodeWithState(
         mainInputPins,
         sidechainInputPins,
         outputPins,
+        inputLayoutId,
+        outputLayoutId,
         x,
         y,
         initialStateBase64,
@@ -2713,6 +2776,31 @@ __declspec(dllexport) int __cdecl ElkaFx_AddPluginNodeWithState(
         statusChars);
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeLayoutInfo(int slot, wchar_t* buffer, int bufferChars)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    const auto nodes = target.plugins.pluginNodes();
+    const auto nodeIt = std::find_if(nodes.begin(), nodes.end(), [slot](const PluginNodeSummary& node) {
+        return node.slot == slot;
+    });
+
+    if (nodeIt == nodes.end())
+    {
+        writeWide(L"", buffer, bufferChars);
+        return -1;
+    }
+
+    std::wostringstream text;
+    text << L"inputSelected="
+         << nodeIt->inputLayoutId << L":" << widenUtf8(nodeIt->inputLayoutName) << L":" << nodeIt->mainInputPins
+         << L"|outputSelected="
+         << nodeIt->outputLayoutId << L":" << widenUtf8(nodeIt->outputLayoutName) << L":" << nodeIt->outputPins
+         << L"|inputs=" << widenUtf8(nodeIt->supportedInputLayouts)
+         << L"|outputs=" << widenUtf8(nodeIt->supportedOutputLayouts);
+    writeWide(text.str(), buffer, bufferChars);
+    return 0;
+}
 __declspec(dllexport) int __cdecl ElkaFx_SetPluginNodeBypassed(int slot, int bypassed)
 {
     std::lock_guard lock(g_mutex);
@@ -2914,6 +3002,7 @@ __declspec(dllexport) int __cdecl ElkaFx_RemovePluginNode(int slot)
     std::lock_guard lock(g_mutex);
     auto& target = host();
     target.engine.clearPluginSlot(slot);
+    Sleep(25);
     target.plugins.removePluginNode(slot);
     syncAllPluginNodesLocked(target);
     resyncPluginGraphGatesLocked(target);

@@ -37,7 +37,7 @@ internal static class Program
             Console.WriteLine("Elka Plugin Worker");
             Console.WriteLine("Commands:");
             Console.WriteLine("  probe <format> <plugin-file-or-identifier> [sampleRate] [blockSize]");
-            Console.WriteLine("  host-v1 <format> <plugin-file-or-identifier> <sampleRate> <blockSize> <inputPins> <outputPins> <mapName> <requestEvent> <responseEvent> <shutdownEvent> <controlEvent>");
+            Console.WriteLine("  host-v1 <format> <plugin-file-or-identifier> <sampleRate> <blockSize> <inputPins> <outputPins> [inputLayoutId outputLayoutId] <mapName> <requestEvent> <responseEvent> <shutdownEvent> <controlEvent>");
             return 0;
         }
 
@@ -120,7 +120,7 @@ internal static class Program
     {
         if (args.Length < 12)
         {
-            Console.Error.WriteLine("Usage: Elka.PluginWorker host-v1 <format> <plugin-file-or-identifier> <sampleRate> <blockSize> <inputPins> <outputPins> <mapName> <requestEvent> <responseEvent> <shutdownEvent> <controlEvent>");
+            Console.Error.WriteLine("Usage: Elka.PluginWorker host-v1 <format> <plugin-file-or-identifier> <sampleRate> <blockSize> <inputPins> <outputPins> [inputLayoutId outputLayoutId] <mapName> <requestEvent> <responseEvent> <shutdownEvent> <controlEvent>");
             return 64;
         }
 
@@ -130,11 +130,14 @@ internal static class Program
         var blockSize = int.TryParse(args[4], out var parsedBlockSize) ? parsedBlockSize : 512;
         var inputPins = int.TryParse(args[5], out var parsedInputPins) ? parsedInputPins : 2;
         var outputPins = int.TryParse(args[6], out var parsedOutputPins) ? parsedOutputPins : 2;
-        var mapName = args[7];
-        var requestEventName = args[8];
-        var responseEventName = args[9];
-        var shutdownEventName = args[10];
-        var controlEventName = args[11];
+        var hasLayoutArgs = args.Length >= 14;
+        var inputLayoutId = hasLayoutArgs && int.TryParse(args[7], out var parsedInputLayoutId) ? parsedInputLayoutId : (inputPins == 1 ? 0 : 1);
+        var outputLayoutId = hasLayoutArgs && int.TryParse(args[8], out var parsedOutputLayoutId) ? parsedOutputLayoutId : (outputPins == 1 ? 0 : 1);
+        var mapName = args[hasLayoutArgs ? 9 : 7];
+        var requestEventName = args[hasLayoutArgs ? 10 : 8];
+        var responseEventName = args[hasLayoutArgs ? 11 : 9];
+        var shutdownEventName = args[hasLayoutArgs ? 12 : 10];
+        var controlEventName = args[hasLayoutArgs ? 13 : 11];
         var status = new StringBuilder(8192);
         int handle = 0;
 
@@ -154,6 +157,8 @@ internal static class Program
                 blockSize,
                 inputPins,
                 outputPins,
+                inputLayoutId,
+                outputLayoutId,
                 status,
                 status.Capacity);
 
@@ -421,6 +426,8 @@ internal static class Program
         int blockSize,
         int inputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         StringBuilder status,
         int statusChars);
 

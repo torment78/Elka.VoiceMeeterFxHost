@@ -1135,10 +1135,10 @@ public partial class MainWindow : Window
             }
 
             group.Name = string.IsNullOrWhiteSpace(group.Name) ? "VST Group" : group.Name.Trim();
-            group.InputPins = Math.Clamp(group.InputPins, 1, 8);
-            group.OutputPins = Math.Clamp(group.OutputPins, 1, 8);
-            group.SidechainInputPins = Math.Clamp(group.SidechainInputPins, 1, 8);
-            group.SidechainOutputPins = Math.Clamp(group.SidechainOutputPins, 1, 8);
+            group.InputPins = Math.Clamp(group.InputPins, 0, 8);
+            group.OutputPins = Math.Clamp(group.OutputPins, 0, 8);
+            group.SidechainInputPins = group.SidechainPortsEnabled ? 2 : 0;
+            group.SidechainOutputPins = 0;
             group.MemberSlots = group.MemberSlots
                 .Where(validSlots.Contains)
                 .Distinct()
@@ -5331,14 +5331,16 @@ public partial class MainWindow : Window
             var restored = _engine.AddPluginNode(
                 choice,
                 savedNode.Mode == CallbackMode.None ? CallbackMode.Input : savedNode.Mode,
-                Math.Clamp(savedNode.MainInputPins, 1, 8),
+                Math.Clamp(savedNode.MainInputPins, 1, 32),
                 Math.Clamp(savedNode.SidechainInputPins, 0, 24),
-                Math.Clamp(savedNode.OutputPins, 1, 8),
+                Math.Clamp(savedNode.OutputPins, 1, 32),
                 savedNode.X,
                 savedNode.Y,
                 savedNode.PluginStateBase64,
                 savedNode.PluginPresetBase64,
-                sandboxed: savedNode.Sandboxed || PluginProbeGuard.RequiresSandboxedHosting(choice));
+                sandboxed: savedNode.Sandboxed || PluginProbeGuard.RequiresSandboxedHosting(choice),
+                mainInputLayoutId: savedNode.MainInputLayoutId,
+                outputLayoutId: savedNode.OutputLayoutId);
             if (restored is null)
             {
                 AppendLog($"{savedNode.Name}: saved VST restore failed. {_engine.StatusText}");
@@ -5607,6 +5609,23 @@ public partial class MainWindow : Window
         restored.SidechainInputPins = sidechainPins;
         restored.MainInputPins = mainPins;
         restored.OutputPins = Math.Max(1, restored.OutputPins);
+        restored.MainInputLayoutId = saved.MainInputLayoutId;
+        restored.MainInputLayoutName = string.IsNullOrWhiteSpace(saved.MainInputLayoutName)
+            ? PluginLayoutChoice.LayoutNameForId(restored.MainInputLayoutId, restored.MainInputPins)
+            : saved.MainInputLayoutName;
+        restored.OutputLayoutId = saved.OutputLayoutId;
+        restored.OutputLayoutName = string.IsNullOrWhiteSpace(saved.OutputLayoutName)
+            ? PluginLayoutChoice.LayoutNameForId(restored.OutputLayoutId, restored.OutputPins)
+            : saved.OutputLayoutName;
+        if (saved.SupportedInputLayouts.Count > 0)
+        {
+            restored.SupportedInputLayouts = saved.SupportedInputLayouts.ToList();
+        }
+
+        if (saved.SupportedOutputLayouts.Count > 0)
+        {
+            restored.SupportedOutputLayouts = saved.SupportedOutputLayouts.ToList();
+        }
     }
 
     private void RemapPluginGroups(IReadOnlyDictionary<int, PluginNodeSnapshot> slotMap)
@@ -5821,6 +5840,12 @@ public partial class MainWindow : Window
             Bypassed = node.Bypassed,
             PinsCollapsed = node.PinsCollapsed,
             Sandboxed = node.Sandboxed,
+            MainInputLayoutId = node.MainInputLayoutId,
+            MainInputLayoutName = node.MainInputLayoutName,
+            OutputLayoutId = node.OutputLayoutId,
+            OutputLayoutName = node.OutputLayoutName,
+            SupportedInputLayouts = node.SupportedInputLayouts.ToList(),
+            SupportedOutputLayouts = node.SupportedOutputLayouts.ToList(),
             Mode = node.Mode
         };
     }
@@ -6587,7 +6612,7 @@ public partial class MainWindow : Window
     {
         var x = input ? group.X : group.X + VstGroupWidth;
         var y = group.Y + 48 + (row * 18);
-        var pinLabel = GroupPinLabel(groupPin, input);
+        var pinLabel = GroupPinLabel(group, groupPin, input);
         var pinInfo = ResolveGroupCanvasPin(group, groupPin, input, new Point(x, y), pinLabel);
         _pinPositions[PinPositionKey(pinInfo)] = pinInfo.Point;
 
@@ -6656,7 +6681,7 @@ public partial class MainWindow : Window
             var point = new Point(
                 input ? group.X : group.X + VstGroupWidth,
                 group.Y + 48 + (row * 18));
-            var pinInfo = ResolveGroupCanvasPin(group, pin, input, point, GroupPinLabel(pin, input));
+            var pinInfo = ResolveGroupCanvasPin(group, pin, input, point, GroupPinLabel(group, pin, input));
             _pinPositions[PinPositionKey(pinInfo)] = pinInfo.Point;
         }
     }
@@ -6735,6 +6760,7 @@ public partial class MainWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(CreateNodeMenuItem("Open Group", () => ShowGroupProperties(group)));
         menu.Items.Add(CreateNodeMenuItem("Properties", () => ShowGroupProperties(group)));
+        menu.Items.Add(CreateNodeMenuItem("Port Setup", () => ShowGroupProperties(group)));
         menu.Items.Add(CreateNodeMenuItem("Copy Group", () => CopyPluginGroup(group)));
 
         var members = GroupMembers(group).ToList();
@@ -7127,7 +7153,7 @@ public partial class MainWindow : Window
 
     private static IEnumerable<int> GroupInputPinIds(PluginGroupSnapshot group)
     {
-        for (var pin = 0; pin < Math.Clamp(group.InputPins, 1, 8); pin++)
+        for (var pin = 0; pin < Math.Clamp(group.InputPins, 0, 8); pin++)
         {
             yield return pin;
         }
@@ -7137,7 +7163,7 @@ public partial class MainWindow : Window
             yield break;
         }
 
-        for (var pin = 0; pin < Math.Clamp(group.SidechainInputPins, 1, 8); pin++)
+        for (var pin = 0; pin < (group.SidechainPortsEnabled ? 2 : 0); pin++)
         {
             yield return GroupSidechainPinBase + pin;
         }
@@ -7145,19 +7171,9 @@ public partial class MainWindow : Window
 
     private static IEnumerable<int> GroupOutputPinIds(PluginGroupSnapshot group)
     {
-        for (var pin = 0; pin < Math.Clamp(group.OutputPins, 1, 8); pin++)
+        for (var pin = 0; pin < Math.Clamp(group.OutputPins, 0, 8); pin++)
         {
             yield return pin;
-        }
-
-        if (!group.SidechainPortsEnabled)
-        {
-            yield break;
-        }
-
-        for (var pin = 0; pin < Math.Clamp(group.SidechainOutputPins, 1, 8); pin++)
-        {
-            yield return GroupSidechainPinBase + pin;
         }
     }
 
@@ -7170,10 +7186,10 @@ public partial class MainWindow : Window
         }
 
         var visible = new List<int>();
-        visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.InputPins, 1, 8))));
+        visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.InputPins, 0, 8))));
         if (group.SidechainPortsEnabled)
         {
-            visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.SidechainInputPins, 1, 8)))
+            visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, 2))
                 .Select(pin => GroupSidechainPinBase + pin));
         }
 
@@ -7189,35 +7205,25 @@ public partial class MainWindow : Window
         }
 
         var visible = new List<int>();
-        visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.OutputPins, 1, 8))));
-        if (group.SidechainPortsEnabled)
-        {
-            visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.SidechainOutputPins, 1, 8)))
-                .Select(pin => GroupSidechainPinBase + pin));
-        }
+        visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, Math.Clamp(group.OutputPins, 0, 8))));
 
         return visible.Where(allPins.Contains).Distinct().ToList();
     }
 
-    private static string GroupPinLabel(int pin, bool input)
+    private static string GroupPinLabel(PluginGroupSnapshot group, int pin, bool input)
     {
         if (pin >= GroupSidechainPinBase)
         {
             var sidechainPin = pin - GroupSidechainPinBase;
             return sidechainPin switch
             {
-                0 => input ? "SL" : "SO-L",
-                1 => input ? "SR" : "SO-R",
-                _ => input ? $"S{sidechainPin + 1}" : $"SO{sidechainPin + 1}"
+                0 => "SL",
+                1 => "SR",
+                _ => $"S{sidechainPin + 1}"
             };
         }
 
-        return pin switch
-        {
-            0 => "L",
-            1 => "R",
-            _ => $"{pin + 1}"
-        };
+        return NodeStereoOrNumberLabel(pin, input ? group.InputPins : group.OutputPins);
     }
 
     private void DrawPluginNodes()
@@ -7421,13 +7427,13 @@ public partial class MainWindow : Window
 
         if (editor.ShowDialog() == true)
         {
-            ReconfigurePluginNode(node, editor.MainInputPins, editor.SidechainInputPins, editor.OutputPins);
+            ReconfigurePluginNode(node, editor.MainInputPins, editor.SidechainInputPins, editor.OutputPins, editor.MainInputLayoutId, editor.OutputLayoutId);
         }
     }
 
     private void AddStereoSidechainInput(PluginNodeSnapshot node)
     {
-        ReconfigurePluginNode(node, node.MainInputPins, 2, node.OutputPins);
+        ReconfigurePluginNode(node, node.MainInputPins, 2, node.OutputPins, node.MainInputLayoutId, node.OutputLayoutId);
     }
 
     private void ShowGroupProperties(PluginGroupSnapshot group)
@@ -7441,6 +7447,7 @@ public partial class MainWindow : Window
                 _engine.TogglePluginModuleRoute(sourceSlot, sourcePin, destinationSlot, nativeDestinationPin),
             RemovePluginNode,
             OpenPluginEditorWithSavedData,
+            ShowNodeProperties,
             SetNodeBypass)
         {
             Owner = this
@@ -7449,11 +7456,11 @@ public partial class MainWindow : Window
         editor.Applied += (_, _) =>
         {
             group.Name = string.IsNullOrWhiteSpace(editor.GroupName) ? "VST Group" : editor.GroupName.Trim();
-            group.InputPins = Math.Clamp(editor.InputPins, 1, 8);
-            group.OutputPins = Math.Clamp(editor.OutputPins, 1, 8);
+            group.InputPins = Math.Clamp(editor.InputPins, 0, 8);
+            group.OutputPins = Math.Clamp(editor.OutputPins, 0, 8);
             group.SidechainPortsEnabled = editor.SidechainPortsEnabled;
-            group.SidechainInputPins = Math.Clamp(editor.SidechainInputPins, 1, 8);
-            group.SidechainOutputPins = Math.Clamp(editor.SidechainOutputPins, 1, 8);
+            group.SidechainInputPins = group.SidechainPortsEnabled ? 2 : 0;
+            group.SidechainOutputPins = 0;
             group.MemberSlots = editor.MemberSlots
                 .Where(slot => _settings.PluginNodes.Any(node => node.Slot == slot))
                 .Distinct()
@@ -7642,7 +7649,9 @@ public partial class MainWindow : Window
                 member.Y + 28,
                 member.PluginStateBase64,
                 member.PluginPresetBase64,
-                sandboxed: member.Sandboxed);
+                sandboxed: member.Sandboxed,
+                mainInputLayoutId: member.MainInputLayoutId,
+                outputLayoutId: member.OutputLayoutId);
             if (copy is null)
             {
                 AppendLog(_engine.StatusText);
@@ -7915,7 +7924,7 @@ public partial class MainWindow : Window
             : $"{node.InputPins} in / {node.OutputPins} out";
     }
 
-    private void ReconfigurePluginNode(PluginNodeSnapshot node, int mainInputPins, int sidechainInputPins, int outputPins)
+    private void ReconfigurePluginNode(PluginNodeSnapshot node, int mainInputPins, int sidechainInputPins, int outputPins, int mainInputLayoutId, int outputLayoutId)
     {
         if (node.PluginIndex < 0)
         {
@@ -7951,9 +7960,15 @@ public partial class MainWindow : Window
             .Where(connection => connection.FromSlot == oldSlot || connection.ToSlot == oldSlot)
             .Select(CloneConnection)
             .ToList();
-        var safeMainInputs = Math.Clamp(mainInputPins, 1, 8);
+        var safeMainInputs = Math.Clamp(mainInputPins, 1, 32);
         var safeSidechainInputs = Math.Clamp(sidechainInputPins, 0, 32 - safeMainInputs);
-        var safeOutputs = Math.Clamp(outputPins, 1, 8);
+        var safeOutputs = Math.Clamp(outputPins, 1, 32);
+        var useSandboxedHost = node.Sandboxed || safeMainInputs > 2 || safeOutputs > 2 || mainInputLayoutId > 1 || outputLayoutId > 1;
+        if (useSandboxedHost && !node.Sandboxed)
+        {
+            AppendLog($"{node.Name}: surround layout selected; using sandbox worker for safer 7.1 hosting.");
+        }
+
         var replacement = _engine.AddPluginNode(
             new PluginChoice(node.PluginIndex, node.Name, node.PluginFormat, node.PluginIdentifier),
             node.Mode,
@@ -7964,7 +7979,9 @@ public partial class MainWindow : Window
             node.Y,
             node.PluginStateBase64,
             node.PluginPresetBase64,
-            sandboxed: node.Sandboxed);
+            sandboxed: useSandboxedHost,
+            mainInputLayoutId: mainInputLayoutId,
+            outputLayoutId: outputLayoutId);
 
         if (replacement is null)
         {
@@ -7978,8 +7995,14 @@ public partial class MainWindow : Window
         node.PluginIdentifier = replacement.PluginIdentifier;
         node.InputPins = replacement.InputPins;
         node.OutputPins = replacement.OutputPins;
-        node.MainInputPins = Math.Clamp(safeMainInputs, 1, node.InputPins);
+        node.MainInputPins = Math.Clamp(replacement.MainInputPins, 1, node.InputPins);
         node.SidechainInputPins = Math.Min(safeSidechainInputs, Math.Max(0, node.InputPins - node.MainInputPins));
+        node.MainInputLayoutId = replacement.MainInputLayoutId;
+        node.MainInputLayoutName = replacement.MainInputLayoutName;
+        node.OutputLayoutId = replacement.OutputLayoutId;
+        node.OutputLayoutName = replacement.OutputLayoutName;
+        node.SupportedInputLayouts = replacement.SupportedInputLayouts.ToList();
+        node.SupportedOutputLayouts = replacement.SupportedOutputLayouts.ToList();
         node.Bypassed = wasBypassed;
         node.Sandboxed = replacement.Sandboxed;
         if (hadPendingSavedDataApply && HasSavedPluginData(node))
@@ -8458,19 +8481,108 @@ public partial class MainWindow : Window
         }
 
         var mainPin = Math.Max(0, visualPin - node.SidechainInputPins);
-        return NodeStereoOrNumberLabel(mainPin, node.MainInputPins);
+        return NodeStereoOrNumberLabel(mainPin, node.MainInputPins, node.MainInputLayoutId);
     }
 
     private static string NodeOutputPinLabel(PluginNodeSnapshot node, int pin)
     {
-        return NodeStereoOrNumberLabel(pin, node.OutputPins);
+        return NodeStereoOrNumberLabel(pin, node.OutputPins, node.OutputLayoutId);
     }
 
-    private static string NodeStereoOrNumberLabel(int pin, int count)
+    private static string NodeStereoOrNumberLabel(int pin, int count, int layoutId = -1)
     {
-        return count == 2
-            ? pin == 0 ? "L" : "R"
-            : $"{pin + 1}";
+        if (layoutId == 4 && count == 8)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Sl",
+                4 => "Sr",
+                5 => "Lsr",
+                6 => "Rsr",
+                7 => "LFE",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId == 7 && count == 8)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Ls",
+                4 => "Rs",
+                5 => "Lc",
+                6 => "Rc",
+                7 => "LFE",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId == 5 && count == 12)
+        {
+            return pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "Sl",
+                4 => "Sr",
+                5 => "Lsr",
+                6 => "Rsr",
+                7 => "LFE",
+                8 => "TFL",
+                9 => "TFR",
+                10 => "TRL",
+                11 => "TRR",
+                _ => $"{pin + 1}"
+            };
+        }
+
+        if (layoutId >= 1000)
+        {
+            return $"{pin + 1}";
+        }
+
+        return count switch
+        {
+            2 => pin == 0 ? "L" : "R",
+            4 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "Ls",
+                3 => "Rs",
+                _ => $"{pin + 1}"
+            },
+            6 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "LFE",
+                4 => "Ls",
+                5 => "Rs",
+                _ => $"{pin + 1}"
+            },
+            8 => pin switch
+            {
+                0 => "L",
+                1 => "R",
+                2 => "C",
+                3 => "LFE",
+                4 => "Ls",
+                5 => "Rs",
+                6 => "Sl",
+                7 => "Sr",
+                _ => $"{pin + 1}"
+            },
+            _ => $"{pin + 1}"
+        };
     }
 
     private static int NativeInputPinForVisualPin(PluginNodeSnapshot node, int visualPin)

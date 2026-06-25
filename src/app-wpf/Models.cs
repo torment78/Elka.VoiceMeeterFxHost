@@ -370,6 +370,80 @@ internal sealed record PluginChoice(int Index, string Name, string Format, strin
     public override string ToString() => Name;
 }
 
+internal sealed record PluginLayoutChoice(int Id, string Name, int Channels)
+{
+    public override string ToString() => Name;
+
+    public static PluginLayoutChoice FromPins(int pins)
+    {
+        var channels = Math.Clamp(pins, 1, 32);
+        return new PluginLayoutChoice(LayoutIdForPins(channels), LayoutNameForId(LayoutIdForPins(channels), channels), channels);
+    }
+
+    public static int LayoutIdForPins(int pins)
+    {
+        return Math.Clamp(pins, 1, 32) switch
+        {
+            1 => 0,
+            2 => 1,
+            4 => 2,
+            6 => 3,
+            8 => 4,
+            12 => 5,
+            var channels => 1000 + channels
+        };
+    }
+
+    public static int ChannelCountForId(int id, int fallbackPins)
+    {
+        if (id >= 1000 && id <= 1032)
+        {
+            return id - 1000;
+        }
+
+        return id switch
+        {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            3 => 6,
+            4 => 8,
+            5 => 12,
+            7 => 8,
+            _ => Math.Clamp(fallbackPins, 1, 32)
+        };
+    }
+
+    public static string LayoutNameForId(int id, int fallbackPins)
+    {
+        if (id >= 1000 && id <= 1032)
+        {
+            return $"Discrete {id - 1000}";
+        }
+
+        return id switch
+        {
+            0 => "Mono",
+            1 => "Stereo",
+            2 => "Quad",
+            3 => "5.1",
+            4 => "7.1",
+            5 => "7.1.4",
+            7 => "7.1 SDDS",
+            _ => $"{Math.Clamp(fallbackPins, 1, 32)} channel"
+        };
+    }
+
+    public static List<PluginLayoutChoice> DefaultChoices(int selectedId, int selectedPins)
+    {
+        var selected = new PluginLayoutChoice(
+            selectedId,
+            LayoutNameForId(selectedId, selectedPins),
+            ChannelCountForId(selectedId, selectedPins));
+        return [selected];
+    }
+}
+
 internal sealed class PluginNodeSnapshot
 {
     public string Name { get; set; } = "VST";
@@ -386,6 +460,12 @@ internal sealed class PluginNodeSnapshot
     public int SidechainInputPins { get; set; }
     public int InputPins { get; set; } = 2;
     public int OutputPins { get; set; } = 2;
+    public int MainInputLayoutId { get; set; } = 1;
+    public string MainInputLayoutName { get; set; } = "Stereo";
+    public int OutputLayoutId { get; set; } = 1;
+    public string OutputLayoutName { get; set; } = "Stereo";
+    public List<PluginLayoutChoice> SupportedInputLayouts { get; set; } = [new(1, "Stereo", 2)];
+    public List<PluginLayoutChoice> SupportedOutputLayouts { get; set; } = [new(1, "Stereo", 2)];
     public bool Bypassed { get; set; }
     public bool PinsCollapsed { get; set; }
     public bool Sandboxed { get; set; }
@@ -403,7 +483,7 @@ internal sealed class PluginGroupSnapshot
     public int OutputPins { get; set; } = 2;
     public bool SidechainPortsEnabled { get; set; }
     public int SidechainInputPins { get; set; } = 2;
-    public int SidechainOutputPins { get; set; } = 2;
+    public int SidechainOutputPins { get; set; }
     public bool PinsCollapsed { get; set; }
     public List<int> MemberSlots { get; set; } = [];
 }
@@ -1200,7 +1280,9 @@ internal sealed class NativeEngineClient : IDisposable
         int y,
         string? initialStateBase64 = null,
         string? initialPresetBase64 = null,
-        bool sandboxed = false)
+        bool sandboxed = false,
+        int? mainInputLayoutId = null,
+        int? outputLayoutId = null)
     {
         if (!_attached)
         {
@@ -1211,6 +1293,8 @@ internal sealed class NativeEngineClient : IDisposable
         var slot = 0;
         var loadedInputPins = 0;
         var loadedOutputPins = 0;
+        var requestedMainInputLayoutId = mainInputLayoutId ?? PluginLayoutChoice.LayoutIdForPins(mainInputPins);
+        var requestedOutputLayoutId = outputLayoutId ?? PluginLayoutChoice.LayoutIdForPins(outputPins);
         var hasInitialPluginData =
             !string.IsNullOrWhiteSpace(initialStateBase64) ||
             !string.IsNullOrWhiteSpace(initialPresetBase64);
@@ -1223,6 +1307,8 @@ internal sealed class NativeEngineClient : IDisposable
                     mainInputPins,
                     sidechainInputPins,
                     outputPins,
+                    requestedMainInputLayoutId,
+                    requestedOutputLayoutId,
                     x,
                     y,
                     initialStateBase64 ?? string.Empty,
@@ -1238,6 +1324,8 @@ internal sealed class NativeEngineClient : IDisposable
                     mainInputPins,
                     sidechainInputPins,
                     outputPins,
+                    requestedMainInputLayoutId,
+                    requestedOutputLayoutId,
                     x,
                     y,
                     ref slot,
@@ -1252,6 +1340,8 @@ internal sealed class NativeEngineClient : IDisposable
                 mainInputPins,
                 sidechainInputPins,
                 outputPins,
+                requestedMainInputLayoutId,
+                requestedOutputLayoutId,
                 x,
                 y,
                 ref slot,
@@ -1265,6 +1355,8 @@ internal sealed class NativeEngineClient : IDisposable
                 mainInputPins,
                 sidechainInputPins,
                 outputPins,
+                requestedMainInputLayoutId,
+                requestedOutputLayoutId,
                 x,
                 y,
                 initialStateBase64 ?? string.Empty,
@@ -1287,7 +1379,7 @@ internal sealed class NativeEngineClient : IDisposable
 
         var loadedMainInputPins = Math.Clamp(Math.Max(1, mainInputPins), 1, Math.Max(1, loadedInputPins));
 
-        return new PluginNodeSnapshot
+        var node = new PluginNodeSnapshot
         {
             PluginIndex = choice.Index,
             PluginFormat = choice.Format,
@@ -1300,9 +1392,101 @@ internal sealed class NativeEngineClient : IDisposable
             SidechainInputPins = Math.Max(0, loadedInputPins - loadedMainInputPins),
             InputPins = Math.Max(1, loadedInputPins),
             OutputPins = Math.Max(1, loadedOutputPins),
+            MainInputLayoutId = requestedMainInputLayoutId,
+            MainInputLayoutName = PluginLayoutChoice.LayoutNameForId(requestedMainInputLayoutId, loadedMainInputPins),
+            OutputLayoutId = requestedOutputLayoutId,
+            OutputLayoutName = PluginLayoutChoice.LayoutNameForId(requestedOutputLayoutId, loadedOutputPins),
+            SupportedInputLayouts = PluginLayoutChoice.DefaultChoices(requestedMainInputLayoutId, loadedMainInputPins),
+            SupportedOutputLayouts = PluginLayoutChoice.DefaultChoices(requestedOutputLayoutId, loadedOutputPins),
             Sandboxed = sandboxed,
             Mode = mode
         };
+        ApplyPluginNodeLayoutInfo(node);
+        return node;
+    }
+
+    private void ApplyPluginNodeLayoutInfo(PluginNodeSnapshot node)
+    {
+        var buffer = new StringBuilder(2048);
+        if (ElkaFx_GetPluginNodeLayoutInfo(node.Slot, buffer, buffer.Capacity) != 0 || buffer.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var section in buffer.ToString().Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = section.IndexOf('=');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var key = section[..separator];
+            var value = section[(separator + 1)..];
+            switch (key)
+            {
+                case "inputSelected":
+                    if (TryParsePluginLayoutChoice(value, out var inputSelected))
+                    {
+                        node.MainInputLayoutId = inputSelected.Id;
+                        node.MainInputLayoutName = inputSelected.Name;
+                        node.MainInputPins = Math.Clamp(inputSelected.Channels, 1, node.InputPins);
+                    }
+                    break;
+                case "outputSelected":
+                    if (TryParsePluginLayoutChoice(value, out var outputSelected))
+                    {
+                        node.OutputLayoutId = outputSelected.Id;
+                        node.OutputLayoutName = outputSelected.Name;
+                        node.OutputPins = Math.Max(1, outputSelected.Channels);
+                    }
+                    break;
+                case "inputs":
+                    var inputs = ParsePluginLayoutChoices(value);
+                    if (inputs.Count > 0)
+                    {
+                        node.SupportedInputLayouts = inputs;
+                    }
+                    break;
+                case "outputs":
+                    var outputs = ParsePluginLayoutChoices(value);
+                    if (outputs.Count > 0)
+                    {
+                        node.SupportedOutputLayouts = outputs;
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static List<PluginLayoutChoice> ParsePluginLayoutChoices(string value)
+    {
+        return value
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => TryParsePluginLayoutChoice(entry, out var choice) ? choice : null)
+            .Where(choice => choice is not null)
+            .Cast<PluginLayoutChoice>()
+            .GroupBy(choice => choice.Id)
+            .Select(group => group.First())
+            .OrderBy(choice => choice.Channels)
+            .ThenBy(choice => choice.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryParsePluginLayoutChoice(string value, out PluginLayoutChoice choice)
+    {
+        choice = PluginLayoutChoice.FromPins(2);
+        var parts = value.Split(':', 3, StringSplitOptions.TrimEntries);
+        if (parts.Length != 3 ||
+            !int.TryParse(parts[0], out var id) ||
+            string.IsNullOrWhiteSpace(parts[1]) ||
+            !int.TryParse(parts[2], out var channels))
+        {
+            return false;
+        }
+
+        choice = new PluginLayoutChoice(id, parts[1], Math.Clamp(channels, 1, 32));
+        return true;
     }
 
     public void SetPluginNodeBypassed(int slot, bool bypassed)
@@ -1782,6 +1966,8 @@ internal sealed class NativeEngineClient : IDisposable
         int mainInputPins,
         int sidechainInputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         int x,
         int y,
         ref int slot,
@@ -1797,6 +1983,8 @@ internal sealed class NativeEngineClient : IDisposable
         int mainInputPins,
         int sidechainInputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         int x,
         int y,
         string initialStateBase64,
@@ -1814,6 +2002,8 @@ internal sealed class NativeEngineClient : IDisposable
         int mainInputPins,
         int sidechainInputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         int x,
         int y,
         string initialStateBase64,
@@ -1831,6 +2021,8 @@ internal sealed class NativeEngineClient : IDisposable
         int mainInputPins,
         int sidechainInputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         int x,
         int y,
         ref int slotOut,
@@ -1839,6 +2031,8 @@ internal sealed class NativeEngineClient : IDisposable
         StringBuilder status,
         int statusChars);
 
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPluginNodeLayoutInfo(int slot, StringBuilder buffer, int bufferChars);
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_SetPluginNodeBypassed(int slot, int bypassed);
 

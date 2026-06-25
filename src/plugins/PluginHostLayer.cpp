@@ -1193,19 +1193,203 @@ int clampPluginChannels(int requested, const juce::PluginDescription& descriptio
     return std::clamp(preferredChannels, 1, 32);
 }
 
+juce::AudioChannelSet standardLayoutForChannelCount(int channels)
+{
+    switch (std::clamp(channels, 1, 32))
+    {
+    case 1: return juce::AudioChannelSet::mono();
+    case 2: return juce::AudioChannelSet::stereo();
+    case 4: return juce::AudioChannelSet::quadraphonic();
+    case 6: return juce::AudioChannelSet::create5point1();
+    case 8: return juce::AudioChannelSet::create7point1();
+    case 12: return juce::AudioChannelSet::create7point1point4();
+    default: return juce::AudioChannelSet::discreteChannels(std::clamp(channels, 1, 32));
+    }
+}
+
 juce::AudioChannelSet layoutForId(int layoutId, int fallbackChannels)
 {
+    if (layoutId >= 1000 && layoutId <= 1032)
+        return juce::AudioChannelSet::discreteChannels(layoutId - 1000);
+
+    const int channels = std::clamp(fallbackChannels, 1, 32);
     switch (layoutId)
     {
     case 0: return juce::AudioChannelSet::mono();
     case 1: return juce::AudioChannelSet::stereo();
-    case 2: return juce::AudioChannelSet::quadraphonic();
-    case 3: return juce::AudioChannelSet::create5point1();
-    case 4: return juce::AudioChannelSet::create7point1();
-    case 5: return juce::AudioChannelSet::create7point1point4();
-    case 6: return juce::AudioChannelSet::discreteChannels(24);
-    default: return juce::AudioChannelSet::discreteChannels(std::clamp(fallbackChannels, 1, 32));
+    case 2: return channels == 4 ? juce::AudioChannelSet::quadraphonic() : standardLayoutForChannelCount(channels);
+    case 3: return channels == 6 ? juce::AudioChannelSet::create5point1() : standardLayoutForChannelCount(channels);
+    case 4: return channels == 8 ? juce::AudioChannelSet::create7point1() : standardLayoutForChannelCount(channels);
+    case 5: return channels == 12 ? juce::AudioChannelSet::create7point1point4() : standardLayoutForChannelCount(channels);
+    case 6: return juce::AudioChannelSet::discreteChannels(channels);
+    case 7: return channels == 8 ? juce::AudioChannelSet::create7point1SDDS() : standardLayoutForChannelCount(channels);
+    default: return standardLayoutForChannelCount(channels);
     }
+}
+
+struct PluginBusLayoutChoice
+{
+    int id = 1;
+    std::string name = "Stereo";
+    int channels = 2;
+    juce::AudioChannelSet layout;
+};
+
+int layoutIdForChannelCount(int channels)
+{
+    switch (std::clamp(channels, 1, 32))
+    {
+    case 1: return 0;
+    case 2: return 1;
+    case 4: return 2;
+    case 6: return 3;
+    case 8: return 4;
+    case 12: return 5;
+    default: return 1000 + std::clamp(channels, 1, 32);
+    }
+}
+
+int layoutChannelsForId(int layoutId, int fallbackChannels)
+{
+    if (layoutId >= 1000 && layoutId <= 1032)
+        return layoutId - 1000;
+
+    switch (layoutId)
+    {
+    case 0: return 1;
+    case 1: return 2;
+    case 2: return 4;
+    case 3: return 6;
+    case 4: return 8;
+    case 5: return 12;
+    case 7: return 8;
+    default: return std::clamp(fallbackChannels, 1, 32);
+    }
+}
+
+std::string layoutNameForId(int layoutId, int fallbackChannels)
+{
+    if (layoutId >= 1000 && layoutId <= 1032)
+        return "Discrete " + std::to_string(layoutId - 1000);
+
+    switch (layoutId)
+    {
+    case 0: return "Mono";
+    case 1: return "Stereo";
+    case 2: return "Quad";
+    case 3: return "5.1";
+    case 4: return "7.1";
+    case 5: return "7.1.4";
+    case 7: return "7.1 SDDS";
+    default: return std::to_string(std::clamp(fallbackChannels, 1, 32)) + " channel";
+    }
+}
+
+PluginBusLayoutChoice makeLayoutChoice(int layoutId, int fallbackChannels)
+{
+    const int channels = layoutChannelsForId(layoutId, fallbackChannels);
+    return PluginBusLayoutChoice { layoutId, layoutNameForId(layoutId, channels), channels, layoutForId(layoutId, channels) };
+}
+
+PluginBusLayoutChoice makeActualLayoutChoice(const PluginBusLayoutChoice& requested, const juce::AudioChannelSet& actual)
+{
+    const int channels = std::clamp(actual.size() > 0 ? actual.size() : requested.channels, 1, 32);
+    int id = requested.id;
+
+    if (actual == juce::AudioChannelSet::mono())
+        id = 0;
+    else if (actual == juce::AudioChannelSet::stereo())
+        id = 1;
+    else if (actual == juce::AudioChannelSet::quadraphonic())
+        id = 2;
+    else if (actual == juce::AudioChannelSet::create5point1())
+        id = 3;
+    else if (actual == juce::AudioChannelSet::create7point1())
+        id = 4;
+    else if (actual == juce::AudioChannelSet::create7point1point4())
+        id = 5;
+    else if (actual == juce::AudioChannelSet::create7point1SDDS())
+        id = 7;
+    else if (channels != requested.channels)
+        id = layoutIdForChannelCount(channels);
+
+    const auto name = (id == requested.id && channels == requested.channels)
+        ? requested.name
+        : layoutNameForId(id, channels);
+    return PluginBusLayoutChoice { id, name, channels, actual.size() > 0 ? actual : layoutForId(id, channels) };
+}
+
+std::vector<PluginBusLayoutChoice> standardBusLayoutChoices()
+{
+    return {
+        makeLayoutChoice(0, 1),
+        makeLayoutChoice(1, 2),
+        makeLayoutChoice(2, 4),
+        makeLayoutChoice(3, 6),
+        makeLayoutChoice(4, 8),
+        makeLayoutChoice(7, 8),
+        makeLayoutChoice(5, 12),
+        makeLayoutChoice(1008, 8),
+        makeLayoutChoice(1012, 12)
+    };
+}
+
+void ensureBusesLayoutHasCurrentBuses(juce::AudioPluginInstance& instance, juce::AudioProcessor::BusesLayout& layout)
+{
+    for (int bus = layout.inputBuses.size(); bus < instance.getBusCount(true); ++bus)
+        layout.inputBuses.add(instance.getChannelLayoutOfBus(true, bus));
+
+    for (int bus = layout.outputBuses.size(); bus < instance.getBusCount(false); ++bus)
+        layout.outputBuses.add(instance.getChannelLayoutOfBus(false, bus));
+}
+
+std::string encodeLayoutChoices(const std::vector<PluginBusLayoutChoice>& choices)
+{
+    std::ostringstream encoded;
+    bool first = true;
+    for (const auto& choice : choices)
+    {
+        if (choice.channels <= 0)
+            continue;
+
+        if (!first)
+            encoded << ';';
+
+        encoded << choice.id << ':' << choice.name << ':' << choice.channels;
+        first = false;
+    }
+
+    return encoded.str();
+}
+
+std::vector<PluginBusLayoutChoice> supportedLayoutsForMainBus(
+    juce::AudioPluginInstance& instance,
+    bool input,
+    const juce::AudioChannelSet& selectedInputLayout,
+    const juce::AudioChannelSet& selectedOutputLayout,
+    const PluginBusLayoutChoice& selectedChoice)
+{
+    (void)instance;
+    (void)input;
+    (void)selectedInputLayout;
+    (void)selectedOutputLayout;
+
+    // Do not probe every layout in-process. Some protected/surround VST3s fault
+    // inside checkBusesLayoutSupported(), which can terminate the WPF host.
+    // Offer the known host layouts and validate only the user's selected layout
+    // when the node is created/reconfigured.
+    auto supported = standardBusLayoutChoices();
+    if (std::none_of(supported.begin(), supported.end(), [&selectedChoice](const PluginBusLayoutChoice& existing) { return existing.id == selectedChoice.id; }))
+        supported.push_back(selectedChoice);
+
+    return supported;
+}
+
+std::string fallbackLayoutCapability(int layoutId, const std::string& layoutName, int pins)
+{
+    const auto choice = makeLayoutChoice(layoutId, pins);
+    const PluginBusLayoutChoice resolved { choice.id, layoutName.empty() ? choice.name : layoutName, choice.channels, choice.layout };
+    return encodeLayoutChoices({ resolved });
 }
 
 float sanitizePluginSample(float sample) noexcept
@@ -1214,6 +1398,31 @@ float sanitizePluginSample(float sample) noexcept
         return 0.0f;
 
     return std::clamp(sample, -8.0f, 8.0f);
+}
+
+bool processPluginBlockSafely(juce::AudioPluginInstance& plugin, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi) noexcept
+{
+#if defined(_MSC_VER)
+    __try
+    {
+        plugin.processBlock(block, midi);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+#else
+    try
+    {
+        plugin.processBlock(block, midi);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+#endif
 }
 
 class HostedVst3Processor final : public RealtimePluginProcessor
@@ -1239,9 +1448,12 @@ public:
     bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept override
     {
         if (failed)
-            return false;
+            return renderPassthrough(routing, buffer.samplesPerFrame);
 
         if (plugin == nullptr || buffer.write == nullptr || buffer.samplesPerFrame <= 0)
+            return false;
+
+        if (routing.inputRouteCount <= 0 || routing.outputRouteCount <= 0)
             return false;
 
         if (buffer.samplesPerFrame > maxBlockSize)
@@ -1276,14 +1488,10 @@ public:
         midi.clear();
         juce::AudioBuffer<float> block(processPointers.data(), processChannels, buffer.samplesPerFrame);
 
-        try
-        {
-            plugin->processBlock(block, midi);
-        }
-        catch (...)
+        if (!processPluginBlockSafely(*plugin, block, midi))
         {
             failed = true;
-            return false;
+            return renderPassthrough(routing, buffer.samplesPerFrame);
         }
 
         std::array<float*, 64> clearedDestinations {};
@@ -1323,6 +1531,62 @@ public:
     int channelCount() const noexcept { return processChannels; }
 
 private:
+    bool renderPassthrough(const PluginRoutingView& routing, int samples) noexcept
+    {
+        if (samples <= 0 || routing.inputRoutes == nullptr || routing.outputRoutes == nullptr)
+            return false;
+
+        std::array<float*, 64> clearedDestinations {};
+        int clearedCount = 0;
+        bool rendered = false;
+
+        for (int outputIndex = 0; outputIndex < routing.outputRouteCount; ++outputIndex)
+        {
+            const auto& outputRoute = routing.outputRoutes[outputIndex];
+            if (outputRoute.pluginPin < 0 || outputRoute.pluginPin >= outputPinCount || outputRoute.destination == nullptr)
+                continue;
+
+            const PluginAudioInputRoute* matchingInput = nullptr;
+            for (int inputIndex = 0; inputIndex < routing.inputRouteCount; ++inputIndex)
+            {
+                const auto& inputRoute = routing.inputRoutes[inputIndex];
+                if (inputRoute.pluginPin == outputRoute.pluginPin && inputRoute.source != nullptr)
+                {
+                    matchingInput = &inputRoute;
+                    break;
+                }
+            }
+
+            if (matchingInput == nullptr)
+                continue;
+
+            auto* destination = outputRoute.destination;
+            if (matchingInput->source == destination)
+            {
+                rendered = true;
+                continue;
+            }
+
+            bool alreadyCleared = false;
+            for (int i = 0; i < clearedCount; ++i)
+                alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == destination;
+
+            if (!alreadyCleared)
+            {
+                std::fill_n(destination, samples, 0.0f);
+                if (clearedCount < static_cast<int>(clearedDestinations.size()))
+                    clearedDestinations[static_cast<size_t>(clearedCount++)] = destination;
+            }
+
+            for (int sample = 0; sample < samples; ++sample)
+                destination[sample] = sanitizePluginSample(destination[sample] + matchingInput->source[sample]);
+
+            rendered = true;
+        }
+
+        return rendered;
+    }
+
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
@@ -1340,6 +1604,8 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
     int blockSize,
     int inputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     std::string& error)
 {
     error.clear();
@@ -1354,6 +1620,8 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
     const int safeInputPins = std::clamp(inputPins, 1, 32);
     const int safeOutputPins = std::clamp(outputPins, 1, 32);
     const int channelCount = std::max(safeInputPins, safeOutputPins);
+    const auto inputLayout = layoutForId(inputLayoutId, safeInputPins);
+    const auto outputLayout = layoutForId(outputLayoutId, safeOutputPins);
     const auto formatName = juce::String::fromUTF8(format.c_str());
     const auto identifier = juce::String::fromUTF8(fileOrIdentifier.c_str());
 
@@ -1413,9 +1681,9 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
     {
         instance->disableNonMainBuses();
         if (instance->getBusCount(true) > 0)
-            instance->setChannelLayoutOfBus(true, 0, layoutForId(channelCount == 1 ? 0 : 999, channelCount));
+            instance->setChannelLayoutOfBus(true, 0, inputLayout);
         if (instance->getBusCount(false) > 0)
-            instance->setChannelLayoutOfBus(false, 0, layoutForId(channelCount == 1 ? 0 : 999, channelCount));
+            instance->setChannelLayoutOfBus(false, 0, outputLayout);
 
         instance->setPlayConfigDetails(channelCount, channelCount, static_cast<double>(preparedSampleRate), preparedBlockSize);
         instance->setRateAndBufferSizeDetails(static_cast<double>(preparedSampleRate), preparedBlockSize);
@@ -1566,6 +1834,8 @@ public:
         int blockSize,
         int inputPins,
         int outputPins,
+        int inputLayoutId,
+        int outputLayoutId,
         std::string& error)
         : inputPinCount(std::clamp(inputPins, 1, SandboxMaxPins)),
           outputPinCount(std::clamp(outputPins, 1, SandboxMaxPins)),
@@ -1573,7 +1843,7 @@ public:
           maxBlockSize(std::clamp(blockSize, 64, 8192)),
           processTimeoutMs(sandboxProcessTimeoutFor(sampleRate, blockSize))
     {
-        start(format, fileOrIdentifier, sampleRate, error);
+        start(format, fileOrIdentifier, sampleRate, inputLayoutId, outputLayoutId, error);
     }
 
     ~SandboxedPluginProcessor() override
@@ -1594,6 +1864,9 @@ public:
 
         ScopedSandboxIpcFlag ipc(ipcBusy);
         if (!ipc.isLocked())
+            return bypass(buffer, routing);
+
+        if (!drainLateAudioResponse(0))
             return bypass(buffer, routing);
 
         for (int ch = 0; ch < processChannels; ++ch)
@@ -1627,7 +1900,16 @@ public:
         SetEvent(requestEvent);
 
         const DWORD wait = WaitForSingleObject(responseEvent, processTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->responseId != request || header->status < 0)
+        if (wait != WAIT_OBJECT_0)
+        {
+            lateAudioResponsePending = true;
+            lateAudioRequestId = request;
+            return bypass(buffer, routing);
+        }
+
+        lateAudioResponsePending = false;
+        lateAudioRequestId = 0;
+        if (header->responseId != request || header->status < 0)
             return bypass(buffer, routing);
 
         std::array<float*, 64> clearedDestinations {};
@@ -1675,6 +1957,12 @@ public:
         if (!ipc.isLocked())
         {
             error = "Sandboxed plugin worker is busy. Try opening the editor again.";
+            return false;
+        }
+
+        if (!drainLateAudioResponse(250))
+        {
+            error = "Sandboxed plugin worker is still finishing a late audio block. Try again.";
             return false;
         }
 
@@ -1754,6 +2042,12 @@ private:
             return false;
         }
 
+        if (!drainLateAudioResponse(250))
+        {
+            error = "Sandboxed plugin worker is still finishing a late audio block.";
+            return false;
+        }
+
         std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
         InterlockedExchange(&header->textByteCount, 0);
         InterlockedExchange(&header->command, command);
@@ -1805,6 +2099,12 @@ private:
             return false;
         }
 
+        if (!drainLateAudioResponse(250))
+        {
+            error = "Sandboxed plugin worker is still finishing a late audio block.";
+            return false;
+        }
+
         std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
         std::memcpy(stateData, value.data(), value.size());
         InterlockedExchange(&header->textByteCount, static_cast<LONG>(value.size()));
@@ -1829,7 +2129,8 @@ private:
 
         return true;
     }
-    void start(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, std::string& error)
+
+    void start(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int inputLayoutId, int outputLayoutId, std::string& error)
     {
         error.clear();
         const auto workerPath = configuredWorkerPath();
@@ -1902,6 +2203,10 @@ private:
         commandLine += L" ";
         commandLine += std::to_wstring(outputPinCount);
         commandLine += L" ";
+        commandLine += std::to_wstring(inputLayoutId);
+        commandLine += L" ";
+        commandLine += std::to_wstring(outputLayoutId);
+        commandLine += L" ";
         commandLine += quoteWindowsArg(mapName);
         commandLine += L" ";
         commandLine += quoteWindowsArg(requestEventName);
@@ -1917,7 +2222,7 @@ private:
         PROCESS_INFORMATION processInfo {};
         std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
         mutableCommand.push_back(L'\0');
-        if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &processInfo))
+        if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | HIGH_PRIORITY_CLASS, nullptr, nullptr, &startup, &processInfo))
         {
             error = "Could not start Elka.PluginWorker.exe.";
             return;
@@ -1987,6 +2292,27 @@ private:
         return audioData + (static_cast<size_t>(channel) * static_cast<size_t>(maxBlockSize));
     }
 
+    bool drainLateAudioResponse(DWORD waitMilliseconds) noexcept
+    {
+        if (!lateAudioResponsePending)
+            return true;
+
+        if (responseEvent == nullptr)
+        {
+            lateAudioResponsePending = false;
+            lateAudioRequestId = 0;
+            return true;
+        }
+
+        const DWORD wait = WaitForSingleObject(responseEvent, waitMilliseconds);
+        if (wait != WAIT_OBJECT_0)
+            return false;
+
+        lateAudioResponsePending = false;
+        lateAudioRequestId = 0;
+        return true;
+    }
+
     bool bypass(AudioBufferView buffer, const PluginRoutingView& routing) noexcept
     {
         if (buffer.samplesPerFrame <= 0)
@@ -2040,8 +2366,8 @@ private:
         const auto safeSampleRate = std::clamp(sampleRate, 8000, 192000);
         const auto safeBlockSize = std::clamp(blockSize, 64, 8192);
         const auto blockMs = (static_cast<double>(safeBlockSize) * 1000.0) / static_cast<double>(safeSampleRate);
-        const auto waitMs = static_cast<int>(std::floor((blockMs * 0.85) + 0.5));
-        return static_cast<DWORD>(std::clamp(waitMs, 4, 24));
+        const auto waitMs = static_cast<int>(std::floor((blockMs * 1.25) + 2.0));
+        return static_cast<DWORD>(std::clamp(waitMs, 4, 32));
     }
 
     std::wstring mapName;
@@ -2063,6 +2389,8 @@ private:
     int stateDataBytes = 0;
     volatile LONG requestCounter = 0;
     volatile LONG ipcBusy = 0;
+    bool lateAudioResponsePending = false;
+    LONG lateAudioRequestId = 0;
     int inputPinCount = 2;
     int outputPinCount = 2;
     int processChannels = 2;
@@ -2150,6 +2478,8 @@ int createWorkerPluginProcessor(
     int blockSize,
     int inputPins,
     int outputPins,
+    int inputLayoutId,
+    int outputLayoutId,
     std::string& error)
 {
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
@@ -2165,6 +2495,8 @@ int createWorkerPluginProcessor(
         session->maxBlockSize,
         session->inputPins,
         session->outputPins,
+        inputLayoutId,
+        outputLayoutId,
         error);
 
     if (session->processor == nullptr)
@@ -3106,8 +3438,10 @@ int PluginHostLayer::addDiscoveredPluginNode(
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
-    int layoutId,
-    const std::string& layoutName,
+    int inputLayoutId,
+    const std::string& inputLayoutName,
+    int outputLayoutId,
+    const std::string& outputLayoutName,
     int kind,
     int sourceStart,
     int sourceCount,
@@ -3116,6 +3450,8 @@ int PluginHostLayer::addDiscoveredPluginNode(
     PluginLoadProgressCallback progress)
 {
     error.clear();
+    (void)inputLayoutName;
+    (void)outputLayoutName;
 
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
     if (index >= impl->descriptions.size())
@@ -3184,10 +3520,12 @@ int PluginHostLayer::addDiscoveredPluginNode(
         if (progress)
             progress("Configuring plugin buses", resolvedDetail);
 
-        const auto inputLayout = layoutForId(layoutId, requestedMainInputPins);
+        const auto inputChoice = makeLayoutChoice(inputLayoutId, requestedMainInputPins);
+        const auto outputChoice = makeLayoutChoice(outputLayoutId, requestedOutputPins);
+        const auto inputLayout = inputChoice.layout;
         const int sidechainLayoutId = requestedSidechainPins == 1 ? 0 : requestedSidechainPins == 2 ? 1 : 99;
         const auto sidechainLayout = layoutForId(sidechainLayoutId, requestedSidechainPins);
-        const auto outputLayout = layoutForId(layoutId, requestedOutputPins);
+        const auto outputLayout = outputChoice.layout;
         bool layoutAccepted = true;
         int effectiveSidechainPins = requestedSidechainPins;
 
@@ -3221,6 +3559,16 @@ int PluginHostLayer::addDiscoveredPluginNode(
         if (instance->getBusCount(false) > 0)
             layoutAccepted = instance->setChannelLayoutOfBus(false, 0, outputLayout) && layoutAccepted;
 
+        auto effectiveInputChoice = inputChoice;
+        if (instance->getBusCount(true) > 0)
+            effectiveInputChoice = makeActualLayoutChoice(inputChoice, instance->getChannelLayoutOfBus(true, 0));
+
+        auto effectiveOutputChoice = outputChoice;
+        if (instance->getBusCount(false) > 0)
+            effectiveOutputChoice = makeActualLayoutChoice(outputChoice, instance->getChannelLayoutOfBus(false, 0));
+
+        const int effectiveMainInputPins = std::clamp(effectiveInputChoice.channels, 1, 32 - effectiveSidechainPins);
+        const int effectiveOutputPins = std::clamp(effectiveOutputChoice.channels, 1, 32);
         std::string stateRestoreWarning;
         if (!initialPresetBase64.empty())
         {
@@ -3257,23 +3605,31 @@ int PluginHostLayer::addDiscoveredPluginNode(
 
         if (progress)
             progress("Installing plugin into realtime graph", resolvedDetail);
-        const int effectiveInputPins = std::clamp(requestedMainInputPins + effectiveSidechainPins, 1, 32);
+        const auto supportedInputLayouts = encodeLayoutChoices(supportedLayoutsForMainBus(*instance, true, effectiveInputChoice.layout, effectiveOutputChoice.layout, effectiveInputChoice));
+        const auto supportedOutputLayouts = encodeLayoutChoices(supportedLayoutsForMainBus(*instance, false, effectiveInputChoice.layout, effectiveOutputChoice.layout, effectiveOutputChoice));
+        const int effectiveInputPins = std::clamp(effectiveMainInputPins + effectiveSidechainPins, 1, 32);
 
         const auto slotIndex = static_cast<size_t>(slot);
         impl->nodeEditors[slotIndex].reset();
         impl->nodeProcessors[slotIndex] =
-            std::make_unique<HostedVst3Processor>(std::move(instance), effectiveInputPins, requestedOutputPins, preparedBlockSize);
+            std::make_unique<HostedVst3Processor>(std::move(instance), effectiveInputPins, effectiveOutputPins, preparedBlockSize);
         impl->nodeSummaries[slotIndex] = PluginNodeSummary {
             slot,
-            layoutAccepted ? discoveredPlugins[index].name : discoveredPlugins[index].name + " (layout fallback)",
+            discoveredPlugins[index].name,
             kind,
             false,
             effectiveInputPins,
-            requestedMainInputPins,
+            effectiveMainInputPins,
             effectiveSidechainPins,
-            requestedOutputPins,
-            layoutId,
-            layoutName,
+            effectiveOutputPins,
+            effectiveInputChoice.id,
+            effectiveInputChoice.name,
+            effectiveInputChoice.id,
+            effectiveInputChoice.name,
+            effectiveOutputChoice.id,
+            effectiveOutputChoice.name,
+            supportedInputLayouts,
+            supportedOutputLayouts,
             std::max(0, sourceStart),
             std::clamp(sourceCount, 1, 64),
             250 + (slot * 28),
@@ -3323,8 +3679,10 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
     int mainInputPins,
     int sidechainInputPins,
     int outputPins,
-    int layoutId,
-    const std::string& layoutName,
+    int inputLayoutId,
+    const std::string& inputLayoutName,
+    int outputLayoutId,
+    const std::string& outputLayoutName,
     int kind,
     int sourceStart,
     int sourceCount,
@@ -3333,6 +3691,8 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
     PluginLoadProgressCallback progress)
 {
     error.clear();
+    (void)inputLayoutName;
+    (void)outputLayoutName;
 
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
     if (index >= discoveredPlugins.size())
@@ -3382,6 +3742,8 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
         preparedBlockSize,
         effectiveInputPins,
         requestedOutputPins,
+        inputLayoutId,
+        outputLayoutId,
         error);
 
     if (processor == nullptr || !processor->isReady())
@@ -3422,8 +3784,14 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
         requestedMainInputPins,
         requestedSidechainPins,
         requestedOutputPins,
-        layoutId,
-        layoutName,
+        inputLayoutId,
+        inputLayoutName.empty() ? layoutNameForId(inputLayoutId, requestedMainInputPins) : inputLayoutName,
+        inputLayoutId,
+        inputLayoutName.empty() ? layoutNameForId(inputLayoutId, requestedMainInputPins) : inputLayoutName,
+        outputLayoutId,
+        outputLayoutName.empty() ? layoutNameForId(outputLayoutId, requestedOutputPins) : outputLayoutName,
+        fallbackLayoutCapability(inputLayoutId, inputLayoutName, requestedMainInputPins),
+        fallbackLayoutCapability(outputLayoutId, outputLayoutName, requestedOutputPins),
         std::max(0, sourceStart),
         std::clamp(sourceCount, 1, 64),
         250 + (slot * 28),

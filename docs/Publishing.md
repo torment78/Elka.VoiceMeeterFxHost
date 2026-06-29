@@ -27,7 +27,7 @@ In Visual Studio, use the publish profile:
 src\app-wpf\Properties\PublishProfiles\win-x64-framework-dependent.pubxml
 ```
 
-That profile creates the release ZIP, compact direct EXE, and installer, then uploads the files to the GitHub release automatically. The default release tag is `v$(Version)` from the app project, for example `v0.7.4`.
+That profile creates the release ZIP, compact direct EXE, and installer, then uploads the files to the GitHub release automatically. The default release tag is `v$(Version)` from the app project, for example `v0.7.5`.
 The upload log is written to:
 
 ```text
@@ -48,7 +48,7 @@ artifacts\release\ElkaVoiceMeeterFxHostSetup-vX.Y.Z.exe
 After the GitHub repo exists and `gh auth login` has been completed:
 
 ```powershell
-.\scripts\publish-release.ps1 -Tag v0.7.4 -Upload
+.\scripts\publish-release.ps1 -Tag v0.7.5 -Upload
 ```
 
 The script publishes locally first, then creates the release if it does not

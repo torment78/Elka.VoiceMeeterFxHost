@@ -386,7 +386,7 @@ internal static class Program
             mmcssHandle = AvSetMmThreadCharacteristics("Pro Audio", ref taskIndex);
             if (mmcssHandle != IntPtr.Zero)
             {
-                AvSetMmThreadPriority(mmcssHandle, 2);
+                AvSetMmThreadPriority(mmcssHandle, 1);
             }
         }
         catch

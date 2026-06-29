@@ -9,6 +9,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(ELKA_BUILD_CALLBACK_NULL_HOST "Build standalone VoiceMeeter callback null-host diagnostic tool" ON)
+if (ELKA_BUILD_CALLBACK_NULL_HOST AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/CallbackNullHost/CMakeLists.txt")
+    add_subdirectory(tools/CallbackNullHost)
+endif()
 set(ELKA_JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE")
 set(ELKA_VST2_SDK_PATH "" CACHE PATH "Required legacy VST2 SDK folder containing pluginterfaces/vst2.x/aeffect.h and aeffectx.h")
 set(ELKA_ENABLE_VST2_HOST OFF)
@@ -40,10 +44,14 @@ else()
     message(FATAL_ERROR "JUCE is required for VST2/VST3 hosting. Put JUCE in external/JUCE before configuring this project.")
 endif()
 
-set(ELKA_NATIVE_CORE_SOURCES
+set(ELKA_REALTIME_CALLBACK_SOURCES
     src/voicemeeter/VoicemeeterRemoteApi.cpp
     src/voicemeeter/VoicemeeterClient.cpp
     src/engine/RealtimeEngine.cpp
+)
+
+set(ELKA_NATIVE_CORE_SOURCES
+    ${ELKA_REALTIME_CALLBACK_SOURCES}
     src/insert_asio/InsertAsioHost.cpp
     src/plugins/PluginHostLayer.cpp
 )
@@ -53,7 +61,12 @@ add_library(ElkaVoiceMeeterFxHost.Native SHARED
     ${ELKA_NATIVE_CORE_SOURCES}
 )
 
-foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native)
+add_library(ElkaVoiceMeeterFxHost.RealtimeCore SHARED
+    src/realtime_core_api/RealtimeCoreNativeApi.cpp
+    ${ELKA_REALTIME_CALLBACK_SOURCES}
+)
+
+foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore)
     target_include_directories(${target} PRIVATE
         src
     )
@@ -72,6 +85,7 @@ foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native)
 
     target_link_libraries(${target} PRIVATE
         Advapi32
+        Avrt
         Comctl32
         Gdi32
         Mmdevapi
@@ -84,6 +98,10 @@ endforeach()
 
 target_compile_definitions(ElkaVoiceMeeterFxHost.Native PRIVATE
     ELKA_VOICEMEETER_FX_HOST_NATIVE_EXPORTS=1
+)
+
+target_compile_definitions(ElkaVoiceMeeterFxHost.RealtimeCore PRIVATE
+    ELKA_VOICEMEETER_FX_HOST_REALTIME_CORE_EXPORTS=1
 )
 
 if (ELKA_ENABLE_JUCE_PLUGIN_HOST)
@@ -115,7 +133,7 @@ else()
 endif()
 
 if (MSVC)
-    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native)
+    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore)
         target_compile_options(${target} PRIVATE
             /W4
             /permissive-
@@ -123,3 +141,4 @@ if (MSVC)
         )
     endforeach()
 endif()
+

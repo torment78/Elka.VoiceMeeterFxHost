@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.7.4</Version>
+    <Version>0.7.5</Version>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
@@ -13,21 +13,21 @@
     <SelfContained>false</SelfContained>
     <ApplicationIcon>Assets\VoicemeeterDelay.ico</ApplicationIcon>
     <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</RepoRoot>
-    <NativeBuildConfiguration Condition="'$(Configuration)' == 'Release'">Release</NativeBuildConfiguration>
-    <NativeBuildConfiguration Condition="'$(NativeBuildConfiguration)' == ''">Debug</NativeBuildConfiguration>
+    <NativeBuildConfiguration Condition="'$(NativeBuildConfiguration)' == ''">Release</NativeBuildConfiguration>
     <NativeCMakePreset Condition="'$(NativeCMakePreset)' == '' and Exists('C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')">vs2026-x64</NativeCMakePreset>
     <NativeCMakePreset Condition="'$(NativeCMakePreset)' == '' and (Exists('C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe') or Exists('C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe') or Exists('C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'))">vs2022-x64</NativeCMakePreset>
     <NativeCMakePreset Condition="'$(NativeCMakePreset)' == ''">vs2026-x64</NativeCMakePreset>
     <NativeBuildDir Condition="'$(NativeCMakePreset)' == 'vs2026-x64'">build-vs2026</NativeBuildDir>
     <NativeBuildDir Condition="'$(NativeCMakePreset)' == 'vs2022-x64'">build-vs2022</NativeBuildDir>
     <NativeBuildDir Condition="'$(NativeBuildDir)' == ''">build-vs2026</NativeBuildDir>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">release-vs2026</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">debug-vs2026</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">release-vs2022</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">debug-vs2022</NativeBuildPreset>
-    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(Configuration)' == 'Release'">release-vs2026</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(NativeBuildConfiguration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">release-vs2026</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(NativeBuildConfiguration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2026-x64'">debug-vs2026</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(NativeBuildConfiguration)' == 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">release-vs2022</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(NativeBuildConfiguration)' != 'Release' and '$(NativeCMakePreset)' == 'vs2022-x64'">debug-vs2022</NativeBuildPreset>
+    <NativeBuildPreset Condition="'$(NativeBuildPreset)' == '' and '$(NativeBuildConfiguration)' == 'Release'">release-vs2026</NativeBuildPreset>
     <NativeBuildPreset Condition="'$(NativeBuildPreset)' == ''">debug-vs2026</NativeBuildPreset>
     <NativeBridgePath>$(RepoRoot)\$(NativeBuildDir)\$(NativeBuildConfiguration)\ElkaVoiceMeeterFxHost.Native.dll</NativeBridgePath>
+    <RealtimeCoreBridgePath>$(RepoRoot)\$(NativeBuildDir)\$(NativeBuildConfiguration)\ElkaVoiceMeeterFxHost.RealtimeCore.dll</RealtimeCoreBridgePath>
     <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and '$(ELKA_VST2_SDK_PATH)' != ''">$(ELKA_VST2_SDK_PATH)</Vst2SdkPath>
     <Vst2SdkPath Condition="'$(Vst2SdkPath)' == '' and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h') and Exists('$(RepoRoot)\external\VST2_SDK\pluginterfaces\vst2.x\aeffectx.h')">$(RepoRoot)\external\VST2_SDK</Vst2SdkPath>
     <NativeVst2ConfigureArg>-DELKA_VST2_SDK_PATH=&quot;$(Vst2SdkPath)&quot;</NativeVst2ConfigureArg>
@@ -98,9 +98,15 @@
     <Message Importance="high" Text="Building native VoiceMeeter bridge: $(NativeBuildPreset)" />
     <Exec Command="&quot;$(CMakeExe)&quot; --build --preset $(NativeBuildPreset) --target ElkaVoiceMeeterFxHost.Native"
           WorkingDirectory="$(RepoRoot)" />
+    <Message Importance="high" Text="Building realtime core bridge: $(NativeBuildPreset)" />
+    <Exec Command="&quot;$(CMakeExe)&quot; --build --preset $(NativeBuildPreset) --target ElkaVoiceMeeterFxHost.RealtimeCore"
+          WorkingDirectory="$(RepoRoot)" />
   </Target>
   <Target Name="CopyNativeBridge" AfterTargets="BuildNativeBridge" Condition="'$(PublishSingleFile)' != 'true'">
     <Copy SourceFiles="$(NativeBridgePath)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(RealtimeCoreBridgePath)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
   </Target>
@@ -123,6 +129,11 @@
     <ItemGroup>
       <ResolvedFileToPublish Include="$(NativeBridgePath)" Condition="Exists('$(NativeBridgePath)')">
         <RelativePath>ElkaVoiceMeeterFxHost.Native.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(RealtimeCoreBridgePath)" Condition="Exists('$(RealtimeCoreBridgePath)')">
+        <RelativePath>ElkaVoiceMeeterFxHost.RealtimeCore.dll</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
       </ResolvedFileToPublish>

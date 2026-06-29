@@ -14,8 +14,10 @@
 *.sln.docstates
 
 # CMake
+**/build*/
 CMakeUserPresets.json
 
 # Local/editor files
 .vscode/
 *.log
+

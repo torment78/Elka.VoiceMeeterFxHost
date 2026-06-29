@@ -66,6 +66,35 @@ struct NativeStats
     double lastProcessUsec = 0.0;
     double peakProcessUsec = 0.0;
     double callbackCpuPercent = 0.0;
+    unsigned long long callbackOver50Count = 0;
+    unsigned long long callbackOver80Count = 0;
+    unsigned long long callbackOver100Count = 0;
+    unsigned long long pluginBusySkipCount = 0;
+    unsigned long long routeFifoWaitCount = 0;
+    unsigned long long callbackJitterOver25Count = 0;
+    unsigned long long callbackJitterOver50Count = 0;
+    unsigned long long callbackJitterOver100Count = 0;
+    int callbackJitterMaxUsec = 0;
+    unsigned long long rawInputPopCount = 0;
+    unsigned long long postCopyPopCount = 0;
+    unsigned long long prePluginPopCount = 0;
+    int rawInputDeltaPeakPercent = 0;
+    int postCopyDeltaPeakPercent = 0;
+    int prePluginDeltaPeakPercent = 0;
+    int rawInputLivePeakPpm = 0;
+    int postCopyLivePeakPpm = 0;
+    int prePluginLivePeakPpm = 0;
+    int rawInputBoundaryDeltaPpm = 0;
+    int postCopyBoundaryDeltaPpm = 0;
+    int prePluginBoundaryDeltaPpm = 0;
+    unsigned long long postCopyResidualCount = 0;
+    unsigned long long prePluginResidualCount = 0;
+    unsigned long long finalResidualCount = 0;
+    int postCopyResidualPeakPpm = 0;
+    int prePluginResidualPeakPpm = 0;
+    int finalResidualPeakPpm = 0;
+    int residualProbeStartChannel = -1;
+    int residualProbeReadChannel = -1;
     int delayBufferSampleRate = 0;
     int probeInputChannel = -1;
     int probeOutputChannel = -1;
@@ -105,6 +134,26 @@ struct NativeStats
     int voicemeeterInputMaxLevelPercent = -1;
     int voicemeeterInputMaxChannel = -1;
     int voicemeeterOutputLevelPercent = -1;
+    unsigned long long callbackJitterOver100Input = 0;
+    unsigned long long callbackJitterOver100Output = 0;
+    unsigned long long callbackJitterOver100Main = 0;
+    unsigned long long callbackJitterOver100InsertAsio = 0;
+    int callbackJitterMaxUsecInput = 0;
+    int callbackJitterMaxUsecOutput = 0;
+    int callbackJitterMaxUsecMain = 0;
+    int callbackJitterMaxUsecInsertAsio = 0;
+    unsigned long long rawInputPopCountInput = 0;
+    unsigned long long rawInputPopCountOutput = 0;
+    unsigned long long rawInputPopCountMain = 0;
+    unsigned long long rawInputPopCountInsertAsio = 0;
+    unsigned long long postCopyPopCountInput = 0;
+    unsigned long long postCopyPopCountOutput = 0;
+    unsigned long long postCopyPopCountMain = 0;
+    unsigned long long postCopyPopCountInsertAsio = 0;
+    unsigned long long prePluginPopCountInput = 0;
+    unsigned long long prePluginPopCountOutput = 0;
+    unsigned long long prePluginPopCountMain = 0;
+    unsigned long long prePluginPopCountInsertAsio = 0;
 };
 
 struct NativeSinglePingResult
@@ -997,13 +1046,12 @@ int activeVoiceMeeterSampleRate(NativeHost& target) noexcept
 
 int desiredInsertAsioSampleRate(NativeHost& target) noexcept
 {
-    const int configuredSampleRate = configuredVoiceMeeterSampleRate(target);
-    if (configuredSampleRate > 0)
-        return configuredSampleRate;
-
     const auto stats = target.engine.getStats();
     const int liveSampleRate = clampVoiceMeeterSampleRate(stats.sampleRate);
-    return liveSampleRate;
+    if (liveSampleRate > 0)
+        return liveSampleRate;
+
+    return configuredVoiceMeeterSampleRate(target);
 }
 
 int desiredInsertAsioBlockSize(NativeHost& target) noexcept
@@ -1152,6 +1200,9 @@ int restartInsertAsioForFormatChangeLocked(NativeHost& target, int expectedChann
     const int currentBlockSize = target.insertAsio.currentBlockSize();
     if (!insertAsioRunning && insertAsioOpen)
     {
+        target.client.unregisterCallback();
+        target.mode = CallbackMode::None;
+
         std::wstring stopped;
         target.insertAsio.stop(stopped);
 
@@ -1210,6 +1261,9 @@ int restartInsertAsioForFormatChangeLocked(NativeHost& target, int expectedChann
         message = L"Insert ASIO format change detected; waiting for stable confirmation.";
         return 0;
     }
+
+    target.client.unregisterCallback();
+    target.mode = CallbackMode::None;
 
     std::wstring stopped;
     target.insertAsio.stop(stopped);
@@ -1326,33 +1380,104 @@ int checkInsertAsioFormatChangedLocked(NativeHost& target, std::wstring& message
 
 bool setModeLocked(NativeHost& target, CallbackMode mode, std::wstring& error)
 {
-    target.mode = mode;
+    const CallbackMode previousMode = target.mode;
+    if (mode == previousMode && target.client.state() == ConnectionState::Running)
+    {
+        target.client.setPreferredMode(mode);
+        target.lastStatus = target.client.statusText();
+        return true;
+    }
+
     if (mode == CallbackMode::None)
     {
         if (!target.client.connect(error))
             return false;
 
         target.client.unregisterCallback();
+        target.mode = mode;
         target.lastStatus = L"Connected | realtime callback idle";
         return true;
     }
 
-    const bool wasRunning = target.client.state() == ConnectionState::Running;
-    if (wasRunning)
+    auto restorePreviousMode = [&]() noexcept {
+        target.client.setPreferredMode(previousMode);
+        target.mode = previousMode;
+    };
+
+    target.client.setPreferredMode(mode);
+    if (target.client.state() == ConnectionState::Running)
         target.client.stop();
 
-    if (target.client.state() == ConnectionState::Disconnected)
+    if (target.client.state() != ConnectionState::Disconnected &&
+        !target.client.registerCallback(mode, error))
     {
+        const std::wstring firstError = error;
+        target.client.disconnect();
+        error.clear();
         target.client.setPreferredMode(mode);
-    }
-    else if (!target.client.registerCallback(mode, error))
-    {
-        return false;
+
+        if (!target.client.registerCallback(mode, error))
+        {
+            if (error.empty())
+                error = firstError;
+            restorePreviousMode();
+            target.lastStatus = error;
+            return false;
+        }
     }
 
-    return startLocked(target, error);
+    target.mode = mode;
+    if (startLocked(target, error))
+        return true;
+
+    const std::wstring firstStartError = error;
+    target.client.disconnect();
+    error.clear();
+    target.client.setPreferredMode(mode);
+    target.mode = mode;
+
+    if (startLocked(target, error))
+        return true;
+
+    if (error.empty())
+        error = firstStartError;
+
+    target.client.unregisterCallback();
+    restorePreviousMode();
+    target.lastStatus = error;
+    return false;
 }
+bool rearmModeLocked(NativeHost& target, CallbackMode mode, std::wstring& error)
+{
+    if (mode == CallbackMode::None)
+        return setModeLocked(target, mode, error);
 
+    if (!target.client.connect(error))
+        return false;
+
+    target.client.setPreferredMode(mode);
+    target.client.unregisterCallback();
+    target.mode = mode;
+
+    if (startLocked(target, error))
+        return true;
+
+    const std::wstring firstStartError = error;
+    target.client.disconnect();
+    error.clear();
+    target.client.setPreferredMode(mode);
+    target.mode = mode;
+
+    if (startLocked(target, error))
+        return true;
+
+    if (error.empty())
+        error = firstStartError;
+
+    target.client.unregisterCallback();
+    target.lastStatus = error;
+    return false;
+}
 void syncPluginNodeLocked(NativeHost& target, int slot)
 {
     if (slot < 0 || slot >= PluginHostLayer::MaxPluginNodes)
@@ -1623,6 +1748,9 @@ __declspec(dllexport) int __cdecl ElkaFx_StartInsertAsio(int expectedChannelCoun
             return -1;
         }
 
+        target.client.unregisterCallback();
+        target.mode = CallbackMode::None;
+
         const int requestedSampleRate = desiredInsertAsioSampleRate(target);
         const int requestedBlockSize = desiredInsertAsioBlockSize(target);
         if (requestedSampleRate > 0 && !target.engine.prepareDelayBuffers(requestedSampleRate))
@@ -1772,6 +1900,15 @@ __declspec(dllexport) int __cdecl ElkaFx_SetMode(int mode, wchar_t* status, int 
     return ok ? 0 : -1;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_RearmMode(int mode, wchar_t* status, int statusChars)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    std::wstring error;
+    const bool ok = rearmModeLocked(target, callbackModeFromApi(mode), error);
+    writeWide(ok ? target.client.statusText() : error, status, statusChars);
+    return ok ? 0 : -1;
+}
 __declspec(dllexport) int __cdecl ElkaFx_Start(wchar_t* status, int statusChars)
 {
     std::lock_guard lock(g_mutex);
@@ -1931,6 +2068,35 @@ __declspec(dllexport) void __cdecl ElkaFx_GetStats(NativeStats* stats)
     stats->lastProcessUsec = realtimeStats.lastProcessUsec;
     stats->peakProcessUsec = realtimeStats.peakProcessUsec;
     stats->callbackCpuPercent = realtimeStats.callbackCpuPercent;
+    stats->callbackOver50Count = realtimeStats.callbackOver50Count;
+    stats->callbackOver80Count = realtimeStats.callbackOver80Count;
+    stats->callbackOver100Count = realtimeStats.callbackOver100Count;
+    stats->pluginBusySkipCount = realtimeStats.pluginBusySkipCount;
+    stats->routeFifoWaitCount = realtimeStats.routeFifoWaitCount;
+    stats->callbackJitterOver25Count = realtimeStats.callbackJitterOver25Count;
+    stats->callbackJitterOver50Count = realtimeStats.callbackJitterOver50Count;
+    stats->callbackJitterOver100Count = realtimeStats.callbackJitterOver100Count;
+    stats->callbackJitterMaxUsec = realtimeStats.callbackJitterMaxUsec;
+    stats->rawInputPopCount = realtimeStats.rawInputPopCount;
+    stats->postCopyPopCount = realtimeStats.postCopyPopCount;
+    stats->prePluginPopCount = realtimeStats.prePluginPopCount;
+    stats->rawInputDeltaPeakPercent = realtimeStats.rawInputDeltaPeakPercent;
+    stats->postCopyDeltaPeakPercent = realtimeStats.postCopyDeltaPeakPercent;
+    stats->prePluginDeltaPeakPercent = realtimeStats.prePluginDeltaPeakPercent;
+    stats->rawInputLivePeakPpm = realtimeStats.rawInputLivePeakPpm;
+    stats->postCopyLivePeakPpm = realtimeStats.postCopyLivePeakPpm;
+    stats->prePluginLivePeakPpm = realtimeStats.prePluginLivePeakPpm;
+    stats->rawInputBoundaryDeltaPpm = realtimeStats.rawInputBoundaryDeltaPpm;
+    stats->postCopyBoundaryDeltaPpm = realtimeStats.postCopyBoundaryDeltaPpm;
+    stats->prePluginBoundaryDeltaPpm = realtimeStats.prePluginBoundaryDeltaPpm;
+    stats->postCopyResidualCount = realtimeStats.postCopyResidualCount;
+    stats->prePluginResidualCount = realtimeStats.prePluginResidualCount;
+    stats->finalResidualCount = realtimeStats.finalResidualCount;
+    stats->postCopyResidualPeakPpm = realtimeStats.postCopyResidualPeakPpm;
+    stats->prePluginResidualPeakPpm = realtimeStats.prePluginResidualPeakPpm;
+    stats->finalResidualPeakPpm = realtimeStats.finalResidualPeakPpm;
+    stats->residualProbeStartChannel = realtimeStats.residualProbeStartChannel;
+    stats->residualProbeReadChannel = realtimeStats.residualProbeReadChannel;
     stats->delayBufferSampleRate = realtimeStats.delayBufferSampleRate;
     stats->probeInputChannel = realtimeStats.probeInputChannel;
     stats->probeOutputChannel = realtimeStats.probeOutputChannel;
@@ -1962,37 +2128,38 @@ __declspec(dllexport) void __cdecl ElkaFx_GetStats(NativeStats* stats)
     stats->outputInsertInputChannels = realtimeStats.outputInsertInputChannels;
     stats->outputInsertOutputChannels = realtimeStats.outputInsertOutputChannels;
 
-    const auto readLevelPercent = [&target](int type, int channel) noexcept {
-        float value = 0.0f;
-        if (!target.client.getLevel(type, channel, value))
-            return -1;
-
-        return std::clamp(static_cast<int>((std::max(0.0f, value) * 100.0f) + 0.5f), 0, 1000);
-    };
-
-    stats->voicemeeterPreFaderLevelPercent = readLevelPercent(0, realtimeStats.probeInputChannel);
-    stats->voicemeeterPostFaderLevelPercent = readLevelPercent(1, realtimeStats.probeInputChannel);
-    stats->voicemeeterPostMuteLevelPercent = readLevelPercent(2, realtimeStats.probeInputChannel);
-    stats->voicemeeterNextPreFaderLevelPercent = readLevelPercent(0, realtimeStats.probeInputChannel + 1);
-    stats->voicemeeterNextPostFaderLevelPercent = readLevelPercent(1, realtimeStats.probeInputChannel + 1);
-    stats->voicemeeterNextPostMuteLevelPercent = readLevelPercent(2, realtimeStats.probeInputChannel + 1);
+    // Keep the regular status path realtime-safe. VoiceMeeter meter reads are comparatively
+    // expensive and used to run dozens of API calls every UI tick.
+    stats->voicemeeterPreFaderLevelPercent = -1;
+    stats->voicemeeterPostFaderLevelPercent = -1;
+    stats->voicemeeterPostMuteLevelPercent = -1;
+    stats->voicemeeterNextPreFaderLevelPercent = -1;
+    stats->voicemeeterNextPostFaderLevelPercent = -1;
+    stats->voicemeeterNextPostMuteLevelPercent = -1;
     stats->voicemeeterInputMaxLevelPercent = -1;
     stats->voicemeeterInputMaxChannel = -1;
-    for (int channel = 0; channel < 64; ++channel)
-    {
-        const int pre = readLevelPercent(0, channel);
-        const int post = readLevelPercent(1, channel);
-        const int mute = readLevelPercent(2, channel);
-        const int level = std::max(pre, std::max(post, mute));
-        if (level > stats->voicemeeterInputMaxLevelPercent)
-        {
-            stats->voicemeeterInputMaxLevelPercent = level;
-            stats->voicemeeterInputMaxChannel = channel;
-        }
+    stats->voicemeeterOutputLevelPercent = -1;
+    stats->callbackJitterOver100Input = realtimeStats.callbackJitterOver100Input;
+    stats->callbackJitterOver100Output = realtimeStats.callbackJitterOver100Output;
+    stats->callbackJitterOver100Main = realtimeStats.callbackJitterOver100Main;
+    stats->callbackJitterOver100InsertAsio = realtimeStats.callbackJitterOver100InsertAsio;
+    stats->callbackJitterMaxUsecInput = realtimeStats.callbackJitterMaxUsecInput;
+    stats->callbackJitterMaxUsecOutput = realtimeStats.callbackJitterMaxUsecOutput;
+    stats->callbackJitterMaxUsecMain = realtimeStats.callbackJitterMaxUsecMain;
+    stats->callbackJitterMaxUsecInsertAsio = realtimeStats.callbackJitterMaxUsecInsertAsio;
+    stats->rawInputPopCountInput = realtimeStats.rawInputPopCountInput;
+    stats->rawInputPopCountOutput = realtimeStats.rawInputPopCountOutput;
+    stats->rawInputPopCountMain = realtimeStats.rawInputPopCountMain;
+    stats->rawInputPopCountInsertAsio = realtimeStats.rawInputPopCountInsertAsio;
+    stats->postCopyPopCountInput = realtimeStats.postCopyPopCountInput;
+    stats->postCopyPopCountOutput = realtimeStats.postCopyPopCountOutput;
+    stats->postCopyPopCountMain = realtimeStats.postCopyPopCountMain;
+    stats->postCopyPopCountInsertAsio = realtimeStats.postCopyPopCountInsertAsio;
+    stats->prePluginPopCountInput = realtimeStats.prePluginPopCountInput;
+    stats->prePluginPopCountOutput = realtimeStats.prePluginPopCountOutput;
+    stats->prePluginPopCountMain = realtimeStats.prePluginPopCountMain;
+    stats->prePluginPopCountInsertAsio = realtimeStats.prePluginPopCountInsertAsio;
     }
-
-    stats->voicemeeterOutputLevelPercent = readLevelPercent(3, realtimeStats.probeOutputChannel);
-}
 
 __declspec(dllexport) int __cdecl ElkaFx_GetPatchAsioChannel(int inputChannel)
 {

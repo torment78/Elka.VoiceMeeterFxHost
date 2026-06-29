@@ -29,6 +29,12 @@ namespace
 constexpr int ScanFormatVst3 = 1;
 constexpr int ScanFormatVst2 = 2;
 constexpr int ScanFormatAll = ScanFormatVst3 | ScanFormatVst2;
+constexpr int PluginRuntimeMaxBlockSize = 8192;
+
+int realtimePluginBlockSize(int blockSize) noexcept
+{
+    return std::clamp(std::max(blockSize, PluginRuntimeMaxBlockSize), 64, PluginRuntimeMaxBlockSize);
+}
 
 std::string toUtf8(const std::wstring& value)
 {
@@ -1433,7 +1439,7 @@ public:
           inputPinCount(std::clamp(inputPins, 1, 32)),
           outputPinCount(std::clamp(outputPins, 1, 32)),
           processChannels(std::max(inputPinCount, outputPinCount)),
-          maxBlockSize(std::max(1, blockSize))
+          maxBlockSize(realtimePluginBlockSize(blockSize))
     {
         scratch.setSize(processChannels, maxBlockSize, false, true, true);
         scratch.clear();
@@ -1453,7 +1459,7 @@ public:
         if (plugin == nullptr || buffer.write == nullptr || buffer.samplesPerFrame <= 0)
             return false;
 
-        if (routing.inputRouteCount <= 0 || routing.outputRouteCount <= 0)
+        if (routing.inputRouteCount <= 0)
             return false;
 
         if (buffer.samplesPerFrame > maxBlockSize)
@@ -1616,7 +1622,7 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
     }
 
     const int preparedSampleRate = std::clamp(sampleRate, 8000, 192000);
-    const int preparedBlockSize = std::clamp(blockSize, 64, 8192);
+    const int preparedBlockSize = realtimePluginBlockSize(blockSize);
     const int safeInputPins = std::clamp(inputPins, 1, 32);
     const int safeOutputPins = std::clamp(outputPins, 1, 32);
     const int channelCount = std::max(safeInputPins, safeOutputPins);
@@ -1832,6 +1838,7 @@ public:
         const std::string& fileOrIdentifier,
         int sampleRate,
         int blockSize,
+        int timeoutBlockSize,
         int inputPins,
         int outputPins,
         int inputLayoutId,
@@ -1840,8 +1847,8 @@ public:
         : inputPinCount(std::clamp(inputPins, 1, SandboxMaxPins)),
           outputPinCount(std::clamp(outputPins, 1, SandboxMaxPins)),
           processChannels(std::max(inputPinCount, outputPinCount)),
-          maxBlockSize(std::clamp(blockSize, 64, 8192)),
-          processTimeoutMs(sandboxProcessTimeoutFor(sampleRate, blockSize))
+          maxBlockSize(realtimePluginBlockSize(blockSize)),
+          processTimeoutMs(sandboxProcessTimeoutFor(sampleRate, timeoutBlockSize))
     {
         start(format, fileOrIdentifier, sampleRate, inputLayoutId, outputLayoutId, error);
     }
@@ -1864,10 +1871,10 @@ public:
 
         ScopedSandboxIpcFlag ipc(ipcBusy);
         if (!ipc.isLocked())
-            return bypass(buffer, routing);
+            return renderSilence(buffer, routing);
 
         if (!drainLateAudioResponse(0))
-            return bypass(buffer, routing);
+            return renderSilence(buffer, routing);
 
         for (int ch = 0; ch < processChannels; ++ch)
         {
@@ -1904,13 +1911,13 @@ public:
         {
             lateAudioResponsePending = true;
             lateAudioRequestId = request;
-            return bypass(buffer, routing);
+            return renderSilence(buffer, routing);
         }
 
         lateAudioResponsePending = false;
         lateAudioRequestId = 0;
         if (header->responseId != request || header->status < 0)
-            return bypass(buffer, routing);
+            return renderSilence(buffer, routing);
 
         std::array<float*, 64> clearedDestinations {};
         int clearedCount = 0;
@@ -2313,6 +2320,37 @@ private:
         return true;
     }
 
+    bool renderSilence(AudioBufferView buffer, const PluginRoutingView& routing) noexcept
+    {
+        if (buffer.samplesPerFrame <= 0)
+            return false;
+
+        std::array<float*, 64> clearedDestinations {};
+        int clearedCount = 0;
+        bool rendered = false;
+
+        for (int outputIndex = 0; outputIndex < routing.outputRouteCount; ++outputIndex)
+        {
+            const auto& outputRoute = routing.outputRoutes[outputIndex];
+            if (outputRoute.destination == nullptr)
+                continue;
+
+            bool alreadyCleared = false;
+            for (int i = 0; i < clearedCount; ++i)
+                alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == outputRoute.destination;
+
+            if (!alreadyCleared)
+            {
+                std::fill_n(outputRoute.destination, buffer.samplesPerFrame, 0.0f);
+                if (clearedCount < static_cast<int>(clearedDestinations.size()))
+                    clearedDestinations[static_cast<size_t>(clearedCount++)] = outputRoute.destination;
+            }
+
+            rendered = true;
+        }
+
+        return rendered;
+    }
     bool bypass(AudioBufferView buffer, const PluginRoutingView& routing) noexcept
     {
         if (buffer.samplesPerFrame <= 0)
@@ -2366,8 +2404,15 @@ private:
         const auto safeSampleRate = std::clamp(sampleRate, 8000, 192000);
         const auto safeBlockSize = std::clamp(blockSize, 64, 8192);
         const auto blockMs = (static_cast<double>(safeBlockSize) * 1000.0) / static_cast<double>(safeSampleRate);
-        const auto waitMs = static_cast<int>(std::floor((blockMs * 1.25) + 2.0));
-        return static_cast<DWORD>(std::clamp(waitMs, 4, 32));
+
+        if (blockMs <= 3.0)
+            return 0;
+
+        if (blockMs <= 6.0)
+            return static_cast<DWORD>(std::clamp(static_cast<int>(std::floor(blockMs * 0.50)), 1, 3));
+
+        const auto waitMs = static_cast<int>(std::floor((blockMs * 1.10) + 1.0));
+        return static_cast<DWORD>(std::clamp(waitMs, 4, 24));
     }
 
     std::wstring mapName;
@@ -2487,7 +2532,7 @@ int createWorkerPluginProcessor(
     session->inputPins = std::clamp(inputPins, 1, SandboxMaxPins);
     session->outputPins = std::clamp(outputPins, 1, SandboxMaxPins);
     session->channelCount = std::max(session->inputPins, session->outputPins);
-    session->maxBlockSize = std::clamp(blockSize, 64, 8192);
+    session->maxBlockSize = realtimePluginBlockSize(blockSize);
     session->processor = createHostedProcessorFromFile(
         format,
         fileOrIdentifier,
@@ -3372,7 +3417,7 @@ bool PluginHostLayer::loadDiscoveredPlugin(size_t index, int sampleRate, int max
 
     const auto& description = impl->descriptions[index];
     const int preparedSampleRate = std::clamp(sampleRate, 8000, 192000);
-    const int preparedBlockSize = std::clamp(maxBlockSize, 64, 8192);
+    const int preparedBlockSize = realtimePluginBlockSize(maxBlockSize);
     const int channels = clampPluginChannels(routeChannelCount, description);
 
     impl->editorWindow.reset();
@@ -3493,7 +3538,7 @@ int PluginHostLayer::addDiscoveredPluginNode(
         progress("Creating plugin instance", resolvedDetail);
 
     const int preparedSampleRate = std::clamp(sampleRate, 8000, 192000);
-    const int preparedBlockSize = std::clamp(maxBlockSize, 64, 8192);
+    const int preparedBlockSize = realtimePluginBlockSize(maxBlockSize);
     const int requestedMainInputPins = std::clamp(mainInputPins, 1, 32);
     const int requestedSidechainPins = std::clamp(sidechainInputPins, 0, 32 - requestedMainInputPins);
     const int requestedOutputPins = std::clamp(outputPins, 1, 32);
@@ -3720,7 +3765,7 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
     const auto& summary = discoveredPlugins[index];
     const auto detail = summary.name + " | " + summary.fileOrIdentifier;
     const int preparedSampleRate = std::clamp(sampleRate, 8000, 192000);
-    const int preparedBlockSize = std::clamp(maxBlockSize, 64, 8192);
+    const int preparedBlockSize = realtimePluginBlockSize(maxBlockSize);
     const int requestedMainInputPins = std::clamp(mainInputPins, 1, 32);
     const int requestedSidechainPins = std::clamp(sidechainInputPins, 0, 32 - requestedMainInputPins);
     const int effectiveInputPins = std::clamp(requestedMainInputPins + requestedSidechainPins, 1, 32);
@@ -3740,6 +3785,7 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
         summary.fileOrIdentifier,
         preparedSampleRate,
         preparedBlockSize,
+        maxBlockSize,
         effectiveInputPins,
         requestedOutputPins,
         inputLayoutId,

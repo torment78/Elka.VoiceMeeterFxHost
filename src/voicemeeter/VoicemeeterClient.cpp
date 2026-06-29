@@ -1,5 +1,8 @@
 #include "voicemeeter/VoicemeeterClient.h"
 
+#include <avrt.h>
+#include <windows.h>
+
 #include <cstring>
 
 namespace elka
@@ -7,6 +10,36 @@ namespace elka
 namespace
 {
 constexpr char ClientName[] = "Elka VoiceMeeter FX Host";
+
+class CallbackThreadAudioPriority
+{
+public:
+    CallbackThreadAudioPriority() noexcept
+    {
+        DWORD taskIndex = 0;
+        mmcssHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+        if (mmcssHandle != nullptr)
+            AvSetMmThreadPriority(mmcssHandle, AVRT_PRIORITY_HIGH);
+    }
+
+    ~CallbackThreadAudioPriority()
+    {
+        if (mmcssHandle != nullptr)
+            AvRevertMmThreadCharacteristics(mmcssHandle);
+    }
+
+    CallbackThreadAudioPriority(const CallbackThreadAudioPriority&) = delete;
+    CallbackThreadAudioPriority& operator=(const CallbackThreadAudioPriority&) = delete;
+
+private:
+    HANDLE mmcssHandle = nullptr;
+};
+
+void ensureCallbackThreadAudioPriority() noexcept
+{
+    thread_local CallbackThreadAudioPriority priority;
+    (void)priority;
+}
 }
 
 VoicemeeterClient::VoicemeeterClient(RealtimeEngine& engineRef)
@@ -102,6 +135,7 @@ bool VoicemeeterClient::start(std::wstring& error)
     if (result != 0)
     {
         error = L"VBVMR_AudioCallbackStart failed with code " + std::to_wstring(result);
+        unregisterCallback();
         return false;
     }
 
@@ -231,31 +265,65 @@ long __stdcall VoicemeeterClient::audioCallback(void* user, long command, void* 
 
 long VoicemeeterClient::handleAudioCallback(long command, void* data, long) noexcept
 {
-    callbackCommandCount.fetch_add(1, std::memory_order_relaxed);
-    callbackLastCommand.store(command, std::memory_order_relaxed);
+    ensureCallbackThreadAudioPriority();
 
-    switch (command)
+    const bool isBufferCommand =
+        command == vmr::CommandBufferIn ||
+        command == vmr::CommandBufferOut ||
+        command == vmr::CommandBufferMain;
+
+    if (isBufferCommand)
     {
-    case vmr::CommandStarting:
-        callbackStartingCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case vmr::CommandEnding:
-        callbackEndingCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case vmr::CommandChange:
-        callbackChangeCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case vmr::CommandBufferIn:
-        callbackBufferInCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case vmr::CommandBufferOut:
-        callbackBufferOutCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    case vmr::CommandBufferMain:
-        callbackBufferMainCount.fetch_add(1, std::memory_order_relaxed);
-        break;
-    default:
-        break;
+        constexpr uint64_t StatsFlushInterval = 16;
+        thread_local uint64_t pendingTotal = 0;
+        thread_local uint64_t pendingBufferIn = 0;
+        thread_local uint64_t pendingBufferOut = 0;
+        thread_local uint64_t pendingBufferMain = 0;
+
+        ++pendingTotal;
+        if (command == vmr::CommandBufferIn)
+            ++pendingBufferIn;
+        else if (command == vmr::CommandBufferOut)
+            ++pendingBufferOut;
+        else
+            ++pendingBufferMain;
+
+        if (pendingTotal >= StatsFlushInterval)
+        {
+            callbackCommandCount.fetch_add(pendingTotal, std::memory_order_relaxed);
+            if (pendingBufferIn > 0)
+                callbackBufferInCount.fetch_add(pendingBufferIn, std::memory_order_relaxed);
+            if (pendingBufferOut > 0)
+                callbackBufferOutCount.fetch_add(pendingBufferOut, std::memory_order_relaxed);
+            if (pendingBufferMain > 0)
+                callbackBufferMainCount.fetch_add(pendingBufferMain, std::memory_order_relaxed);
+
+            callbackLastCommand.store(command, std::memory_order_relaxed);
+            pendingTotal = 0;
+            pendingBufferIn = 0;
+            pendingBufferOut = 0;
+            pendingBufferMain = 0;
+        }
+    }
+    else
+    {
+        callbackCommandCount.fetch_add(1, std::memory_order_relaxed);
+        callbackLastCommand.store(command, std::memory_order_relaxed);
+
+        switch (command)
+        {
+        case vmr::CommandStarting:
+            callbackStartingCount.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case vmr::CommandEnding:
+            callbackEndingCount.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case vmr::CommandChange:
+            callbackChangeCount.fetch_add(1, std::memory_order_relaxed);
+            break;
+        default:
+            break;
+        }
     }
 
     if (command == vmr::CommandStarting || command == vmr::CommandChange)

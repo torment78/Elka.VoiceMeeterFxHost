@@ -235,6 +235,7 @@
 
                                 <ListBox x:Name="PluginListBox"
                          Grid.Row="2"
+                         SelectionMode="Extended"
                          Height="132"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          MouseDoubleClick="PluginListBox_MouseDoubleClick" />
@@ -522,8 +523,8 @@
                       Margin="8,0,0,0"
                       Style="{StaticResource RouteButton}"
                       Click="VstWorkspaceButton_Click" />
-                            <Button Content="Save"
-                      Width="74"
+                            <Button Content="Save..."
+                      Width="82"
                       Margin="8,0,0,0"
                       Click="SaveButton_Click" />
                             <Button Content="Refresh"

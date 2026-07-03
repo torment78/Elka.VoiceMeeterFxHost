@@ -469,6 +469,7 @@ internal sealed class PluginNodeSnapshot
     public bool Bypassed { get; set; }
     public bool PinsCollapsed { get; set; }
     public bool Sandboxed { get; set; }
+    public bool MissingPlugin { get; set; }
     public CallbackMode Mode { get; set; } = CallbackMode.Input;
 }
 
@@ -575,6 +576,44 @@ internal static class FxHostSettingsStore
         catch
         {
             // Persistence should never interrupt the audio engine or UI.
+            return false;
+        }
+    }
+
+    public static bool Export(FxHostSettings settings, string path, out string error)
+    {
+        error = string.Empty;
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool TryLoadFrom(string path, out FxHostSettings settings, out string error)
+    {
+        settings = new FxHostSettings();
+        error = string.Empty;
+        try
+        {
+            settings = JsonSerializer.Deserialize<FxHostSettings>(File.ReadAllText(path), JsonOptions)
+                ?? new FxHostSettings();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
             return false;
         }
     }

@@ -393,8 +393,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             Width = NodeWidth,
             Height = nodeHeight,
-            Background = node.Bypassed ? BrushFrom("#24191A") : BrushFrom("#102327"),
-            BorderBrush = selected ? BrushFrom("#E2B84A") : BrushFrom("#55C27A"),
+            Background = NodeBrush(node),
+            BorderBrush = selected ? BrushFrom("#E2B84A") : node.MissingPlugin ? BrushFrom("#E15F5F") : BrushFrom("#55C27A"),
             BorderThickness = selected ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8, 10, 8),
@@ -446,6 +446,16 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private ContextMenu BuildNodeMenu(PluginNodeSnapshot node)
     {
         var menu = new ContextMenu();
+        if (node.MissingPlugin)
+        {
+            menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });
+            menu.Items.Add(new Separator());
+            var missingDelete = CreateMenuItem("Delete VST", () => DeleteNode(node));
+            missingDelete.Foreground = BrushFrom("#E15F5F");
+            menu.Items.Add(missingDelete);
+            return menu;
+        }
+
         menu.Items.Add(CreateMenuItem("Open Editor", () => _openPluginEditor(node)));
         menu.Items.Add(CreateMenuItem("Port Setup", () =>
         {
@@ -548,8 +558,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             Width = 12,
             Height = 12,
-            Fill = BrushFrom("#102327"),
-            Stroke = input ? BrushFrom("#E2B84A") : BrushFrom("#55C27A"),
+            Fill = NodeBrush(node),
+            Stroke = input ? BrushFrom("#E2B84A") : node.MissingPlugin ? BrushFrom("#E15F5F") : BrushFrom("#55C27A"),
             StrokeThickness = 2,
             Cursor = Cursors.Hand,
             Tag = pin
@@ -1476,6 +1486,30 @@ internal sealed class PluginGroupPropertiesWindow : Window
             ToChannel = connection.ToChannel,
             ToSlot = connection.ToSlot,
             ToPin = connection.ToPin
+        };
+    }
+
+    private static Brush NodeBrush(PluginNodeSnapshot node)
+    {
+        if (!node.MissingPlugin)
+        {
+            return node.Bypassed ? BrushFrom("#24191A") : BrushFrom("#102327");
+        }
+
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(
+            BrushFrom("#4B151B"),
+            null,
+            new RectangleGeometry(new Rect(0, 0, 12, 12))));
+        group.Children.Add(new GeometryDrawing(
+            null,
+            new Pen(BrushFrom("#E15F5F"), 3),
+            new LineGeometry(new Point(-2, 12), new Point(12, -2))));
+        return new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            Viewport = new Rect(0, 0, 12, 12),
+            ViewportUnits = BrushMappingMode.Absolute
         };
     }
 

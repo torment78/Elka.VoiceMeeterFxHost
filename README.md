@@ -284,8 +284,22 @@ channel enable, delay, volume, direct routes, route enable, and mute standard
 routing. VST loading, VST parameters, plugin editors, bypass, and node wiring
 stay controlled from the app UI.
 
-**Save** writes the current WPF layout, selected side, channels, routes, plugin
-nodes, endpoint offsets, and route hue settings.
+**Save...** opens the save manager. From there:
+
+- **Save** writes the current WPF layout, selected side, channels, routes,
+  plugin nodes, VST state data, groups, endpoint offsets, and route hue settings
+  to the normal app settings file.
+- **Export Save** writes a portable JSON copy of the full save to a folder and
+  filename you choose. Use this to back up a working layout or move it to
+  another machine.
+- **Load Save** imports one of those JSON saves, replaces the current layout,
+  and restores the saved nodes, groups, cables, VST settings, channel settings,
+  VBAN settings, and visual routing state.
+
+If a plugin from an imported save is not installed or cannot be matched in the
+current scan list, the app keeps the node visible as a red striped missing-VST
+placeholder. Its saved cables remain visible so you can see what needs to be
+reinstalled or rewired.
 
 **Refresh** redraws the current channel or VST canvas from the saved in-memory
 state.
@@ -306,6 +320,8 @@ The app saves:
 - direct route destinations
 - mute-standard-routing states
 - VST plugin nodes
+- VST plugin state/preset/parameter save data where the plugin exposes it
+- missing-plugin placeholders for imported saves
 - node positions
 - node bypass states
 - node pin layouts
@@ -317,8 +333,13 @@ The app saves:
 - custom plugin scan folders
 - VBAN-TEXT enable, port, stream name, and local-only settings
 - VST groups, group positions, group pin layouts, and group cables
+- exported/imported save files created through **Save...**
 
-Settings are stored under the current user's local app data folder. The app is designed so UI settings can be changed while audio keeps running. When the current configuration has no active audio work, the native side stays connected but the realtime callback is idle/unregistered.
+Settings are stored under the current user's local app data folder. Exported
+saves are normal JSON files at the location you choose. The app is designed so
+UI settings can be changed while audio keeps running. When the current
+configuration has no active audio work, the native side stays connected but the
+realtime callback is idle/unregistered.
 
 ## Notes and Limitations
 

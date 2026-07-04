@@ -1884,8 +1884,6 @@ __declspec(dllexport) int __cdecl ElkaFx_SetPatchInsertEnabled(int inputChannel,
     if (inputChannel < 0 || inputChannel >= MaxInsertPatchChannels)
         return -1;
 
-    if (!savePatchInsertStateIfNeeded(target, inputChannel))
-        return -1;
 
     return writePatchInsertState(target, inputChannel, enabled != 0 ? 1 : 0) ? 0 : -1;
 }

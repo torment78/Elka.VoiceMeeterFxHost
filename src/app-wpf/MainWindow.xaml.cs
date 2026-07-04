@@ -51,6 +51,7 @@ public partial class MainWindow : Window
     private bool? _lastSelectedPatchBypassState;
     private bool _updatingInsertAsioControls;
     private bool _insertAsioFormatRestartInProgress;
+    private DateTimeOffset _lastInsertAsioPatchStateSyncAt;
     private string? _draggingEndpointKey;
     private CallbackMode _draggingEndpointMode = CallbackMode.None;
     private IoEndpoint? _draggingEndpoint;
@@ -139,6 +140,7 @@ public partial class MainWindow : Window
     private static readonly TimeSpan RealtimeCallbackRearmCooldown = TimeSpan.FromSeconds(1.5);
     private static readonly TimeSpan RealtimeCallbackRecoverySlowCooldown = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan VoicemeeterParameterRefreshInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan InsertAsioPatchStateSyncInterval = TimeSpan.FromSeconds(1);
     private static readonly RouteHueChoice[] RouteHueChoices =
     [
         new("Blue", "blue", "#4AA3FF", "#10243A"),
@@ -247,6 +249,7 @@ public partial class MainWindow : Window
             _settings.InsertAsioEndpointKeys?.Clear();
         }
 
+        SyncInsertAsioEndpointKeysFromPatchInsertState(rebuildToggles: false, queueSave: false);
         BuildInsertAsioEndpointToggles();
         SetInsertAsioAutoStartCheckBox(_settings.InsertAsioAutoStart);
         ApplyInsertAsioPatchAvailability();
@@ -710,6 +713,7 @@ public partial class MainWindow : Window
         }
 
         var status = _engine.StopInsertAsio();
+        DisableAllInsertAsioPatchChannels(clearEndpointKeys: true);
         InsertAsioStatusTextBlock.Text = status;
         AppendLog(status);
         _settings.InsertAsioAutoStart = false;
@@ -752,36 +756,46 @@ public partial class MainWindow : Window
 
     private void BuildInsertAsioEndpointToggles()
     {
-        InsertAsioEndpointTogglesPanel.Children.Clear();
-        _settings.InsertAsioEndpointKeys ??= [];
-        if (!InsertAsioPatchControlEnabled)
+        _updatingInsertAsioControls = true;
+        try
         {
-            InsertAsioEndpointTogglesPanel.Children.Add(new TextBlock
+            InsertAsioEndpointTogglesPanel.Children.Clear();
+            _settings.InsertAsioEndpointKeys ??= [];
+            if (!InsertAsioPatchControlEnabled)
             {
-                Text = InsertAsioPatchDisabledMessage,
-                TextWrapping = TextWrapping.Wrap,
-                Style = (Style)FindResource("MutedText")
-            });
-            return;
+                InsertAsioEndpointTogglesPanel.Children.Add(new TextBlock
+                {
+                    Text = InsertAsioPatchDisabledMessage,
+                    TextWrapping = TextWrapping.Wrap,
+                    Style = (Style)FindResource("MutedText")
+                });
+                return;
+            }
+
+            foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
+            {
+                var key = endpoint.Key(CallbackMode.Input);
+                var liveState = PatchInsertStateForEndpoint(endpoint);
+                var toggle = new CheckBox
+                {
+                    Content = liveState is null ? $"{endpoint.Name} (partial)" : endpoint.Name,
+                    Tag = endpoint,
+                    IsThreeState = true,
+                    IsChecked = liveState ?? (_settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase) ? true : false),
+                    Foreground = (Brush)FindResource("RouteAccentBrush"),
+                    Margin = new Thickness(0, 0, 12, 6),
+                    ToolTip = "Live VoiceMeeter Patch.insert state for this input. Checked routes the input through ASIO Patch; unchecked leaves it on the normal callback path."
+                };
+
+                toggle.Checked += InsertAsioEndpointToggle_Changed;
+                toggle.Unchecked += InsertAsioEndpointToggle_Changed;
+                toggle.Indeterminate += InsertAsioEndpointToggle_Changed;
+                InsertAsioEndpointTogglesPanel.Children.Add(toggle);
+            }
         }
-
-
-        foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
+        finally
         {
-            var key = endpoint.Key(CallbackMode.Input);
-            var toggle = new CheckBox
-            {
-                Content = endpoint.Name,
-                Tag = endpoint,
-                IsChecked = _settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase),
-                Foreground = (Brush)FindResource("RouteAccentBrush"),
-                Margin = new Thickness(0, 0, 12, 6),
-                ToolTip = "Arm this input's Patch.insert channels for the Elka ASIO insert host. Unchecked inputs stay on the normal VoiceMeeter path."
-            };
-
-            toggle.Checked += InsertAsioEndpointToggle_Changed;
-            toggle.Unchecked += InsertAsioEndpointToggle_Changed;
-            InsertAsioEndpointTogglesPanel.Children.Add(toggle);
+            _updatingInsertAsioControls = false;
         }
     }
 
@@ -792,13 +806,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        SetInsertAsioEndpointArmed(endpoint, toggle.IsChecked == true);
+        var enabled = toggle.IsChecked == true;
+        SetInsertAsioEndpointArmed(endpoint, enabled);
+        SetPatchInsertForEndpoint(endpoint, enabled);
         QueueSave();
-        if (_engine.IsInsertAsioRunning)
+        if (!_engine.IsInsertAsioRunning && enabled)
         {
-            ApplyInsertAsioPatchSelection();
+            AppendLog($"{endpoint.Name}: Patch.insert enabled while ASIO Patch is stopped; normal callback audio for this input is routed through VoiceMeeter's insert path until ASIO Patch is started or this is unchecked.");
         }
 
+        ApplyInsertAsioPatchSelection();
         RefreshAfterInsertAsioStateChange();
     }
 
@@ -820,33 +837,118 @@ public partial class MainWindow : Window
         return _settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
     }
 
+    private bool? PatchInsertStateForEndpoint(IoEndpoint endpoint)
+    {
+        bool? state = null;
+        for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
+        {
+            var value = _engine.GetPatchInsertEnabled(channel);
+            if (value < 0)
+            {
+                continue;
+            }
+
+            var enabled = value != 0;
+            state ??= enabled;
+            if (state.Value != enabled)
+            {
+                return null;
+            }
+        }
+
+        return state ?? false;
+    }
+
+    private void SetPatchInsertForEndpoint(IoEndpoint endpoint, bool enabled)
+    {
+        var suppressCallback = _engine.IsInsertAsioRunning && enabled;
+        for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
+        {
+            _engine.SetInputCallbackSuppressedChannel(channel, suppressCallback);
+            _engine.SetPatchInsertEnabled(channel, enabled);
+        }
+
+        _engine.RefreshVoicemeeterParameters();
+    }
+
+    private void DisableAllInsertAsioPatchChannels(bool clearEndpointKeys)
+    {
+        if (clearEndpointKeys)
+        {
+            _settings.InsertAsioEndpointKeys?.Clear();
+        }
+
+        foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
+        {
+            for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
+            {
+                _engine.SetInputCallbackSuppressedChannel(channel, false);
+                _engine.SetPatchInsertEnabled(channel, false);
+            }
+        }
+
+        _engine.RefreshVoicemeeterParameters();
+    }
+
+    private bool SyncInsertAsioEndpointKeysFromPatchInsertState(bool rebuildToggles, bool queueSave)
+    {
+        if (!InsertAsioPatchControlEnabled)
+        {
+            return false;
+        }
+
+        _settings.InsertAsioEndpointKeys ??= [];
+        var changed = false;
+        var hasPartial = false;
+        foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
+        {
+            var key = endpoint.Key(CallbackMode.Input);
+            var liveState = PatchInsertStateForEndpoint(endpoint);
+            if (liveState is null)
+            {
+                hasPartial = true;
+                continue;
+            }
+
+            var currentlySaved = _settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+            if (liveState.Value == currentlySaved)
+            {
+                continue;
+            }
+
+            SetInsertAsioEndpointArmed(endpoint, liveState.Value);
+            changed = true;
+        }
+
+        if (changed && queueSave)
+        {
+            QueueSave();
+        }
+
+        if (rebuildToggles && (changed || hasPartial))
+        {
+            BuildInsertAsioEndpointToggles();
+        }
+
+        return changed;
+    }
     private void ApplyInsertAsioPatchSelection()
     {
         if (!InsertAsioPatchControlEnabled)
         {
-            foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
-            {
-                for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
-                {
-                    _engine.SetInputCallbackSuppressedChannel(channel, false);
-                }
-            }
-
-            _engine.RefreshVoicemeeterParameters();
+            DisableAllInsertAsioPatchChannels(clearEndpointKeys: true);
             return;
         }
 
         var insertAsioRunning = _engine.IsInsertAsioRunning;
         foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
         {
-            var armed = insertAsioRunning && IsEndpointArmedForInsertAsio(endpoint);
+            var patchInsertEnabled = IsEndpointArmedForInsertAsio(endpoint);
+            var suppressCallback = insertAsioRunning && patchInsertEnabled;
             for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
             {
-                _engine.SetInputCallbackSuppressedChannel(channel, armed);
-                if (insertAsioRunning)
-                {
-                    _engine.SetPatchInsertEnabled(channel, armed);
-                }
+                _engine.SetInputCallbackSuppressedChannel(channel, suppressCallback);
+                _engine.SetPatchInsertEnabled(channel, patchInsertEnabled);
             }
         }
 
@@ -1496,9 +1598,40 @@ public partial class MainWindow : Window
              !_settings.PluginGroups.Any(group => group.Id == connection.FromGroupId)) ||
             (IsGroupPinKind(connection.ToKind) &&
              !_settings.PluginGroups.Any(group => group.Id == connection.ToGroupId)));
+        RemoveInvalidGroupPinConnections();
     }
 
     private static bool IsGroupPinKind(string kind) => kind is PinGroupInput or PinGroupOutput;
+
+    private int RemoveInvalidGroupPinConnections(string? groupId = null)
+    {
+        return _settings.CanvasConnections.RemoveAll(connection =>
+            (groupId is null ||
+             string.Equals(connection.FromGroupId, groupId, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(connection.ToGroupId, groupId, StringComparison.OrdinalIgnoreCase)) &&
+            IsInvalidGroupPinConnection(connection));
+    }
+
+    private bool IsInvalidGroupPinConnection(CanvasConnectionSnapshot connection)
+    {
+        return connection.Kind switch
+        {
+            ConnectionGroupInputToNode => !IsValidGroupInputPin(connection.FromGroupId, connection.FromPin),
+            ConnectionEndpointToGroupInput or ConnectionNodeToGroupInput => !IsValidGroupInputPin(connection.ToGroupId, connection.ToPin),
+            ConnectionNodeToGroupOutput => !IsValidGroupOutputPin(connection.ToGroupId, connection.ToPin),
+            ConnectionGroupOutputToEndpoint or ConnectionGroupOutputToNode => !IsValidGroupOutputPin(connection.FromGroupId, connection.FromPin),
+            ConnectionGroupOutputToGroupInput =>
+                !IsValidGroupOutputPin(connection.FromGroupId, connection.FromPin) ||
+                !IsValidGroupInputPin(connection.ToGroupId, connection.ToPin),
+            _ => false
+        };
+    }
+
+    private bool IsValidGroupInputPin(string groupId, int pin) =>
+        GroupById(groupId) is { } group && GroupInputPinIds(group).Contains(pin);
+
+    private bool IsValidGroupOutputPin(string groupId, int pin) =>
+        GroupById(groupId) is { } group && GroupOutputPinIds(group).Contains(pin);
 
     private void MigratePlainInputOutputCanvasRoutesToSharedChannelRoutes()
     {
@@ -2181,6 +2314,7 @@ public partial class MainWindow : Window
         }
 
         RefreshVoicemeeterParametersIfNeeded();
+        SyncInsertAsioPatchStateIfNeeded();
         StatusTextBlock.Text = _engine.StatusText;
         InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
         if (InsertAsioPatchControlEnabled)
@@ -2225,6 +2359,22 @@ public partial class MainWindow : Window
         _engine.RefreshVoicemeeterParameters();
     }
 
+    private void SyncInsertAsioPatchStateIfNeeded()
+    {
+        if (!InsertAsioPatchControlEnabled)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.Now;
+        if (now - _lastInsertAsioPatchStateSyncAt < InsertAsioPatchStateSyncInterval)
+        {
+            return;
+        }
+
+        _lastInsertAsioPatchStateSyncAt = now;
+        SyncInsertAsioEndpointKeysFromPatchInsertState(rebuildToggles: true, queueSave: true);
+    }
     private void MonitorRealtimeCallback()
     {
         if (IsInsertAsioPatchExclusiveActive())
@@ -3018,6 +3168,24 @@ public partial class MainWindow : Window
     private bool IsInputPatchBypassEndpoint(CallbackMode mode, IoEndpoint endpoint, out string explanation)
     {
         explanation = string.Empty;
+        if (!InsertAsioPatchControlEnabled || mode != CallbackMode.Input || endpoint is null || _engine.IsInsertAsioRunning)
+        {
+            return false;
+        }
+
+        var liveState = PatchInsertStateForEndpoint(endpoint);
+        if (liveState == true)
+        {
+            explanation = $"{endpoint.Name} has VoiceMeeter Patch.insert enabled while ASIO Patch is stopped. Uncheck this input in ASIO Patch or VoiceMeeter System Settings to return it to the normal callback path.";
+            return true;
+        }
+
+        if (liveState is null)
+        {
+            explanation = $"{endpoint.Name} has a mixed VoiceMeeter Patch.insert state while ASIO Patch is stopped. Clear the insert toggles for this input to return every channel to the normal callback path.";
+            return true;
+        }
+
         return false;
     }
 
@@ -8158,6 +8326,7 @@ private void RefreshEndpointButtonSelection()
                 .ToList();
             EnsureGroupInternalConnections(group);
             EnsureGroupPortMappings(group);
+            RemoveInvalidGroupPinConnections(group.Id);
             ReconcileGroupExternalRoutes(group, previousGroupRoutes);
 
             RefreshEngineCallbackMode();
@@ -10916,6 +11085,11 @@ private void RefreshEndpointButtonSelection()
                         continue;
                     }
 
+                    if (!IsValidGroupInputPin(connection.ToGroupId, connection.ToPin))
+                    {
+                        continue;
+                    }
+
                     if (IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _))
                     {
                         continue;
@@ -10933,6 +11107,11 @@ private void RefreshEndpointButtonSelection()
                 {
                     var mode = connection.FromMode != CallbackMode.None ? connection.FromMode : connection.ToMode;
                     if (mode == CallbackMode.None || connection.ToChannel < 0)
+                    {
+                        continue;
+                    }
+
+                    if (!IsValidGroupOutputPin(connection.FromGroupId, connection.FromPin))
                     {
                         continue;
                     }

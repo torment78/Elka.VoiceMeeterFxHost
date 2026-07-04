@@ -153,8 +153,6 @@ bool InsertAsioHost::start(int requestedSampleRate, int requestedBlockSize, int 
         return false;
     }
 
-    callbackCount.store(0, std::memory_order_relaxed);
-    peakPercent.store(0, std::memory_order_relaxed);
     inputChannels.store(inputCount, std::memory_order_relaxed);
     outputChannels.store(outputCount, std::memory_order_relaxed);
     sampleRate.store(static_cast<int>(std::round(nextDevice->getCurrentSampleRate())), std::memory_order_relaxed);
@@ -230,9 +228,7 @@ void InsertAsioHost::status(std::wstring& status) const
             << L" | " << sampleRate.load(std::memory_order_relaxed) << L" Hz"
             << L" | " << blockSize.load(std::memory_order_relaxed) << L" spl"
             << L" | " << inputChannels.load(std::memory_order_relaxed) << L" in / "
-            << outputChannels.load(std::memory_order_relaxed) << L" out"
-            << L" | callbacks " << callbackCount.load(std::memory_order_relaxed)
-            << L" | peak " << peakPercent.load(std::memory_order_relaxed) << L"%";
+            << outputChannels.load(std::memory_order_relaxed) << L" out";
     status = message.str();
 }
 
@@ -244,7 +240,6 @@ void InsertAsioHost::audioDeviceIOCallbackWithContext(
     int numSamples,
     const juce::AudioIODeviceCallbackContext&)
 {
-    float peak = 0.0f;
     const int outputLimit = std::min(numOutputChannels, 128);
     const int inputLimit = std::min(numInputChannels, 128);
     float* readPointers[128] {};
@@ -267,16 +262,6 @@ void InsertAsioHost::audioDeviceIOCallbackWithContext(
 
     realtimeEngine.processInsertAsio(buffer);
 
-    for (int channel = 0; channel < outputLimit; ++channel)
-    {
-        const float* output = writePointers[channel];
-        if (output == nullptr)
-            continue;
-
-        for (int sample = 0; sample < numSamples; ++sample)
-            peak = std::max(peak, std::abs(output[sample]));
-    }
-
     for (int channel = outputLimit; channel < numOutputChannels; ++channel)
     {
         float* output = outputChannelData != nullptr ? outputChannelData[channel] : nullptr;
@@ -284,8 +269,6 @@ void InsertAsioHost::audioDeviceIOCallbackWithContext(
             std::fill(output, output + numSamples, 0.0f);
     }
 
-    callbackCount.fetch_add(1, std::memory_order_relaxed);
-    peakPercent.store(std::clamp(static_cast<int>(std::round(peak * 100.0f)), 0, 999), std::memory_order_relaxed);
 }
 
 void InsertAsioHost::audioDeviceAboutToStart(juce::AudioIODevice* startedDevice)

@@ -2574,9 +2574,7 @@ void RealtimeEngine::applyPluginPassthroughRoutes(
             continue;
         }
 
-        const float* input = kind == CallbackStreamKind::Main
-            ? sourceChannelPointer(buffer, readOffset, source)
-            : currentChannelPointer(buffer, readOffset, source);
+        const float* input = sourceChannelPointer(buffer, readOffset, source);
         float* output = buffer.write[destination];
         if (input == nullptr || output == nullptr)
             continue;

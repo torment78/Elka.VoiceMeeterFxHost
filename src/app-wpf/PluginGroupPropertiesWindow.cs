@@ -1369,10 +1369,10 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 1 => "R",
                 2 => "C",
                 3 => "LFE",
-                4 => "Ls",
-                5 => "Rs",
-                6 => "Sl",
-                7 => "Sr",
+                4 => "SL",
+                5 => "SR",
+                6 => "RL",
+                7 => "RR",
                 _ => $"{pin + 1}"
             },
             _ => $"{pin + 1}"

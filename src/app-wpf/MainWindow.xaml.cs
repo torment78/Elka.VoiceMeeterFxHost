@@ -72,6 +72,7 @@ public partial class MainWindow : Window
     private readonly List<QuickGroupEndpoint> _quickConnectSourceEndpoints = [];
     private readonly List<QuickGroupEndpoint> _quickConnectDestinationEndpoints = [];
     private readonly List<int> _quickGroupNodeSlots = [];
+    private readonly List<string> _quickGroupIds = [];
     private readonly List<PluginChoice> _quickGroupPluginChoices = [];
     private PluginStateCaptureSummary _lastPluginStateCapture;
     private bool _pluginScanInProgress;
@@ -132,7 +133,7 @@ public partial class MainWindow : Window
     private const double VstCardPinRowSpacing = 13.0;
     private const int CollapsedVisiblePinCount = 2;
     private const int MaxSavedPluginRestoreAttempts = 80;
-    private const double DragPreviewXCorrection = 6.0;
+    private const double DragPreviewXCorrection = 0.0;
     private static readonly TimeSpan RealtimeCallbackStaleThreshold = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan RealtimeCallbackFormatSettleTime = TimeSpan.FromSeconds(1.25);
     private static readonly TimeSpan RealtimeCallbackRearmCooldown = TimeSpan.FromSeconds(1.5);
@@ -461,6 +462,14 @@ public partial class MainWindow : Window
         }
 
         ToggleCardContent(AsioPatchContentGrid);
+    }
+
+    private void LogHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var collapse = LogTextBox.Visibility == Visibility.Visible || RouteSummaryTextBlock.Visibility == Visibility.Visible;
+        RouteSummaryTextBlock.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+        LogTextBox.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+        e.Handled = true;
     }
 
     private static void ToggleCardContent(UIElement content)
@@ -876,7 +885,19 @@ public partial class MainWindow : Window
         _lastSelectedPatchBypassState = null;
         BuildInsertAsioEndpointToggles();
         ApplyEngineState();
+        var rebuildEndpointButtons = false;
+        if (IsInsertAsioPatchExclusiveActive() && _selectedMode != CallbackMode.Input)
+        {
+            _vstCanvasMode = CallbackMode.Input;
+            _vstInputCanvasRouteView = VstInputCanvasRouteView.InputReturn;
+            SetSelectedSideMode(CallbackMode.Input);
+            rebuildEndpointButtons = true;
+        }
         if (CoerceVstRouteViewForInsertAsio())
+        {
+            rebuildEndpointButtons = true;
+        }
+        if (rebuildEndpointButtons)
         {
             BuildEndpointButtons();
         }
@@ -952,11 +973,11 @@ public partial class MainWindow : Window
         save.Click += async (_, _) => await RunSaveManagerActionAsync(save, async () => await SaveCurrentLayoutAsync());
         stack.Children.Add(save);
 
-        var export = CreateSaveManagerButton("Export Save");
+        var export = CreateSaveManagerButton("Save As");
         export.Click += async (_, _) => await RunSaveManagerActionAsync(export, ExportSaveAsync);
         stack.Children.Add(export);
 
-        var load = CreateSaveManagerButton("Load Save");
+        var load = CreateSaveManagerButton("Load");
         load.Click += async (_, _) => await RunSaveManagerActionAsync(load, LoadSaveAsync);
         stack.Children.Add(load);
 
@@ -1035,7 +1056,7 @@ public partial class MainWindow : Window
         }
 
         AppendLog($"Export save failed: {error}");
-        MessageBox.Show(this, error, "Export Save", MessageBoxButton.OK, MessageBoxImage.Error);
+        MessageBox.Show(this, error, "Save As", MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     private async Task LoadSaveAsync()
@@ -1055,14 +1076,14 @@ public partial class MainWindow : Window
         if (!FxHostSettingsStore.TryLoadFrom(dialog.FileName, out var imported, out var error))
         {
             AppendLog($"Load save failed: {error}");
-            MessageBox.Show(this, error, "Load Save", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, error, "Load", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
 
         var result = MessageBox.Show(
             this,
             "Load this save and replace the current layout?",
-            "Load Save",
+            "Load",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes)
@@ -1075,16 +1096,75 @@ public partial class MainWindow : Window
         AppendLog($"Loaded save: {dialog.FileName}");
     }
 
-    private void RefreshCanvasButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshCanvasButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_workspaceView == WorkspaceView.Channels)
+        var reloadButton = sender as Button;
+        if (reloadButton is not null)
         {
-            BuildChannelStrips();
+            reloadButton.IsEnabled = false;
+            reloadButton.Content = "Reloading";
         }
-        else
+
+        try
         {
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            ReloadAllVstNodes();
+        }
+        finally
+        {
+            if (reloadButton is not null)
+            {
+                reloadButton.Content = "Reload";
+                reloadButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private void ReloadAllVstNodes()
+    {
+        CapturePluginNodeStates();
+
+        var savedNodes = _settings.PluginNodes
+            .Select(ClonePluginNodeSnapshot)
+            .ToList();
+        if (savedNodes.Count == 0)
+        {
+            AppendLog("Reload skipped: no VST nodes are on the canvas.");
+            RebuildVstNodeList();
             RebuildRoutingCanvas();
+            return;
         }
+
+        var savedConnections = _settings.CanvasConnections
+            .Select(CloneConnection)
+            .ToList();
+        var savedGroups = _settings.PluginGroups
+            .Select(ClonePluginGroupSnapshot)
+            .ToList();
+        var pluginChoices = _engine.PluginChoices();
+        if (pluginChoices.Count == 0)
+        {
+            AppendLog("Reload skipped: plugin list is empty. Scan VST folders first.");
+            return;
+        }
+
+        foreach (var node in _settings.PluginNodes.ToArray())
+        {
+            if (!node.MissingPlugin)
+            {
+                _engine.RemovePluginNode(node.Slot);
+            }
+        }
+
+        _pluginNodesPendingSavedDataApply.Clear();
+        _settings.PluginNodes = savedNodes;
+        _settings.PluginGroups = savedGroups;
+        _settings.CanvasConnections = savedConnections;
+        _savedPluginNodesRestored = false;
+        _savedPluginRestoreAttempts = 0;
+        AppendLog($"Reloading {savedNodes.Count} VST node(s)...");
+        RestoreSavedPluginNodes(pluginChoices);
+        AppendLog("Reloaded VST graph.");
     }
 
     private void RoutingCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -2047,14 +2127,19 @@ public partial class MainWindow : Window
 
     private void SelectMode(CallbackMode mode)
     {
-        if (IsInsertAsioPatchExclusiveActive() &&
-            _workspaceView == WorkspaceView.Vst &&
-            mode == CallbackMode.Output)
+        if (IsInsertAsioPatchExclusiveActive() && mode != CallbackMode.Input)
         {
-            AppendLog("Out -> Out is unavailable while ASIO Patch is running.");
-            CoerceVstRouteViewForInsertAsio();
-            RefreshVstRouteViewButtons();
-            RebuildRoutingCanvas();
+            AppendLog($"{(mode == CallbackMode.Output ? "Output" : "Main")} side is unavailable while ASIO Patch is running.");
+            _vstCanvasMode = CallbackMode.Input;
+            _vstInputCanvasRouteView = VstInputCanvasRouteView.InputReturn;
+            SetSelectedSideMode(CallbackMode.Input);
+            BuildEndpointButtons();
+            if (_workspaceView == WorkspaceView.Vst)
+            {
+                RefreshVstRouteViewButtons();
+                RebuildRoutingCanvas();
+            }
+            QueueSave();
             return;
         }
 
@@ -2074,6 +2159,7 @@ public partial class MainWindow : Window
         SetButtonTone(InputModeButton, mode == CallbackMode.Input);
         SetButtonTone(OutputModeButton, mode == CallbackMode.Output);
         SetButtonTone(MainModeButton, mode == CallbackMode.Main);
+        RefreshSideModeButtonAvailability();
         RefreshVstRouteViewButtons();
         RefreshEngineCallbackMode();
         UpdateLiveStatusText();
@@ -2697,6 +2783,21 @@ public partial class MainWindow : Window
         return sideModeChanged;
     }
 
+    private void RefreshSideModeButtonAvailability()
+    {
+        var insertAsioLocked = IsInsertAsioPatchExclusiveActive();
+        var lockedTip = "Unavailable while ASIO Patch is running. ASIO Patch uses the input insert path only.";
+
+        InputModeButton.IsEnabled = true;
+        InputModeButton.Opacity = 1.0;
+        OutputModeButton.IsEnabled = !insertAsioLocked;
+        MainModeButton.IsEnabled = !insertAsioLocked;
+        OutputModeButton.Opacity = insertAsioLocked ? 0.45 : 1.0;
+        MainModeButton.Opacity = insertAsioLocked ? 0.45 : 1.0;
+        OutputModeButton.ToolTip = insertAsioLocked ? lockedTip : null;
+        MainModeButton.ToolTip = insertAsioLocked ? lockedTip : null;
+    }
+
     private void SetButtonTone(Button button, bool selected)
     {
         button.Background = selected
@@ -2951,6 +3052,7 @@ public partial class MainWindow : Window
     }
 private void RefreshEndpointButtonSelection()
     {
+        RefreshSideModeButtonAvailability();
         var selectedKey = _selectedChannelSettings?.Key;
         foreach (var child in EndpointButtonsPanel.Children.OfType<Button>())
         {
@@ -6326,6 +6428,25 @@ private void RefreshEndpointButtonSelection()
         return pin >= 0 && pin < node.OutputPins;
     }
 
+    private static PluginGroupSnapshot ClonePluginGroupSnapshot(PluginGroupSnapshot group)
+    {
+        return new PluginGroupSnapshot
+        {
+            Id = group.Id,
+            Name = group.Name,
+            Mode = group.Mode,
+            X = group.X,
+            Y = group.Y,
+            InputPins = group.InputPins,
+            OutputPins = group.OutputPins,
+            SidechainPortsEnabled = group.SidechainPortsEnabled,
+            SidechainInputPins = group.SidechainInputPins,
+            SidechainOutputPins = group.SidechainOutputPins,
+            PinsCollapsed = group.PinsCollapsed,
+            MemberSlots = group.MemberSlots.ToList()
+        };
+    }
+
     private static PluginNodeSnapshot ClonePluginNodeSnapshot(PluginNodeSnapshot node)
     {
         return new PluginNodeSnapshot
@@ -7098,7 +7219,7 @@ private void RefreshEndpointButtonSelection()
     private void DrawPluginGroup(PluginGroupSnapshot group)
     {
         var members = GroupMembers(group).ToList();
-        var selected = _selectedPluginGroupId == group.Id;
+        var selected = _selectedPluginGroupId == group.Id || _quickGroupIds.Contains(group.Id);
         var inputPins = VisibleGroupInputPinIds(group).ToList();
         var outputPins = VisibleGroupOutputPinIds(group).ToList();
         var pinRows = Math.Max(inputPins.Count, outputPins.Count);
@@ -9154,10 +9275,10 @@ private void RefreshEndpointButtonSelection()
                 1 => "R",
                 2 => "C",
                 3 => "LFE",
-                4 => "Ls",
-                5 => "Rs",
-                6 => "Sl",
-                7 => "Sr",
+                4 => "SL",
+                5 => "SR",
+                6 => "RL",
+                7 => "RR",
                 _ => $"{pin + 1}"
             },
             _ => $"{pin + 1}"
@@ -10850,6 +10971,13 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            AddQuickGroupExistingGroup(group);
+            e.Handled = true;
+            return;
+        }
+
         if (e.ClickCount > 1)
         {
             ShowGroupProperties(group);
@@ -11256,6 +11384,21 @@ private void RefreshEndpointButtonSelection()
         RebuildRoutingCanvas();
     }
 
+    private void AddQuickGroupExistingGroup(PluginGroupSnapshot group)
+    {
+        if (_workspaceView != WorkspaceView.Vst || !GroupBelongsToCurrentCanvas(group))
+        {
+            return;
+        }
+
+        _quickGroupIds.Remove(group.Id);
+        _quickGroupIds.Add(group.Id);
+        SelectPluginGroup(group.Id, rebuildCanvas: false);
+        AppendLog($"Quick VST group {_quickGroupIds.Count}: {group.Name}.");
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+    }
+
     private void AddQuickGroupPluginChoice(PluginChoice choice)
     {
         _quickGroupPluginChoices.RemoveAll(existing => SamePluginChoice(existing, choice));
@@ -11272,9 +11415,20 @@ private void RefreshEndpointButtonSelection()
             _quickConnectSourceEndpoints.Count == 0 &&
             _quickConnectDestinationEndpoints.Count == 0 &&
             _quickGroupNodeSlots.Count == 0 &&
+            _quickGroupIds.Count == 0 &&
             _quickGroupPluginChoices.Count == 0)
         {
             return false;
+        }
+
+        if (ShouldCompleteQuickEndpointConnections())
+        {
+            return CompleteQuickEndpointConnections();
+        }
+
+        if (ShouldCompleteQuickGroupConnections())
+        {
+            return CompleteQuickGroupConnections();
         }
 
         if (ShouldCompleteQuickDirectConnections())
@@ -11368,9 +11522,128 @@ private void RefreshEndpointButtonSelection()
         return true;
     }
 
+    private bool ShouldCompleteQuickEndpointConnections()
+    {
+        return _quickGroupPluginChoices.Count == 0 &&
+               _quickGroupNodeSlots.Count == 0 &&
+               _quickGroupIds.Count == 0 &&
+               _quickConnectSourceEndpoints.Count > 0 &&
+               _quickConnectDestinationEndpoints.Count > 0;
+    }
+
+    private bool CompleteQuickEndpointConnections()
+    {
+        var cableCount = ConnectQuickEndpointPassthroughs(_quickConnectSourceEndpoints, _quickConnectDestinationEndpoints);
+        ClearQuickGroupChain(log: false);
+        AppendLog($"Quick-connected direct endpoint cables: {cableCount} cable(s).");
+        RefreshEngineCallbackMode();
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
+        return true;
+    }
+
+    private int ConnectQuickEndpointPassthroughs(IReadOnlyList<QuickGroupEndpoint> sources, IReadOnlyList<QuickGroupEndpoint> destinations)
+    {
+        var count = 0;
+        foreach (var source in sources.Where(static endpoint => !endpoint.OutputSide))
+        {
+            foreach (var destination in destinations.Where(static endpoint => endpoint.OutputSide))
+            {
+                if (EndpointToEndpointRouteMode(source.Mode, destination.Mode) == CallbackMode.None)
+                {
+                    AppendLog($"Direct endpoint routing is not available from {source.Endpoint.DisplayName} to {destination.Endpoint.DisplayName} on this canvas.");
+                    continue;
+                }
+
+                var pinCount = Math.Min(source.Endpoint.ChannelCount, destination.Endpoint.ChannelCount);
+                for (var pin = 0; pin < pinCount; pin++)
+                {
+                    var sourceChannel = source.Endpoint.Range.Start + pin;
+                    var destinationChannel = destination.Endpoint.Range.Start + pin;
+                    if (IsInputPatchBypassChannel(source.Mode, sourceChannel, out var sourceExplanation))
+                    {
+                        AppendLog(sourceExplanation);
+                        continue;
+                    }
+
+                    if (IsInputPatchBypassChannel(destination.Mode, destinationChannel, out var destinationExplanation))
+                    {
+                        AppendLog(destinationExplanation);
+                        continue;
+                    }
+
+                    if (FindEndpointToEndpointConnection(source.Mode, destination.Mode, sourceChannel, destinationChannel) is not null)
+                    {
+                        continue;
+                    }
+
+                    _settings.CanvasConnections.Add(new CanvasConnectionSnapshot
+                    {
+                        Kind = ConnectionEndpointToEndpoint,
+                        FromKind = PinEndpointSource,
+                        FromMode = source.Mode,
+                        FromChannel = sourceChannel,
+                        FromPin = pin,
+                        ToKind = PinEndpointDestination,
+                        ToMode = destination.Mode,
+                        ToChannel = destinationChannel,
+                        ToPin = pin,
+                        From = EndpointSourceKey(source.Mode, sourceChannel),
+                        To = EndpointDestinationKey(destination.Mode, destinationChannel)
+                    });
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private bool ShouldCompleteQuickGroupConnections()
+    {
+        return _quickGroupPluginChoices.Count == 0 &&
+               _quickGroupNodeSlots.Count == 0 &&
+               _quickGroupIds.Count > 0 &&
+               (_quickConnectSourceEndpoints.Count > 0 || _quickConnectDestinationEndpoints.Count > 0);
+    }
+
+    private bool CompleteQuickGroupConnections()
+    {
+        var groups = _quickGroupIds
+            .Select(id => _settings.PluginGroups.FirstOrDefault(group => group.Id == id))
+            .Where(static group => group is not null)
+            .Cast<PluginGroupSnapshot>()
+            .Where(GroupBelongsToCurrentCanvas)
+            .DistinctBy(static group => group.Id)
+            .ToList();
+        if (groups.Count == 0)
+        {
+            AppendLog("Quick VST group connect has no valid group selected on this canvas.");
+            ClearQuickGroupChain(log: false);
+            return true;
+        }
+
+        var inputCables = 0;
+        var outputCables = 0;
+        foreach (var group in groups)
+        {
+            inputCables += ConnectQuickGroupSources(group, _quickConnectSourceEndpoints);
+            outputCables += ConnectQuickGroupDestinations(group, _quickConnectDestinationEndpoints);
+        }
+
+        ClearQuickGroupChain(log: false);
+        AppendLog($"Quick-connected VST group cables: {inputCables} input cable(s), {outputCables} output cable(s).");
+        RefreshEngineCallbackMode();
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
+        return true;
+    }
+
     private bool ShouldCompleteQuickDirectConnections()
     {
-        if (_quickGroupPluginChoices.Count > 0 || _quickGroupNodeSlots.Count == 0)
+        if (_quickGroupPluginChoices.Count > 0 || _quickGroupIds.Count > 0 || _quickGroupNodeSlots.Count == 0)
         {
             return false;
         }
@@ -11516,6 +11789,7 @@ private void RefreshEndpointButtonSelection()
                _quickGroupDestinationEndpoint is null &&
                _quickConnectSourceEndpoints.Count == 0 &&
                _quickConnectDestinationEndpoints.Count == 0 &&
+               _quickGroupIds.Count == 0 &&
                (_quickGroupPluginChoices.Count > 0 || _quickGroupNodeSlots.Count > 0);
     }
 
@@ -11618,6 +11892,7 @@ private void RefreshEndpointButtonSelection()
             _quickConnectSourceEndpoints.Count == 0 &&
             _quickConnectDestinationEndpoints.Count == 0 &&
             _quickGroupNodeSlots.Count == 0 &&
+            _quickGroupIds.Count == 0 &&
             _quickGroupPluginChoices.Count == 0)
         {
             return false;
@@ -11628,6 +11903,7 @@ private void RefreshEndpointButtonSelection()
         _quickConnectSourceEndpoints.Clear();
         _quickConnectDestinationEndpoints.Clear();
         _quickGroupNodeSlots.Clear();
+        _quickGroupIds.Clear();
         _quickGroupPluginChoices.Clear();
         RefreshQuickGroupPluginListSelection();
         if (log)
@@ -11638,6 +11914,27 @@ private void RefreshEndpointButtonSelection()
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         return true;
+    }
+    private int ConnectQuickGroupSources(PluginGroupSnapshot group, IReadOnlyList<QuickGroupEndpoint> sources)
+    {
+        var count = 0;
+        foreach (var source in sources.Where(static endpoint => !endpoint.OutputSide))
+        {
+            count += ConnectQuickGroupSource(group, source);
+        }
+
+        return count;
+    }
+
+    private int ConnectQuickGroupDestinations(PluginGroupSnapshot group, IReadOnlyList<QuickGroupEndpoint> destinations)
+    {
+        var count = 0;
+        foreach (var destination in destinations.Where(static endpoint => endpoint.OutputSide))
+        {
+            count += ConnectQuickGroupDestination(group, destination);
+        }
+
+        return count;
     }
     private int ConnectQuickGroupSource(PluginGroupSnapshot group, QuickGroupEndpoint source)
     {

@@ -65,8 +65,6 @@ private:
     std::atomic<int> blockSize { 0 };
     std::atomic<int> inputChannels { 0 };
     std::atomic<int> outputChannels { 0 };
-    std::atomic<unsigned long long> callbackCount { 0 };
-    std::atomic<int> peakPercent { 0 };
     std::wstring driverName;
     std::wstring lastError;
 };

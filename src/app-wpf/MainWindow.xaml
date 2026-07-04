@@ -467,7 +467,9 @@
                          Grid.Column="0"
                          Text="Log"
                          FontSize="18"
-                         FontWeight="SemiBold" />
+                         FontWeight="SemiBold"
+                         Cursor="Hand"
+                         MouseLeftButtonDown="LogHeader_MouseLeftButtonDown" />
                             <Button Grid.Row="0"
                       Grid.Column="1"
                       Content="Single Ping"
@@ -523,12 +525,12 @@
                       Margin="8,0,0,0"
                       Style="{StaticResource RouteButton}"
                       Click="VstWorkspaceButton_Click" />
-                            <Button Content="Save..."
-                      Width="82"
+                            <Button Content="Save"
+                      Width="74"
                       Margin="8,0,0,0"
                       Click="SaveButton_Click" />
-                            <Button Content="Refresh"
-                      Width="74"
+                            <Button Content="Reload"
+                      Width="88"
                       Margin="8,0,0,0"
                       Click="RefreshCanvasButton_Click" />
                         </StackPanel>

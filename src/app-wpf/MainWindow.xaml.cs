@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _statusTimer;
     private readonly DispatcherTimer _channelApplyTimer;
     private readonly DispatcherTimer _pluginScanTimer;
+    private DispatcherTimer? _startupDelayTimer;
     private VbanTextListener? _vbanTextListener;
     private VfxCommandsWindow? _vfxCommandsWindow;
     private PluginScanProgressWindow? _pluginScanWindow;
@@ -83,6 +84,8 @@ public partial class MainWindow : Window
     private bool _pluginNodeLoadInProgress;
     private string _pluginNodeLoadName = string.Empty;
     private DateTimeOffset _pluginNodeLoadStartedAt;
+    private bool _startupEngineDelayActive;
+    private DateTimeOffset _startupEngineDelayEndsAt;
     private bool _realtimeCallbackMonitorInitialized;
     private ulong _lastRealtimeCallbackBufferCount;
     private int _lastRealtimeCallbackSampleRate;
@@ -243,11 +246,18 @@ public partial class MainWindow : Window
         };
 
         LoadSettings();
+        if (StartupTrayOptions.StartHiddenToTray || _settings.StartToTray)
+        {
+            HideInitialWindowToTrayOnLoaded();
+        }
+
         if (!InsertAsioPatchControlEnabled)
         {
             _settings.InsertAsioAutoStart = false;
             _settings.InsertAsioEndpointKeys?.Clear();
         }
+        var startupDelaySeconds = ConfiguredStartupDelaySeconds();
+        _startupEngineDelayActive = startupDelaySeconds > 0;
 
         SyncInsertAsioEndpointKeysFromPatchInsertState(rebuildToggles: false, queueSave: false);
         BuildInsertAsioEndpointToggles();
@@ -256,23 +266,14 @@ public partial class MainWindow : Window
         InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
         UpdatePluginFormatButtons();
         PopulatePluginList();
-        QueueSavedPluginNodeRestore();
         SelectMode(_selectedMode);
         SelectWorkspaceView(WorkspaceView.Vst);
         ApplyVbanControlSettingsFromUi(showErrors: false);
-        RefreshEngineCallbackMode();
         AppendLog("Ready.");
         AppendLog($"Runtime log: {RuntimeLog.LogPath}");
-        AppendLog(_engine.StatusText);
         UpdateLiveStatusText();
         _statusTimer.Start();
-
-        if (InsertAsioPatchControlEnabled && _settings.InsertAsioAutoStart)
-        {
-            Dispatcher.BeginInvoke(
-                new Action(() => StartInsertAsioFromUi(rememberRunning: true)),
-                DispatcherPriority.ApplicationIdle);
-        }
+        StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
     }
 
     private void InitializeTrayIcon()
@@ -296,6 +297,76 @@ public partial class MainWindow : Window
             Visible = true
         };
         _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray));
+    }
+
+    private void HideInitialWindowToTrayOnLoaded()
+    {
+        Loaded += (_, _) =>
+        {
+            Dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    HideToTray(showHint: false);
+                    AppendLog(StartupTrayOptions.StartHiddenToTray
+                        ? $"Started hidden to tray from {StartupTrayOptions.MatchedArgument}."
+                        : "Started hidden to tray from saved Start Tray setting.");
+                }),
+                DispatcherPriority.ApplicationIdle);
+        };
+    }
+
+    private int ConfiguredStartupDelaySeconds()
+    {
+        return _settings.StartupDelayEnabled
+            ? SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds)
+            : 0;
+    }
+
+    private void StartStartupAudioEngineAfterConfiguredDelay(int delaySeconds)
+    {
+        delaySeconds = Math.Clamp(delaySeconds, 0, 60);
+        if (delaySeconds <= 0)
+        {
+            StartStartupAudioEngine();
+            return;
+        }
+
+        _startupEngineDelayActive = true;
+        _startupEngineDelayEndsAt = DateTimeOffset.Now.AddSeconds(delaySeconds);
+        _engine.ForceDisconnectRealtimeCallback();
+        AppendLog($"Startup delay enabled: waiting {delaySeconds}s before starting the audio engine.");
+
+        _startupDelayTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(delaySeconds)
+        };
+        _startupDelayTimer.Tick += (_, _) =>
+        {
+            _startupDelayTimer?.Stop();
+            _startupDelayTimer = null;
+            StartStartupAudioEngine();
+        };
+        _startupDelayTimer.Start();
+        UpdateLiveStatusText();
+    }
+
+    private void StartStartupAudioEngine()
+    {
+        _startupDelayTimer?.Stop();
+        _startupDelayTimer = null;
+        _startupEngineDelayActive = false;
+
+        QueueSavedPluginNodeRestore();
+        RefreshEngineCallbackMode();
+        AppendLog(_engine.StatusText);
+        UpdateLiveStatusText();
+
+        if (InsertAsioPatchControlEnabled && _settings.InsertAsioAutoStart)
+        {
+            Dispatcher.BeginInvoke(
+                new Action(() => StartInsertAsioFromUi(rememberRunning: true)),
+                DispatcherPriority.ApplicationIdle);
+        }
     }
 
     private void ApplyInsertAsioPatchAvailability()
@@ -328,13 +399,13 @@ public partial class MainWindow : Window
         return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
     }
 
-    private void HideToTray()
+    private void HideToTray(bool showHint = true)
     {
         _windowStateBeforeTray = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
         ShowInTaskbar = false;
         Hide();
 
-        if (!_trayCloseHintShown)
+        if (showHint && !_trayCloseHintShown)
         {
             _trayIcon?.ShowBalloonTip(
                 2500,
@@ -1041,10 +1112,10 @@ public partial class MainWindow : Window
     {
         var window = new Window
         {
-            Title = "Save",
+            Title = "Menu",
             Owner = this,
             Width = 360,
-            Height = 292,
+            Height = 482,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = ThemeBrushOr("WindowBackgroundBrush", "#11171B")
@@ -1064,7 +1135,7 @@ public partial class MainWindow : Window
 
         stack.Children.Add(new TextBlock
         {
-            Text = "Save",
+            Text = "Menu",
             FontWeight = FontWeights.SemiBold,
             FontSize = 16,
             Foreground = ThemeBrushOr("TextBrush", "#EAF2F5"),
@@ -1082,6 +1153,74 @@ public partial class MainWindow : Window
         var load = CreateSaveManagerButton("Load");
         load.Click += async (_, _) => await RunSaveManagerActionAsync(load, LoadSaveAsync);
         stack.Children.Add(load);
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Tray",
+            Style = (Style)FindResource("MutedText"),
+            Margin = new Thickness(0, 6, 0, 6)
+        });
+
+        var startTray = CreateSaveManagerToggleButton("Start Tray", _settings.StartToTray);
+        startTray.Click += (_, _) =>
+        {
+            _settings.StartToTray = !_settings.StartToTray;
+            ApplySaveManagerToggleState(startTray, _settings.StartToTray);
+            QueueSave();
+            AppendLog(_settings.StartToTray
+                ? "Start Tray enabled. The next launch will start hidden in the tray."
+                : "Start Tray disabled.");
+        };
+        stack.Children.Add(startTray);
+
+        var closeToTray = CreateSaveManagerToggleButton("Close to Tray", _settings.CloseToTray);
+        closeToTray.Click += (_, _) =>
+        {
+            _settings.CloseToTray = !_settings.CloseToTray;
+            ApplySaveManagerToggleState(closeToTray, _settings.CloseToTray);
+            QueueSave();
+            AppendLog(_settings.CloseToTray
+                ? "Close to Tray enabled. The X button will hide the app to the tray."
+                : "Close to Tray disabled. The X button will shut down the app.");
+        };
+        stack.Children.Add(closeToTray);
+
+        var startupDelayRow = new Grid
+        {
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(154) });
+        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
+        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var startupDelay = CreateSaveManagerToggleButton("Delay Start", _settings.StartupDelayEnabled);
+        startupDelay.Margin = new Thickness(0);
+        startupDelay.Click += (_, _) =>
+        {
+            _settings.StartupDelayEnabled = !_settings.StartupDelayEnabled;
+            ApplySaveManagerToggleState(startupDelay, _settings.StartupDelayEnabled);
+            QueueSave();
+            AppendLog(_settings.StartupDelayEnabled
+                ? $"Startup delay enabled ({_settings.StartupDelaySeconds}s, applies next launch)."
+                : "Startup delay disabled.");
+        };
+        startupDelayRow.Children.Add(startupDelay);
+
+        var startupDelaySeconds = CreateSaveManagerTextBox(_settings.StartupDelaySeconds.ToString(CultureInfo.InvariantCulture));
+        startupDelaySeconds.ToolTip = "Startup delay in seconds (0-60). Applies on next launch.";
+        startupDelaySeconds.LostFocus += (_, _) => CommitStartupDelaySeconds(startupDelaySeconds);
+        startupDelaySeconds.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Enter)
+            {
+                CommitStartupDelaySeconds(startupDelaySeconds);
+                Keyboard.ClearFocus();
+                args.Handled = true;
+            }
+        };
+        Grid.SetColumn(startupDelaySeconds, 2);
+        startupDelayRow.Children.Add(startupDelaySeconds);
+        stack.Children.Add(startupDelayRow);
 
         var close = CreateSaveManagerButton("Close");
         close.Margin = new Thickness(0, 14, 0, 0);
@@ -1101,6 +1240,69 @@ public partial class MainWindow : Window
             Padding = new Thickness(12, 4, 12, 4),
             HorizontalContentAlignment = HorizontalAlignment.Left
         };
+    }
+
+    private TextBox CreateSaveManagerTextBox(string text)
+    {
+        return new TextBox
+        {
+            Text = text,
+            MinHeight = 34,
+            Margin = new Thickness(0),
+            Padding = new Thickness(10, 4, 10, 4),
+            Background = ThemeBrushOr("FieldBrush", "#0E1B1F"),
+            BorderBrush = ThemeBrushOr("SubtleBorderBrush", "#24343C"),
+            BorderThickness = new Thickness(1),
+            Foreground = ThemeBrushOr("TextBrush", "#EAF2F5"),
+            HorizontalContentAlignment = HorizontalAlignment.Right,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+    }
+
+    private Button CreateSaveManagerToggleButton(string text, bool active)
+    {
+        var button = CreateSaveManagerButton(text);
+        ApplySaveManagerToggleState(button, active);
+        return button;
+    }
+
+    private void ApplySaveManagerToggleState(Button button, bool active)
+    {
+        button.Background = active
+            ? ThemeBrushOr("RouteActiveBrush", "#14392F")
+            : ThemeBrushOr("FieldBrush", "#0E1B1F");
+        button.BorderBrush = active
+            ? ThemeBrushOr("RouteAccentBrush", "#55C27A")
+            : ThemeBrushOr("SubtleBorderBrush", "#24343C");
+        button.BorderThickness = active ? new Thickness(1.5) : new Thickness(1);
+        button.Foreground = ThemeBrushOr("TextBrush", "#EAF2F5");
+        button.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
+    }
+
+    private void CommitStartupDelaySeconds(TextBox textBox)
+    {
+        var previous = _settings.StartupDelaySeconds;
+        var seconds = ParseStartupDelaySeconds(textBox.Text);
+        _settings.StartupDelaySeconds = seconds;
+        textBox.Text = seconds.ToString(CultureInfo.InvariantCulture);
+        QueueSave();
+
+        if (previous != seconds)
+        {
+            AppendLog($"Startup delay set to {seconds}s. Applies on next launch.");
+        }
+    }
+
+    private static int ParseStartupDelaySeconds(string? text)
+    {
+        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
+            ? SanitizeStartupDelaySeconds(seconds)
+            : 0;
+    }
+
+    private static int SanitizeStartupDelaySeconds(int seconds)
+    {
+        return Math.Clamp(seconds, 0, 60);
     }
 
     private async Task RunSaveManagerActionAsync(Button button, Func<Task> action)
@@ -1356,6 +1558,7 @@ public partial class MainWindow : Window
         _settings.EndpointCanvasYOffsets ??= [];
         _settings.EndpointRouteHues ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
+        _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
         _settingsByEndpoint.Clear();
         NormalizePluginScanFolders();
         NormalizePluginGroups();
@@ -1469,6 +1672,7 @@ public partial class MainWindow : Window
             ? DefaultVbanControlStreamName
             : VbanStreamTextBox.Text.Trim();
         _settings.VbanControlLocalOnly = VbanLocalOnlyCheckBox.IsChecked != false;
+        _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
         _settings.Endpoints = _settingsByEndpoint.Values
             .Select(static settings => settings.ToSnapshot())
             .ToList();
@@ -2313,6 +2517,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_startupEngineDelayActive)
+        {
+            var remaining = Math.Max(0, (int)Math.Ceiling((_startupEngineDelayEndsAt - DateTimeOffset.Now).TotalSeconds));
+            StatusTextBlock.Text = $"Startup delay: engine starts in {remaining}s | {_engine.StatusText}";
+            InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
+            return;
+        }
+
         RefreshVoicemeeterParametersIfNeeded();
         SyncInsertAsioPatchStateIfNeeded();
         StatusTextBlock.Text = _engine.StatusText;
@@ -3021,6 +3233,12 @@ public partial class MainWindow : Window
 
     private void RefreshEngineCallbackMode()
     {
+        if (_startupEngineDelayActive)
+        {
+            _engine.ForceDisconnectRealtimeCallback();
+            return;
+        }
+
         SyncInputCallbackSuppression();
         ApplyVstCanvasPassthroughRoutes();
 
@@ -12374,7 +12592,7 @@ private void RefreshEndpointButtonSelection()
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (!_isShuttingDown)
+        if (!_isShuttingDown && _settings.CloseToTray)
         {
             e.Cancel = true;
             HideToTray();
@@ -12391,6 +12609,7 @@ private void RefreshEndpointButtonSelection()
         _pluginRestoreTimer.Stop();
         _statusTimer.Stop();
         _saveTimer.Stop();
+        _startupDelayTimer?.Stop();
         SaveSettings();
         _vbanTextListener?.Dispose();
         _vfxCommandsWindow?.Close();

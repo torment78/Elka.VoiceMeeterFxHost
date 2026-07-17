@@ -525,8 +525,8 @@
                       Margin="8,0,0,0"
                       Style="{StaticResource RouteButton}"
                       Click="VstWorkspaceButton_Click" />
-                            <Button Content="Save"
-                      Width="74"
+                            <Button Content="Menu"
+                      Width="84"
                       Margin="8,0,0,0"
                       Click="SaveButton_Click" />
                             <Button Content="Reload"

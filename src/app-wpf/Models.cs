@@ -523,6 +523,10 @@ internal sealed class FxHostSettings
     public string VbanControlStreamName { get; set; } = "Command1";
     public bool VbanControlLocalOnly { get; set; } = true;
     public bool InsertAsioAutoStart { get; set; }
+    public bool StartToTray { get; set; }
+    public bool CloseToTray { get; set; } = true;
+    public bool StartupDelayEnabled { get; set; }
+    public int StartupDelaySeconds { get; set; }
     public List<string> InsertAsioEndpointKeys { get; set; } = [];
     public List<ChannelSettingsSnapshot> Endpoints { get; set; } = [];
     public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];

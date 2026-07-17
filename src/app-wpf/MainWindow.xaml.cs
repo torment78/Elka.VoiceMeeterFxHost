@@ -103,6 +103,9 @@ public partial class MainWindow : Window
     private bool _isShuttingDown;
     private bool _trayCloseHintShown;
 
+    private const double MinimumVisibleWindowWidth = 160.0;
+    private const double MinimumVisibleWindowHeight = 48.0;
+
     private static readonly bool InsertAsioPatchControlEnabled = true;
     private const string InsertAsioPatchDisabledMessage = "ASIO Patch is disabled in this build.";
     private const int DefaultVbanControlPort = 6981;
@@ -246,6 +249,7 @@ public partial class MainWindow : Window
         };
 
         LoadSettings();
+        ApplySavedWindowPlacement();
         if (StartupTrayOptions.StartHiddenToTray || _settings.StartToTray)
         {
             HideInitialWindowToTrayOnLoaded();
@@ -401,7 +405,9 @@ public partial class MainWindow : Window
 
     private void HideToTray(bool showHint = true)
     {
-        _windowStateBeforeTray = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
+        CaptureWindowPlacement();
+        _windowStateBeforeTray = _settings.MainWindowMaximized ? WindowState.Maximized : WindowState.Normal;
+        QueueSave();
         ShowInTaskbar = false;
         Hide();
 
@@ -418,10 +424,131 @@ public partial class MainWindow : Window
 
     private void RestoreFromTray()
     {
+        var restoreState = _windowStateBeforeTray == WindowState.Maximized
+            ? WindowState.Maximized
+            : WindowState.Normal;
+        WindowState = WindowState.Normal;
+        ClampCurrentWindowPlacementToDesktop();
         ShowInTaskbar = true;
         Show();
-        WindowState = _windowStateBeforeTray;
+        WindowState = restoreState;
         Activate();
+    }
+
+    private void ApplySavedWindowPlacement()
+    {
+        if (!TryGetSavedWindowBounds(out var savedBounds))
+        {
+            return;
+        }
+
+        var bounds = ClampWindowBoundsToDesktop(savedBounds);
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
+        _windowStateBeforeTray = _settings.MainWindowMaximized ? WindowState.Maximized : WindowState.Normal;
+        WindowState = _windowStateBeforeTray;
+    }
+
+    private void CaptureWindowPlacement()
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        var maximized = WindowState == WindowState.Maximized ||
+            (!IsVisible && _windowStateBeforeTray == WindowState.Maximized);
+        var bounds = WindowState == WindowState.Normal
+            ? new Rect(Left, Top, ActualWidth, ActualHeight)
+            : RestoreBounds;
+        if (!IsValidWindowBounds(bounds))
+        {
+            return;
+        }
+
+        _settings.MainWindowLeft = bounds.Left;
+        _settings.MainWindowTop = bounds.Top;
+        _settings.MainWindowWidth = bounds.Width;
+        _settings.MainWindowHeight = bounds.Height;
+        _settings.MainWindowMaximized = maximized;
+    }
+
+    private bool TryGetSavedWindowBounds(out Rect bounds)
+    {
+        bounds = Rect.Empty;
+        if (!_settings.MainWindowLeft.HasValue ||
+            !_settings.MainWindowTop.HasValue ||
+            !_settings.MainWindowWidth.HasValue ||
+            !_settings.MainWindowHeight.HasValue)
+        {
+            return false;
+        }
+
+        bounds = new Rect(
+            _settings.MainWindowLeft.Value,
+            _settings.MainWindowTop.Value,
+            Math.Max(MinWidth, _settings.MainWindowWidth.Value),
+            Math.Max(MinHeight, _settings.MainWindowHeight.Value));
+        return IsValidWindowBounds(bounds);
+    }
+
+    private void ClampCurrentWindowPlacementToDesktop()
+    {
+        var bounds = new Rect(Left, Top, Math.Max(MinWidth, Width), Math.Max(MinHeight, Height));
+        if (!IsValidWindowBounds(bounds))
+        {
+            return;
+        }
+
+        bounds = ClampWindowBoundsToDesktop(bounds);
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
+    }
+
+    private static Rect ClampWindowBoundsToDesktop(Rect bounds)
+    {
+        var desktop = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+        if (!IsValidWindowBounds(desktop))
+        {
+            return bounds;
+        }
+
+        var visibleWidth = Math.Min(MinimumVisibleWindowWidth, bounds.Width);
+        var visibleHeight = Math.Min(MinimumVisibleWindowHeight, bounds.Height);
+        var minimumLeft = desktop.Left - bounds.Width + visibleWidth;
+        var maximumLeft = desktop.Right - visibleWidth;
+        var minimumTop = desktop.Top;
+        var maximumTop = desktop.Bottom - visibleHeight;
+        return new Rect(
+            Math.Clamp(bounds.Left, minimumLeft, maximumLeft),
+            Math.Clamp(bounds.Top, minimumTop, maximumTop),
+            bounds.Width,
+            bounds.Height);
+    }
+
+    private static bool IsValidWindowBounds(Rect bounds)
+    {
+        return !bounds.IsEmpty &&
+            IsFinite(bounds.Left) &&
+            IsFinite(bounds.Top) &&
+            IsFinite(bounds.Width) &&
+            IsFinite(bounds.Height) &&
+            bounds.Width > 0.0 &&
+            bounds.Height > 0.0;
+    }
+
+    private static bool IsFinite(double value)
+    {
+        return !double.IsNaN(value) && !double.IsInfinity(value);
     }
 
     private void ShutdownFromTray()
@@ -1659,6 +1786,7 @@ public partial class MainWindow : Window
 
     private bool SaveSettings()
     {
+        CaptureWindowPlacement();
         CapturePluginNodeStates();
         _settings.Kind = _kind;
         _settings.SelectedMode = _selectedMode;

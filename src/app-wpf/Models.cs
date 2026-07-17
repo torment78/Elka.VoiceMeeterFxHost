@@ -527,6 +527,11 @@ internal sealed class FxHostSettings
     public bool CloseToTray { get; set; } = true;
     public bool StartupDelayEnabled { get; set; }
     public int StartupDelaySeconds { get; set; }
+    public double? MainWindowLeft { get; set; }
+    public double? MainWindowTop { get; set; }
+    public double? MainWindowWidth { get; set; }
+    public double? MainWindowHeight { get; set; }
+    public bool MainWindowMaximized { get; set; }
     public List<string> InsertAsioEndpointKeys { get; set; } = [];
     public List<ChannelSettingsSnapshot> Endpoints { get; set; } = [];
     public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];

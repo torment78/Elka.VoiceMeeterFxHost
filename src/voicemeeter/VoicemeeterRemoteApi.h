@@ -19,6 +19,7 @@ public:
     bool load(std::wstring& error);
     void unload() noexcept;
     bool isLoaded() const noexcept;
+    bool supportsCustomButton() const noexcept;
 
     long login() const;
     long logout() const;
@@ -31,6 +32,13 @@ public:
     long audioCallbackStart() const;
     long audioCallbackStop() const;
     long audioCallbackUnregister() const;
+    long setCustomButton(
+        long index,
+        long type,
+        long state,
+        const wchar_t* label,
+        HWND commandWindow,
+        long commandId) const;
 
     const std::wstring& dllPath() const noexcept;
 
@@ -46,6 +54,7 @@ private:
     using AudioCallbackStartFn = long(__stdcall*)();
     using AudioCallbackStopFn = long(__stdcall*)();
     using AudioCallbackUnregisterFn = long(__stdcall*)();
+    using SetCustomButtonFn = long(__stdcall*)(long, long, long, wchar_t*, HWND, long);
 
     static bool findDllPath(std::wstring& path, std::wstring& error);
     static bool readInstallPathFromRegistry(std::wstring& installPath);
@@ -77,5 +86,6 @@ private:
     AudioCallbackStartFn audioCallbackStartFn = nullptr;
     AudioCallbackStopFn audioCallbackStopFn = nullptr;
     AudioCallbackUnregisterFn audioCallbackUnregisterFn = nullptr;
+    SetCustomButtonFn setCustomButtonFn = nullptr;
 };
 }

@@ -52,6 +52,7 @@ bool VoicemeeterRemoteApi::load(std::wstring& error)
 
     loadedDllPath = path;
     getLevelFn = reinterpret_cast<GetLevelFn>(GetProcAddress(module, "VBVMR_GetLevel"));
+    setCustomButtonFn = reinterpret_cast<SetCustomButtonFn>(GetProcAddress(module, "VBVMR_SetCustomButton"));
 
     return loadFunction(loginFn, "VBVMR_Login", error) &&
            loadFunction(logoutFn, "VBVMR_Logout", error) &&
@@ -84,12 +85,18 @@ void VoicemeeterRemoteApi::unload() noexcept
     audioCallbackStartFn = nullptr;
     audioCallbackStopFn = nullptr;
     audioCallbackUnregisterFn = nullptr;
+    setCustomButtonFn = nullptr;
     loadedDllPath.clear();
 }
 
 bool VoicemeeterRemoteApi::isLoaded() const noexcept
 {
     return module != nullptr;
+}
+
+bool VoicemeeterRemoteApi::supportsCustomButton() const noexcept
+{
+    return setCustomButtonFn != nullptr;
 }
 
 long VoicemeeterRemoteApi::login() const
@@ -151,6 +158,19 @@ long VoicemeeterRemoteApi::audioCallbackStop() const
 long VoicemeeterRemoteApi::audioCallbackUnregister() const
 {
     return audioCallbackUnregisterFn != nullptr ? audioCallbackUnregisterFn() : -1;
+}
+
+long VoicemeeterRemoteApi::setCustomButton(
+    long index,
+    long type,
+    long state,
+    const wchar_t* label,
+    HWND commandWindow,
+    long commandId) const
+{
+    return setCustomButtonFn != nullptr
+        ? setCustomButtonFn(index, type, state, const_cast<wchar_t*>(label), commandWindow, commandId)
+        : -1;
 }
 
 const std::wstring& VoicemeeterRemoteApi::dllPath() const noexcept

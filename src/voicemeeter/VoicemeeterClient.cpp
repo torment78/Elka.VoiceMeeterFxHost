@@ -55,7 +55,14 @@ VoicemeeterClient::~VoicemeeterClient()
 bool VoicemeeterClient::connect(std::wstring& error)
 {
     if (connectionState != ConnectionState::Disconnected)
+    {
+        if (customButton.active && !customButtonApplied)
+        {
+            std::wstring ignored;
+            applyCustomButton(ignored);
+        }
         return true;
+    }
 
     if (!api.load(error))
         return false;
@@ -68,6 +75,12 @@ bool VoicemeeterClient::connect(std::wstring& error)
     }
 
     connectionState = ConnectionState::Connected;
+    customButtonApplied = false;
+    if (customButton.active)
+    {
+        std::wstring ignored;
+        applyCustomButton(ignored);
+    }
     return true;
 }
 
@@ -79,6 +92,7 @@ void VoicemeeterClient::disconnect() noexcept
         api.logout();
 
     connectionState = ConnectionState::Disconnected;
+    customButtonApplied = false;
     api.unload();
 }
 
@@ -255,6 +269,143 @@ bool VoicemeeterClient::getLevel(int type, int channel, float& value) const noex
         return false;
 
     return api.getLevel(type, channel, &value) == 0;
+}
+
+long VoicemeeterClient::setCustomButton(
+    long index,
+    long type,
+    long state,
+    const std::wstring& label,
+    HWND commandWindow,
+    long commandId,
+    std::wstring& error)
+{
+    if (index < 0 || index > 1)
+    {
+        error = L"VoiceMeeter custom button index must be 0 or 1.";
+        return -1;
+    }
+
+    if (type < 0 || type > 2)
+    {
+        error = L"VoiceMeeter custom button type must be 0, 1, or 2.";
+        return -1;
+    }
+
+    if (label.size() > 32)
+    {
+        error = L"VoiceMeeter custom button label cannot exceed 32 characters.";
+        return -1;
+    }
+
+    if (commandWindow == nullptr || commandId <= 0)
+    {
+        error = L"VoiceMeeter custom button requires a valid command window and command ID.";
+        return -1;
+    }
+
+    customButton.active = true;
+    customButton.index = index;
+    customButton.type = type;
+    customButton.state = state;
+    customButton.label = label;
+    customButton.commandWindow = commandWindow;
+    customButton.commandId = commandId;
+    customButtonApplied = false;
+
+    if (connectionState == ConnectionState::Disconnected && !connect(error))
+        return -2;
+
+    if (customButtonApplied)
+        return 0;
+
+    return applyCustomButton(error);
+}
+
+long VoicemeeterClient::clearCustomButton(
+    std::wstring& error,
+    long* releaseResult) noexcept
+{
+    const auto registration = customButton;
+    customButton = {};
+    customButtonApplied = false;
+
+    if (releaseResult != nullptr)
+        *releaseResult = 0;
+
+    if (!registration.active || connectionState == ConnectionState::Disconnected)
+        return 0;
+
+    if (!api.supportsCustomButton())
+    {
+        error = L"Installed VoiceMeeter Remote API does not expose VBVMR_SetCustomButton.";
+        return -1;
+    }
+
+    const long released = api.setCustomButton(
+        registration.index,
+        registration.type,
+        0,
+        registration.label.c_str(),
+        registration.commandWindow,
+        registration.commandId);
+    if (releaseResult != nullptr)
+        *releaseResult = released;
+
+    Sleep(25);
+    const long result = api.setCustomButton(
+        registration.index,
+        -1,
+        0,
+        L"",
+        registration.commandWindow,
+        registration.commandId);
+    if (result != 0)
+        error = L"VBVMR_SetCustomButton removal failed with code " + std::to_wstring(result) + L".";
+    return result;
+}
+
+long VoicemeeterClient::forceHideCustomButton(
+    long index,
+    HWND commandWindow,
+    long commandId) noexcept
+{
+    if (index < 0 ||
+        index > 1 ||
+        commandWindow == nullptr ||
+        commandId <= 0 ||
+        connectionState == ConnectionState::Disconnected ||
+        !api.supportsCustomButton())
+    {
+        return -1;
+    }
+
+    return api.setCustomButton(index, -1, 0, L"", commandWindow, commandId);
+}
+
+long VoicemeeterClient::applyCustomButton(std::wstring& error) noexcept
+{
+    customButtonApplied = false;
+    if (!customButton.active || connectionState == ConnectionState::Disconnected)
+        return -2;
+
+    if (!api.supportsCustomButton())
+    {
+        error = L"Installed VoiceMeeter Remote API does not expose VBVMR_SetCustomButton.";
+        return -1;
+    }
+
+    const long result = api.setCustomButton(
+        customButton.index,
+        customButton.type,
+        customButton.state,
+        customButton.label.c_str(),
+        customButton.commandWindow,
+        customButton.commandId);
+    customButtonApplied = result == 0;
+    if (result != 0)
+        error = L"VBVMR_SetCustomButton failed with code " + std::to_wstring(result) + L".";
+    return result;
 }
 
 long __stdcall VoicemeeterClient::audioCallback(void* user, long command, void* data, long reserved) noexcept

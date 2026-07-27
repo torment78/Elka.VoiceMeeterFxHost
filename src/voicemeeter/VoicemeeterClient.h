@@ -62,6 +62,16 @@ public:
     bool getParameterFloat(const char* parameterName, float& value) const noexcept;
     bool setParameterFloat(const char* parameterName, float value) const noexcept;
     bool getLevel(int type, int channel, float& value) const noexcept;
+    long setCustomButton(
+        long index,
+        long type,
+        long state,
+        const std::wstring& label,
+        HWND commandWindow,
+        long commandId,
+        std::wstring& error);
+    long clearCustomButton(std::wstring& error, long* releaseResult = nullptr) noexcept;
+    long forceHideCustomButton(long index, HWND commandWindow, long commandId) noexcept;
 
 private:
     static long __stdcall audioCallback(void* user, long command, void* data, long reserved) noexcept;
@@ -71,6 +81,18 @@ private:
     static CallbackStreamKind toStreamKind(CallbackMode mode) noexcept;
     static CallbackStreamKind toStreamKindForCommand(long command, CallbackMode fallbackMode) noexcept;
     void resetCallbackStats() noexcept;
+    long applyCustomButton(std::wstring& error) noexcept;
+
+    struct CustomButtonRegistration
+    {
+        bool active = false;
+        long index = 0;
+        long type = 1;
+        long state = 0;
+        std::wstring label;
+        HWND commandWindow = nullptr;
+        long commandId = 0;
+    };
 
     RealtimeEngine& engine;
     VoicemeeterRemoteApi api;
@@ -84,5 +106,7 @@ private:
     std::atomic<uint64_t> callbackBufferOutCount { 0 };
     std::atomic<uint64_t> callbackBufferMainCount { 0 };
     std::atomic<long> callbackLastCommand { 0 };
+    CustomButtonRegistration customButton;
+    bool customButtonApplied = false;
 };
 }

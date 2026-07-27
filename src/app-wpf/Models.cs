@@ -1008,6 +1008,53 @@ internal sealed class NativeEngineClient : IDisposable
         }
     }
 
+    public int SetVoicemeeterCustomButton(
+        int buttonIndex,
+        int buttonType,
+        int buttonState,
+        string label,
+        IntPtr commandWindow,
+        int commandId,
+        out string statusText)
+    {
+        statusText = string.Empty;
+        if (!_attached)
+        {
+            statusText = _lastStatus;
+            return -2;
+        }
+
+        var status = new StringBuilder(512);
+        try
+        {
+            var result = ElkaFx_SetVoicemeeterCustomButton(
+                buttonIndex,
+                buttonType,
+                buttonState,
+                label,
+                commandWindow,
+                commandId,
+                status,
+                status.Capacity);
+            statusText = status.ToString();
+            if (status.Length > 0)
+            {
+                _lastStatus = statusText;
+            }
+            return result;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            statusText = "Native bridge does not expose VoiceMeeter custom-button support.";
+            return -1;
+        }
+        catch (SEHException ex)
+        {
+            statusText = $"VoiceMeeter custom button failed: {ex.Message}";
+            return -1;
+        }
+    }
+
     public int EnsureRealtimePrepared(out string statusText)
     {
         statusText = string.Empty;
@@ -2050,6 +2097,17 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_RefreshVoicemeeterParameters();
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_SetVoicemeeterCustomButton(
+        int buttonIndex,
+        int buttonType,
+        int buttonState,
+        string label,
+        IntPtr commandWindow,
+        int commandId,
+        StringBuilder status,
+        int statusChars);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPatchInsertEnabled(int inputChannel);

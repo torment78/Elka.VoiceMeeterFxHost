@@ -1707,6 +1707,8 @@ __declspec(dllexport) void __cdecl ElkaFx_Shutdown()
     std::lock_guard lock(g_mutex);
     if (g_host)
     {
+        std::wstring ignoredButtonError;
+        g_host->client.clearCustomButton(ignoredButtonError);
         std::wstring ignored;
         restoreInsertPatchChannels(*g_host);
         g_host->insertAsio.stop(ignored);
@@ -2186,6 +2188,93 @@ __declspec(dllexport) int __cdecl ElkaFx_RefreshVoicemeeterParameters()
     }
     catch (...)
     {
+        return -1;
+    }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_SetVoicemeeterCustomButton(
+    int buttonIndex,
+    int buttonType,
+    int buttonState,
+    const wchar_t* label,
+    void* commandWindow,
+    int commandId,
+    wchar_t* status,
+    int statusChars)
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        auto& target = host();
+        std::wstring error;
+        long result = 0;
+        if (buttonType < 0)
+        {
+            std::wstring ignored;
+            restoreInsertPatchChannels(target);
+            target.insertAsio.stop(ignored);
+
+            long releaseResult = 0;
+            const long initialHideResult = target.client.clearCustomButton(error, &releaseResult);
+            Sleep(40);
+            target.client.unregisterCallback();
+            Sleep(40);
+
+            const auto commandHandle = reinterpret_cast<HWND>(commandWindow);
+            const long postCallbackHideResult = target.client.forceHideCustomButton(
+                buttonIndex,
+                commandHandle,
+                commandId);
+            Sleep(120);
+            const long finalHideResult = target.client.forceHideCustomButton(
+                buttonIndex,
+                commandHandle,
+                commandId);
+            Sleep(80);
+
+            result = finalHideResult;
+            error = std::wstring(
+                result == 0
+                    ? L"VoiceMeeter FX Host button teardown accepted: release="
+                    : L"VoiceMeeter FX Host button teardown failed: release=") +
+                std::to_wstring(releaseResult) +
+                L", initial-hide=" +
+                std::to_wstring(initialHideResult) +
+                L", post-callback-hide=" +
+                std::to_wstring(postCallbackHideResult) +
+                L", final-hide=" +
+                std::to_wstring(finalHideResult) +
+                L".";
+        }
+        else
+        {
+            result = target.client.setCustomButton(
+                buttonIndex,
+                buttonType,
+                buttonState,
+                label != nullptr ? label : L"",
+                reinterpret_cast<HWND>(commandWindow),
+                commandId,
+                error);
+        }
+
+        if (buttonType < 0)
+        {
+            writeWide(error, status, statusChars);
+        }
+        else if (result == 0)
+        {
+            writeWide(L"VoiceMeeter FX Host button registered.", status, statusChars);
+        }
+        else
+        {
+            writeWide(error, status, statusChars);
+        }
+        return static_cast<int>(result);
+    }
+    catch (...)
+    {
+        writeWide(L"VoiceMeeter custom button update failed: native exception.", status, statusChars);
         return -1;
     }
 }

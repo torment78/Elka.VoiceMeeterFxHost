@@ -25,6 +25,7 @@ orange for VST/plugin work.
 - **Single ping tool**: run a basic callback timing/round-trip check.
 - **VFX text commands**: control delay, volume, direct routing, route enable, and mute-standard routing from MacroButtons over VBAN-TEXT.
 - **Idle callback mode**: when no route, active channel, ping, or connected VST path needs processing, the app stays connected but unregisters from the realtime callback path.
+- **VoiceMeeter FX Host button**: open or restore the app directly from VoiceMeeter; the button is removed during a normal FX Host shutdown.
 
 VST3 is the default working plugin format. The UI uses the short label **VST**
 because the same browser and routing area is prepared for legacy VST2 hosting
@@ -372,7 +373,7 @@ Release publish artifacts land here:
 ```text
 artifacts\release\ElkaVoiceMeeterFxHost.exe
 artifacts\release\ElkaVoiceMeeterFxHost-win-x64-framework-dependent.zip
-artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.7.6.3.exe
+artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.7.6.4.exe
 ```
 
 The release EXE is a compact framework-dependent direct download and needs the

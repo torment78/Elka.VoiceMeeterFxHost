@@ -40,11 +40,14 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private ScrollViewer? _canvasScrollViewer;
     private readonly Dictionary<string, Point> _pinPositions = [];
     private readonly Dictionary<string, CanvasPin> _pinInfos = [];
+    private readonly Dictionary<int, List<FrameworkElement>> _nodeVisualElements = [];
+    private readonly Dictionary<string, Path> _connectionPaths = [];
     private readonly Dictionary<FrameworkElement, Point> _dragOrigins = [];
     private CanvasPin? _wireStart;
     private Path? _wirePreview;
     private PluginNodeSnapshot? _draggingNode;
     private Point _dragOffset;
+    private Point _dragNodeOrigin;
     private string? _selectedConnectionKey;
     private int? _selectedNodeSlot;
     private bool _accepted;
@@ -279,6 +282,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _canvas.Children.Clear();
         _pinPositions.Clear();
         _pinInfos.Clear();
+        _nodeVisualElements.Clear();
+        _connectionPaths.Clear();
         DrawGroupWall(left: true);
         DrawGroupWall(left: false);
 
@@ -295,6 +300,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 path.Tag = connection;
                 path.ToolTip = "Click to select. Press Delete to disconnect.";
                 path.MouseLeftButtonDown += Connection_MouseLeftButtonDown;
+                _connectionPaths[ConnectionKey(connection)] = path;
                 _canvas.Children.Insert(0, path);
             }
         }
@@ -441,6 +447,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             DrawNodePin(node, pin, input: false, elements);
         }
+
+        _nodeVisualElements[node.Slot] = elements;
     }
 
     private ContextMenu BuildNodeMenu(PluginNodeSnapshot node)
@@ -767,13 +775,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
         var point = e.GetPosition(_canvas);
         _draggingNode.X = Math.Clamp((int)(point.X - _dragOffset.X), 170, (int)(Math.Max(MinimumCanvasWidth, _canvas.Width) - 250));
         _draggingNode.Y = Math.Max(44, (int)(point.Y - _dragOffset.Y));
-        if (!TryGetDragOriginMinimum(out var origin))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        MoveDragElements(_draggingNode.X - origin.X, _draggingNode.Y - origin.Y);
+        MoveDragElements(_draggingNode.X - _dragNodeOrigin.X, _draggingNode.Y - _dragNodeOrigin.Y);
+        UpdateNodePinPositionCache(_draggingNode);
+        RefreshConnectionPaths(connection => ConnectionTouchesNode(connection, _draggingNode.Slot));
         e.Handled = true;
     }
 
@@ -813,9 +817,10 @@ internal sealed class PluginGroupPropertiesWindow : Window
         }
 
         _draggingNode = node;
+        _dragNodeOrigin = new Point(node.X, node.Y);
         var point = e.GetPosition(_canvas);
         _dragOffset = new Point(point.X - node.X, point.Y - node.Y);
-        CaptureDragOrigins(border);
+        CaptureDragOrigins(_nodeVisualElements.TryGetValue(node.Slot, out var elements) ? elements : [border]);
         border.CaptureMouse();
         e.Handled = true;
     }
@@ -838,28 +843,17 @@ internal sealed class PluginGroupPropertiesWindow : Window
         e.Handled = true;
     }
 
-    private void CaptureDragOrigins(Border border)
+    private void CaptureDragOrigins(IEnumerable<FrameworkElement> elements)
     {
         _dragOrigins.Clear();
-        var left = Canvas.GetLeft(border);
-        var top = Canvas.GetTop(border);
-        _dragOrigins[border] = new Point(
-            double.IsNaN(left) ? 0.0 : left,
-            double.IsNaN(top) ? 0.0 : top);
-    }
-
-    private bool TryGetDragOriginMinimum(out Point origin)
-    {
-        origin = default;
-        if (_dragOrigins.Count == 0)
+        foreach (var element in elements)
         {
-            return false;
+            var left = Canvas.GetLeft(element);
+            var top = Canvas.GetTop(element);
+            _dragOrigins[element] = new Point(
+                double.IsNaN(left) ? 0.0 : left,
+                double.IsNaN(top) ? 0.0 : top);
         }
-
-        origin = new Point(
-            _dragOrigins.Values.Min(static point => point.X),
-            _dragOrigins.Values.Min(static point => point.Y));
-        return true;
     }
 
     private void MoveDragElements(double deltaX, double deltaY)
@@ -869,6 +863,43 @@ internal sealed class PluginGroupPropertiesWindow : Window
             Canvas.SetLeft(element, origin.X + deltaX);
             Canvas.SetTop(element, origin.Y + deltaY);
         }
+    }
+
+    private void UpdateNodePinPositionCache(PluginNodeSnapshot node)
+    {
+        for (var pin = 0; pin < NodeInputVisualPinCount(node); pin++)
+        {
+            _pinPositions[NodeInputKey(node.Slot, pin)] = new Point(
+                node.X,
+                node.Y + 48 + (pin * 18));
+        }
+
+        for (var pin = 0; pin < node.OutputPins; pin++)
+        {
+            _pinPositions[NodeOutputKey(node.Slot, pin)] = new Point(
+                node.X + NodeWidth,
+                node.Y + 48 + (pin * 18));
+        }
+    }
+
+    private void RefreshConnectionPaths(Func<CanvasConnectionSnapshot, bool> predicate)
+    {
+        foreach (var connection in GroupConnections().Where(predicate))
+        {
+            var key = ConnectionKey(connection);
+            if (!_connectionPaths.TryGetValue(key, out var path) ||
+                !TryGetConnectionPoints(connection, out var start, out var end))
+            {
+                continue;
+            }
+
+            path.Data = CreateWireGeometry(start, end);
+        }
+    }
+
+    private static bool ConnectionTouchesNode(CanvasConnectionSnapshot connection, int slot)
+    {
+        return connection.FromSlot == slot || connection.ToSlot == slot;
     }
 
     private void UpdateWirePreview(Point current)

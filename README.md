@@ -358,7 +358,7 @@ realtime callback is idle/unregistered.
   happen inside the audio callback.
 - The native callback path avoids UI work, file access, logging, and allocation
   in the audio thread as much as practical.
-- The installer offers a default-on performance task that runs `powercfg /powerthrottling disable /path "<installed exe>"` for the installed app executable. This prevents Windows from power-throttling the realtime audio host process.
+- The installer enables the FX Host power-throttling exemption by default and offers a separate optional VoiceMeeter exemption. It queries the VoiceMeeter Remote API for the currently running Standard, Banana, or Potato edition, then runs `powercfg /powerthrottling disable /path "<installed exe>"` only for that edition's installed x86/x64 executables.
 
 ## Current App Path
 
@@ -373,7 +373,7 @@ Release publish artifacts land here:
 ```text
 artifacts\release\ElkaVoiceMeeterFxHost.exe
 artifacts\release\ElkaVoiceMeeterFxHost-win-x64-framework-dependent.zip
-artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.7.6.4.exe
+artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.7.6.5.exe
 ```
 
 The release EXE is a compact framework-dependent direct download and needs the

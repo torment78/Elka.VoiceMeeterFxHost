@@ -4,11 +4,21 @@
         Title="Elka VoiceMeeter FX Host"
         Icon="Assets/VoicemeeterDelay.ico"
         Width="1632"
-        Height="831"
-        MinWidth="1632"
-        MinHeight="1010"
+        Height="1010"
+        MinWidth="800"
+        MinHeight="600"
         WindowStartupLocation="CenterScreen">
-    <Grid Margin="22">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto"
+                  CanContentScroll="False"
+                  PanningMode="VerticalOnly">
+        <Viewbox Stretch="Uniform"
+                 StretchDirection="Both"
+                 HorizontalAlignment="Stretch"
+                 VerticalAlignment="Top">
+            <Grid Margin="22"
+                  Width="1540"
+                  MinHeight="920">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -64,9 +74,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <ScrollViewer Grid.Column="0"
-                    VerticalScrollBarVisibility="Auto"
-                    HorizontalScrollBarVisibility="Disabled">
+            <Grid Grid.Column="0">
                 <StackPanel>
                     <Border Style="{StaticResource PanelCard}" Margin="0,0,0,16">
                         <Grid>
@@ -492,7 +500,7 @@
                         </Grid>
                     </Border>
                 </StackPanel>
-            </ScrollViewer>
+            </Grid>
 
             <Border Grid.Column="2"
               Style="{StaticResource PanelCard}"
@@ -646,5 +654,7 @@
                 </Grid>
             </Border>
         </Grid>
-    </Grid>
+            </Grid>
+        </Viewbox>
+    </ScrollViewer>
 </Window>

@@ -176,7 +176,8 @@ public:
         const PluginOutputRoute* outputRoutes,
         int outputRouteCount,
         bool enabled,
-        bool bypassed) noexcept;
+        bool bypassed,
+        bool powered) noexcept;
     void clearPluginSlot(int slot) noexcept;
     void setPluginSlotRoutes(
         int slot,
@@ -186,6 +187,8 @@ public:
         int outputRouteCount) noexcept;
     void setPluginSlotEnabled(int slot, bool shouldEnable) noexcept;
     bool isPluginSlotEnabled(int slot) const noexcept;
+    void setPluginSlotPowered(int slot, bool shouldPower) noexcept;
+    bool isPluginSlotPowered(int slot) const noexcept;
     void setProbeChannels(int inputChannel, int outputChannel) noexcept;
     void updateFormat(int sampleRate, int blockSize) noexcept;
     void process(AudioBufferView buffer, CallbackStreamKind kind) noexcept;
@@ -257,6 +260,7 @@ private:
         std::atomic<RealtimePluginProcessor*> processor { nullptr };
         std::atomic<bool> enabled { false };
         std::atomic<bool> bypassed { false };
+        std::atomic<bool> powered { true };
         std::atomic<int> kind { static_cast<int>(CallbackStreamKind::InputInsert) };
         std::array<std::atomic<int>, MaxPluginRoutes> inputSourceKinds {};
         std::array<std::atomic<int>, MaxPluginRoutes> inputSourceChannels {};
@@ -288,11 +292,14 @@ private:
     struct DynamicPluginScratchBuffers
     {
         int pluginBusLineCount = 0;
+        int bypassOutputLineCount = 0;
         int passthroughLineCount = 0;
         std::array<int, MaxPluginSlots * MaxPluginPins> pluginBusLineIndexes {};
+        std::array<int, MaxPluginSlots * MaxPluginPins> bypassOutputLineIndexes {};
         std::array<int, DelayStreamCount> passthroughRouteCapacities {};
         std::array<int, DelayStreamCount> passthroughRouteStartLines {};
         std::vector<float> pluginBusBuffer;
+        std::vector<float> pluginBypassOutputBuffer;
         std::vector<float> pluginPassthroughScratchBuffer;
     };
 

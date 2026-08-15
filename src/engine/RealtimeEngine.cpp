@@ -715,6 +715,7 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
     }
 
     next->pluginBusLineIndexes.fill(-1);
+    next->bypassOutputLineIndexes.fill(-1);
     next->passthroughRouteCapacities.fill(0);
     next->passthroughRouteStartLines.fill(-1);
 
@@ -765,6 +766,38 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
         }
     }
 
+    const auto markBypassOutputLine = [&](int slot, int pin) noexcept {
+        if (slot < 0 || slot >= MaxPluginSlots || pin < 0 || pin >= MaxPluginPins)
+            return;
+
+        const auto index = pluginBusFlatIndex(slot, pin);
+        if (index >= next->bypassOutputLineIndexes.size() ||
+            next->bypassOutputLineIndexes[index] >= 0)
+        {
+            return;
+        }
+
+        next->bypassOutputLineIndexes[index] = next->bypassOutputLineCount++;
+    };
+
+    for (int slot = 0; slot < MaxPluginSlots; ++slot)
+    {
+        const auto& pluginSlot = pluginSlots[static_cast<size_t>(slot)];
+        if (!pluginSlot.enabled.load(std::memory_order_acquire) ||
+            !pluginSlot.bypassed.load(std::memory_order_acquire) ||
+            !pluginSlot.powered.load(std::memory_order_acquire))
+        {
+            continue;
+        }
+
+        const int outputRouteCount = std::clamp(pluginSlot.outputRouteCount.load(std::memory_order_acquire), 0, MaxPluginRoutes);
+        for (int route = 0; route < outputRouteCount; ++route)
+        {
+            const int pin = pluginSlot.outputPluginPins[static_cast<size_t>(route)].load(std::memory_order_acquire);
+            markBypassOutputLine(slot, pin);
+        }
+    }
+
     const auto passthroughRouteCapacity = [](const DirectRouteBank& bank) noexcept {
         return std::clamp(bank.routeCount.load(std::memory_order_acquire), 0, MaxDirectRoutes);
     };
@@ -787,8 +820,10 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
     const auto current = dynamicPluginScratchBuffers.load(std::memory_order_acquire);
     if (current != nullptr &&
         current->pluginBusLineCount == next->pluginBusLineCount &&
+        current->bypassOutputLineCount == next->bypassOutputLineCount &&
         current->passthroughLineCount == next->passthroughLineCount &&
         current->pluginBusLineIndexes == next->pluginBusLineIndexes &&
+        current->bypassOutputLineIndexes == next->bypassOutputLineIndexes &&
         current->passthroughRouteCapacities == next->passthroughRouteCapacities &&
         current->passthroughRouteStartLines == next->passthroughRouteStartLines)
     {
@@ -801,6 +836,14 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
         {
             next->pluginBusBuffer.assign(
                 static_cast<size_t>(next->pluginBusLineCount) *
+                    static_cast<size_t>(MaxPluginScratchSamples),
+                0.0f);
+        }
+
+        if (next->bypassOutputLineCount > 0)
+        {
+            next->pluginBypassOutputBuffer.assign(
+                static_cast<size_t>(next->bypassOutputLineCount) *
                     static_cast<size_t>(MaxPluginScratchSamples),
                 0.0f);
         }
@@ -986,7 +1029,8 @@ void RealtimeEngine::setPluginSlot(
     const PluginOutputRoute* outputRoutes,
     int outputRouteCount,
     bool enabled,
-    bool bypassed) noexcept
+    bool bypassed,
+    bool powered) noexcept
 {
     if (slot < 0 || slot >= MaxPluginSlots)
         return;
@@ -996,6 +1040,7 @@ void RealtimeEngine::setPluginSlot(
     target.kind.store(static_cast<int>(kind), std::memory_order_release);
     target.processor.store(processor, std::memory_order_release);
     target.bypassed.store(bypassed, std::memory_order_release);
+    target.powered.store(powered, std::memory_order_release);
     setPluginSlotRoutes(slot, inputRoutes, inputRouteCount, outputRoutes, outputRouteCount);
     target.enabled.store(processor != nullptr && enabled, std::memory_order_release);
     refreshDynamicPluginScratchBuffers();
@@ -1011,6 +1056,7 @@ void RealtimeEngine::clearPluginSlot(int slot) noexcept
     target.enabled.store(false, std::memory_order_release);
     target.processor.store(nullptr, std::memory_order_release);
     target.bypassed.store(false, std::memory_order_release);
+    target.powered.store(false, std::memory_order_release);
     target.inputRouteCount.store(0, std::memory_order_release);
     target.outputRouteCount.store(0, std::memory_order_release);
     refreshDynamicPluginScratchBuffers();
@@ -1107,6 +1153,27 @@ bool RealtimeEngine::isPluginSlotEnabled(int slot) const noexcept
         return false;
 
     return pluginSlots[static_cast<size_t>(slot)].enabled.load(std::memory_order_acquire);
+}
+
+void RealtimeEngine::setPluginSlotPowered(int slot, bool shouldPower) noexcept
+{
+    if (slot < 0 || slot >= MaxPluginSlots)
+        return;
+
+    auto& target = pluginSlots[static_cast<size_t>(slot)];
+    if (target.powered.load(std::memory_order_acquire) == shouldPower)
+        return;
+
+    target.powered.store(shouldPower, std::memory_order_release);
+    refreshDynamicPluginScratchBuffers();
+}
+
+bool RealtimeEngine::isPluginSlotPowered(int slot) const noexcept
+{
+    if (slot < 0 || slot >= MaxPluginSlots)
+        return false;
+
+    return pluginSlots[static_cast<size_t>(slot)].powered.load(std::memory_order_acquire);
 }
 
 void RealtimeEngine::setProbeChannels(int inputChannel, int outputChannel) noexcept
@@ -2219,6 +2286,29 @@ void RealtimeEngine::applyPlugins(
         return scratchBuffers->pluginBusBuffer.data() + offset;
     };
 
+    const auto bypassOutputPointer = [&scratchBuffers](int slot, int pin) noexcept -> float* {
+        if (slot < 0 || slot >= MaxPluginSlots || pin < 0 || pin >= MaxPluginPins)
+            return nullptr;
+
+        if (scratchBuffers == nullptr ||
+            scratchBuffers->pluginBypassOutputBuffer.empty())
+            return nullptr;
+
+        const auto index = pluginBusFlatIndex(slot, pin);
+        if (index >= scratchBuffers->bypassOutputLineIndexes.size())
+            return nullptr;
+
+        const int lineIndex = scratchBuffers->bypassOutputLineIndexes[index];
+        if (lineIndex < 0 || lineIndex >= scratchBuffers->bypassOutputLineCount)
+            return nullptr;
+
+        const auto offset = lineBufferOffset(lineIndex, MaxPluginScratchSamples);
+        if (offset + static_cast<size_t>(MaxPluginScratchSamples) > scratchBuffers->pluginBypassOutputBuffer.size())
+            return nullptr;
+
+        return scratchBuffers->pluginBypassOutputBuffer.data() + offset;
+    };
+
     std::array<int, MaxPluginSlots> visitState {};
     const auto processSlot = [&](auto&& self, int slot) noexcept -> void {
         if (slot < 0 || slot >= MaxPluginSlots)
@@ -2367,12 +2457,58 @@ void RealtimeEngine::applyPlugins(
         if (validInputRoutes > 0)
         {
             const bool bypassed = pluginSlot.bypassed.load(std::memory_order_relaxed);
+            const bool powered = pluginSlot.powered.load(std::memory_order_relaxed);
             bool rendered = false;
+
+            if (powered && bypassed)
+            {
+                std::array<PluginAudioOutputRoute, MaxPluginRoutes> monitorOutputRoutes {};
+                int validMonitorOutputRoutes = 0;
+                for (int outputIndex = 0; outputIndex < validOutputRoutes; ++outputIndex)
+                {
+                    const auto& outputRoute = outputRoutes[static_cast<size_t>(outputIndex)];
+                    auto* monitorDestination = bypassOutputPointer(slot, outputRoute.pluginPin);
+                    if (monitorDestination == nullptr)
+                        continue;
+
+                    monitorOutputRoutes[static_cast<size_t>(validMonitorOutputRoutes++)] = PluginAudioOutputRoute {
+                        monitorDestination,
+                        outputRoute.pluginPin,
+                        -1,
+                        -1,
+                        -1
+                    };
+                }
+
+                if (validMonitorOutputRoutes > 0)
+                {
+                    processor->process(
+                        buffer,
+                        PluginRoutingView {
+                            inputRoutes.data(),
+                            validInputRoutes,
+                            monitorOutputRoutes.data(),
+                            validMonitorOutputRoutes
+                        });
+                }
+            }
+            else if (powered)
+            {
+                rendered = processor->process(
+                    buffer,
+                    PluginRoutingView {
+                        inputRoutes.data(),
+                        validInputRoutes,
+                        outputRoutes.data(),
+                        validOutputRoutes
+                    });
+            }
 
             if (bypassed)
             {
                 std::array<float*, MaxPluginRoutes> clearedDestinations {};
                 int clearedCount = 0;
+                rendered = false;
 
                 for (int outputIndex = 0; outputIndex < validOutputRoutes; ++outputIndex)
                 {
@@ -2392,10 +2528,7 @@ void RealtimeEngine::applyPlugins(
                         }
                     }
 
-                    if (passthroughInput == nullptr)
-                        continue;
-
-                    if (passthroughInput->source == destination)
+                    if (passthroughInput != nullptr && passthroughInput->source == destination)
                     {
                         rendered = true;
                         continue;
@@ -2414,22 +2547,14 @@ void RealtimeEngine::applyPlugins(
                             clearedDestinations[static_cast<size_t>(clearedCount++)] = destination;
                     }
 
-                    for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
-                        destination[sample] += passthroughInput->source[sample];
+                    if (passthroughInput != nullptr)
+                    {
+                        for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+                            destination[sample] += passthroughInput->source[sample];
+                    }
 
                     rendered = true;
                 }
-            }
-            else
-            {
-                rendered = processor->process(
-                    buffer,
-                    PluginRoutingView {
-                        inputRoutes.data(),
-                        validInputRoutes,
-                        outputRoutes.data(),
-                        validOutputRoutes
-                    });
             }
 
             if (rendered)

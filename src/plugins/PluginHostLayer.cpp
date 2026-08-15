@@ -12,9 +12,11 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <windows.h>
 
@@ -440,6 +442,489 @@ bool applyPluginParameterStateBase64(juce::AudioPluginInstance& plugin, const st
         parameterError = "The plugin parameter snapshot could not be restored on the JUCE message thread.";
 
     return restored;
+}
+
+std::string singleLineParameterText(juce::String value)
+{
+    value = value.replaceCharacters("\r\n\t", "   ").trim();
+    return value.toStdString();
+}
+
+std::string normalizedParameterName(const std::string& value)
+{
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const unsigned char ch : value)
+    {
+        if (std::isalnum(ch) != 0)
+            normalized.push_back(static_cast<char>(std::tolower(ch)));
+    }
+
+    return normalized;
+}
+
+std::vector<std::string> pluginControlAliases(const std::string& controlName)
+{
+    const auto control = normalizedParameterName(controlName);
+    if (control == "inputgain" || control == "ingain")
+        return { "inputgain", "ingain", "inputlevel", "inlevel", "gaininput", "inputtrim", "triminput" };
+    if (control == "outputgain" || control == "outgain")
+        return { "outputgain", "outgain", "outputlevel", "outlevel", "gainoutput", "outputtrim", "trimoutput", "masteroutput" };
+    if (control == "maingain" || control == "plugingain" || control == "gain")
+        return { "maingain", "plugingain", "globalgain", "gain" };
+    if (control == "gainscale" || control == "scale")
+        return { "gainscale", "outputgainscale", "overallgainscale" };
+    if (control == "drygain")
+        return { "drygain", "drylevel" };
+    if (control == "wetgain")
+        return { "wetgain", "wetlevel" };
+    if (control == "mix" || control == "drywet")
+        return { "mix", "drywet", "wetdry", "wetmix" };
+    if (control == "width" || control == "stereowidth" || control == "outputwidth")
+        return { "width", "stereowidth", "outputwidth", "masterwidth" };
+    if (control == "inputpan" || control == "inpan")
+        return { "inputpan", "inpan", "inputpanning", "inputbalance", "balanceinput" };
+    if (control == "outputpan" || control == "outpan")
+        return { "outputpan", "outpan", "outputpanning", "outputbalance", "balanceoutput", "masterpan" };
+    if (control == "drypan")
+        return { "drypan" };
+    if (control == "wetpan")
+        return { "wetpan" };
+    if (control == "ab" || control == "compare")
+        return { "ab", "compare", "abstate", "comparestate" };
+
+    return { control };
+}
+
+int pluginControlParameterMatchScore(
+    const std::string& normalizedName,
+    const std::vector<std::string>& aliases) noexcept
+{
+    int score = 0;
+    for (const auto& alias : aliases)
+    {
+        if (normalizedName == alias)
+            score = std::max(score, 100);
+        else if (alias.size() >= 5 && (normalizedName.starts_with(alias) || normalizedName.ends_with(alias)))
+            score = std::max(score, 80);
+        else if (alias.size() >= 5 && normalizedName.find(alias) != std::string::npos)
+            score = std::max(score, 60);
+    }
+
+    return score;
+}
+
+std::optional<int> pluginParameterIndexFromControlName(const std::string& controlName)
+{
+    constexpr std::string_view prefix = "parameter";
+    const auto normalized = normalizedParameterName(controlName);
+    if (!normalized.starts_with(prefix) || normalized.size() == prefix.size())
+        return std::nullopt;
+
+    const auto suffix = normalized.substr(prefix.size());
+    if (!std::all_of(suffix.begin(), suffix.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; }))
+        return std::nullopt;
+
+    const auto parsed = std::strtol(suffix.c_str(), nullptr, 10);
+    if (parsed < 0 || parsed > std::numeric_limits<int>::max())
+        return std::nullopt;
+
+    return static_cast<int>(parsed);
+}
+
+struct PluginControlMatch
+{
+    juce::AudioProcessorParameter* parameter = nullptr;
+    int index = -1;
+    std::string displayName;
+};
+
+PluginControlMatch findPluginNamedControlParameter(
+    juce::AudioPluginInstance& plugin,
+    const std::string& controlName)
+{
+    const auto aliases = pluginControlAliases(controlName);
+    if (aliases.empty() || aliases.front().empty())
+        return {};
+
+    PluginControlMatch match;
+    int bestScore = 0;
+    const auto& parameters = plugin.getParameters();
+    for (int index = 0; index < parameters.size(); ++index)
+    {
+        auto* parameter = parameters[index];
+        if (parameter == nullptr)
+            continue;
+
+        const auto displayName = singleLineParameterText(parameter->getName(256));
+        const auto normalizedName = normalizedParameterName(displayName);
+        const auto score = pluginControlParameterMatchScore(normalizedName, aliases);
+
+        if (score > bestScore)
+        {
+            bestScore = score;
+            match.parameter = parameter;
+            match.index = index;
+            match.displayName = displayName;
+        }
+    }
+
+    return match;
+}
+
+std::optional<double> singleNumericParameterValue(const std::string& text)
+{
+    std::optional<double> value;
+    const char* cursor = text.c_str();
+    while (*cursor != '\0')
+    {
+        char* end = nullptr;
+        const auto parsed = std::strtod(cursor, &end);
+        if (end != cursor)
+        {
+            if (value.has_value())
+                return std::nullopt;
+
+            value = parsed;
+            cursor = end;
+            continue;
+        }
+
+        ++cursor;
+    }
+
+    return value;
+}
+
+bool numericParameterValuesMatch(double expected, double actual) noexcept
+{
+    const auto tolerance = std::max(0.01, std::abs(expected) * 0.001);
+    return std::abs(expected - actual) <= tolerance;
+}
+
+float pluginParameterValueFromText(
+    juce::AudioProcessorParameter& parameter,
+    const std::string& valueText)
+{
+    const auto input = juce::String::fromUTF8(valueText.c_str());
+    const auto directValue = std::clamp(parameter.getValueForText(input), 0.0f, 1.0f);
+    const auto requestedNumber = singleNumericParameterValue(valueText);
+    if (!requestedNumber.has_value())
+        return directValue;
+
+    const auto directText = singleLineParameterText(parameter.getText(directValue, 256));
+    const auto directNumber = singleNumericParameterValue(directText);
+    if (!directNumber.has_value() || numericParameterValuesMatch(*requestedNumber, *directNumber))
+        return directValue;
+
+    constexpr int initialSteps = 1024;
+    auto bestValue = directValue;
+    auto bestError = std::abs(*requestedNumber - *directNumber);
+    int bestStep = static_cast<int>(std::round(directValue * initialSteps));
+    for (int step = 0; step <= initialSteps; ++step)
+    {
+        const auto candidate = static_cast<float>(step) / static_cast<float>(initialSteps);
+        const auto candidateNumber = singleNumericParameterValue(
+            singleLineParameterText(parameter.getText(candidate, 256)));
+        if (!candidateNumber.has_value())
+            continue;
+
+        const auto error = std::abs(*requestedNumber - *candidateNumber);
+        if (error < bestError)
+        {
+            bestError = error;
+            bestValue = candidate;
+            bestStep = step;
+        }
+    }
+
+    auto lower = static_cast<float>(std::max(0, bestStep - 1)) / static_cast<float>(initialSteps);
+    auto upper = static_cast<float>(std::min(initialSteps, bestStep + 1)) / static_cast<float>(initialSteps);
+    constexpr int refinementSteps = 32;
+    for (int pass = 0; pass < 4 && upper > lower; ++pass)
+    {
+        auto passBestValue = bestValue;
+        for (int step = 0; step <= refinementSteps; ++step)
+        {
+            const auto candidate = lower + (upper - lower)
+                * static_cast<float>(step) / static_cast<float>(refinementSteps);
+            const auto candidateNumber = singleNumericParameterValue(
+                singleLineParameterText(parameter.getText(candidate, 256)));
+            if (!candidateNumber.has_value())
+                continue;
+
+            const auto error = std::abs(*requestedNumber - *candidateNumber);
+            if (error < bestError)
+            {
+                bestError = error;
+                bestValue = candidate;
+                passBestValue = candidate;
+            }
+        }
+
+        const auto halfStep = (upper - lower) / static_cast<float>(refinementSteps);
+        lower = std::max(0.0f, passBestValue - halfStep);
+        upper = std::min(1.0f, passBestValue + halfStep);
+    }
+
+    return bestValue;
+}
+
+std::string capturePluginParameterInfo(juce::AudioPluginInstance& plugin, std::string& parameterError)
+{
+    parameterError.clear();
+    std::string result;
+    const auto captured = runOnJuceMessageThread([&]() -> bool
+    {
+        try
+        {
+            static constexpr std::array<const char*, 13> supportedControls {
+                "InputGain",
+                "OutputGain",
+                "MainGain",
+                "GainScale",
+                "DryGain",
+                "WetGain",
+                "Mix",
+                "Width",
+                "InputPan",
+                "OutputPan",
+                "DryPan",
+                "WetPan",
+                "AB"
+            };
+
+            std::ostringstream info;
+            info << "Control\tParameterIndex\tParameterName\tCurrentValue\tUnit\n";
+            for (const auto* controlName : supportedControls)
+            {
+                const auto match = findPluginNamedControlParameter(plugin, controlName);
+                if (match.parameter == nullptr)
+                    continue;
+
+                const float value = std::clamp(match.parameter->getValue(), 0.0f, 1.0f);
+                info << controlName << '\t'
+                     << match.index << '\t'
+                     << match.displayName << '\t'
+                     << singleLineParameterText(match.parameter->getText(value, 256)) << '\t'
+                     << singleLineParameterText(match.parameter->getLabel()) << '\n';
+            }
+
+            const auto& parameters = plugin.getParameters();
+            for (int index = 0; index < parameters.size(); ++index)
+            {
+                auto* parameter = parameters[index];
+                if (parameter == nullptr)
+                    continue;
+
+                const auto value = std::clamp(parameter->getValue(), 0.0f, 1.0f);
+                info << "Parameter" << '\t'
+                     << index << '\t'
+                     << singleLineParameterText(parameter->getName(256)) << '\t'
+                     << singleLineParameterText(parameter->getText(value, 256)) << '\t'
+                     << singleLineParameterText(parameter->getLabel()) << '\n';            }
+
+            result = info.str();
+            return true;
+        }
+        catch (const std::exception& ex)
+        {
+            parameterError = ex.what();
+        }
+        catch (...)
+        {
+            parameterError = "The plugin parameter list could not be read.";
+        }
+
+        return false;
+    });
+
+    if (!captured && parameterError.empty())
+        parameterError = "The plugin parameter list could not be read on the JUCE message thread.";
+
+    return captured ? result : std::string {};
+}
+
+bool setPluginNamedControl(
+    juce::AudioPluginInstance& plugin,
+    const std::string& controlName,
+    const std::string& valueText,
+    std::string& result,
+    std::string& parameterError)
+{
+    result.clear();
+    parameterError.clear();
+    enum class AssignmentOperation
+    {
+        Set,
+        Add,
+        Subtract
+    };
+
+    auto operation = AssignmentOperation::Set;
+    auto assignedValueText = valueText;
+    if (assignedValueText.starts_with("+="))
+    {
+        operation = AssignmentOperation::Add;
+        assignedValueText.erase(0, 2);
+    }
+    else if (assignedValueText.starts_with("-="))
+    {
+        operation = AssignmentOperation::Subtract;
+        assignedValueText.erase(0, 2);
+    }
+
+    const auto parameterIndex = pluginParameterIndexFromControlName(controlName);
+    const auto aliases = pluginControlAliases(controlName);
+    if (!parameterIndex.has_value() && (aliases.empty() || aliases.front().empty()))
+    {
+        parameterError = "The plugin control name is empty.";
+        return false;
+    }
+
+    const auto applied = runOnJuceMessageThread([&]() -> bool
+    {
+        try
+        {
+            PluginControlMatch match;
+            if (parameterIndex.has_value())
+            {
+                const auto& parameters = plugin.getParameters();
+                if (*parameterIndex < 0 || *parameterIndex >= parameters.size() || parameters[*parameterIndex] == nullptr)
+                {
+                    parameterError = "VST parameter index " + std::to_string(*parameterIndex)
+                        + " is outside this plugin's parameter range.";
+                    return false;
+                }
+
+                match.parameter = parameters[*parameterIndex];
+                match.index = *parameterIndex;
+                match.displayName = singleLineParameterText(match.parameter->getName(256));
+            }
+            else
+            {
+                match = findPluginNamedControlParameter(plugin, controlName);
+            }
+
+            auto* bestParameter = match.parameter;
+            const auto& bestName = match.displayName;
+            if (bestParameter == nullptr)
+            {
+                parameterError = "This VST does not expose a matching " + controlName + " parameter.";
+                return false;
+            }
+
+            const auto normalizedControl = normalizedParameterName(controlName);
+            const auto normalizedValue = normalizedParameterName(assignedValueText);
+            const auto valueForParameter = [&](juce::AudioProcessorParameter& parameter)
+            {
+                if (operation == AssignmentOperation::Set)
+                    return pluginParameterValueFromText(parameter, assignedValueText);
+
+                const auto delta = singleNumericParameterValue(assignedValueText);
+                const auto currentText = singleLineParameterText(
+                    parameter.getText(std::clamp(parameter.getValue(), 0.0f, 1.0f), 256));
+                const auto current = singleNumericParameterValue(currentText);
+                if (!delta.has_value())
+                    throw std::runtime_error("Relative VST values must contain exactly one number.");
+                if (!current.has_value())
+                    throw std::runtime_error("This VST parameter does not expose a numeric current value for relative adjustment.");
+
+                const auto target = operation == AssignmentOperation::Add
+                    ? *current + *delta
+                    : *current - *delta;
+                return pluginParameterValueFromText(parameter, juce::String(target, 10).toStdString());
+            };
+
+            float value = 0.0f;
+            if (normalizedControl == "ab" || normalizedControl == "compare")
+            {
+                if (operation != AssignmentOperation::Set)
+                {
+                    parameterError = "A/B only supports '='.";
+                    return false;
+                }
+
+                if (normalizedValue == "b" || normalizedValue == "1" || normalizedValue == "true" || normalizedValue == "on")
+                    value = 1.0f;
+                else if (normalizedValue == "a" || normalizedValue == "0" || normalizedValue == "false" || normalizedValue == "off")
+                    value = 0.0f;
+                else
+                {
+                    parameterError = "A/B must be A, B, 0, or 1.";
+                    return false;
+                }
+            }
+            else
+            {
+                value = valueForParameter(*bestParameter);
+            }
+
+            const auto applyValue = [](juce::AudioProcessorParameter& parameter, float normalizedValue)
+            {
+                normalizedValue = std::clamp(normalizedValue, 0.0f, 1.0f);
+                parameter.beginChangeGesture();
+                parameter.setValueNotifyingHost(normalizedValue);
+                parameter.endChangeGesture();
+                return normalizedValue;
+            };
+
+            value = applyValue(*bestParameter, value);
+            int synchronizedParameters = 0;
+            const auto bestNormalizedName = normalizedParameterName(bestName);
+            const auto isFriendlyStereoGain =
+                !parameterIndex.has_value()
+                && (normalizedControl == "inputgain"
+                    || normalizedControl == "ingain"
+                    || normalizedControl == "outputgain"
+                    || normalizedControl == "outgain")
+                && bestNormalizedName.ends_with("locked")
+                && !bestNormalizedName.ends_with("unlocked");
+            if (isFriendlyStereoGain)
+            {
+                const auto& parameters = plugin.getParameters();
+                for (auto* parameter : parameters)
+                {
+                    if (parameter == nullptr || parameter == bestParameter)
+                        continue;
+
+                    const auto siblingName = normalizedParameterName(
+                        singleLineParameterText(parameter->getName(256)));
+                    if (!siblingName.ends_with("unlocked")
+                        || pluginControlParameterMatchScore(siblingName, aliases) <= 0)
+                    {
+                        continue;
+                    }
+
+                    applyValue(*parameter, valueForParameter(*parameter));
+                    ++synchronizedParameters;
+                }
+            }
+
+            result = bestName + " = " + singleLineParameterText(bestParameter->getText(value, 256));
+            const auto label = singleLineParameterText(bestParameter->getLabel());
+            if (!label.empty())
+                result += " " + label;
+            if (synchronizedParameters > 0)
+                result += " (" + std::to_string(synchronizedParameters) + " linked channel parameters synchronized)";
+            return true;
+        }
+        catch (const std::exception& ex)
+        {
+            parameterError = ex.what();
+        }
+        catch (...)
+        {
+            parameterError = "The plugin parameter could not be changed.";
+        }
+
+        return false;
+    });
+
+    if (!applied && parameterError.empty())
+        parameterError = "The plugin parameter could not be changed on the JUCE message thread.";
+
+    return applied;
 }
 
 bool pluginFileExists(const juce::PluginDescription& description)
@@ -1725,6 +2210,8 @@ constexpr LONG SandboxCommandGetPreset = 5;
 constexpr LONG SandboxCommandSetPreset = 6;
 constexpr LONG SandboxCommandGetParameters = 7;
 constexpr LONG SandboxCommandSetParameters = 8;
+constexpr LONG SandboxCommandGetParameterInfo = 9;
+constexpr LONG SandboxCommandSetControl = 10;
 volatile LONG sandboxGlobalSequence = 0;
 
 struct SandboxAudioHeader
@@ -1951,10 +2438,10 @@ public:
 
     bool isReady() const noexcept { return ready; }
 
-    bool openEditor(std::string& error) noexcept
+    bool openEditor(const std::string& windowTitle, std::string& error) noexcept
     {
         error.clear();
-        if (!ready || header == nullptr || controlEvent == nullptr || responseEvent == nullptr)
+        if (!ready || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
         {
             error = "Sandboxed plugin worker is not ready.";
             return false;
@@ -1973,6 +2460,10 @@ public:
             return false;
         }
 
+        const auto titleBytes = std::min(windowTitle.size(), static_cast<size_t>(stateDataBytes - 1));
+        std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
+        std::memcpy(stateData, windowTitle.data(), titleBytes);
+        InterlockedExchange(&header->textByteCount, static_cast<LONG>(titleBytes));
         InterlockedExchange(&header->command, SandboxCommandOpenEditor);
         const LONG request = InterlockedIncrement(&requestCounter);
         InterlockedExchange(&header->requestId, request);
@@ -2029,6 +2520,23 @@ public:
     bool setParameterStateBase64(const std::string& parameterStateBase64, std::string& error)
     {
         return applyTextBase64Command(SandboxCommandSetParameters, parameterStateBase64, error, "parameter snapshot");
+    }
+
+    std::string parameterInfo(std::string& error)
+    {
+        std::string value;
+        captureTextBase64Command(SandboxCommandGetParameterInfo, value, error, "parameter information");
+        return value;
+    }
+
+    bool setNamedControl(const std::string& controlName, const std::string& valueText, std::string& result, std::string& error)
+    {
+        result.clear();
+        const auto payload = controlName + "\n" + valueText;
+        const auto applied = applyTextBase64Command(SandboxCommandSetControl, payload, error, "named control");
+        if (applied)
+            result = controlName + " = " + valueText;
+        return applied;
     }
 
 private:
@@ -2605,7 +3113,7 @@ bool processWorkerPluginProcessor(int handle, float* planarData, int channelCoun
 #endif
 }
 
-bool openWorkerPluginEditor(int handle, std::string& error)
+bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::string& error)
 {
     error.clear();
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
@@ -2633,7 +3141,9 @@ bool openWorkerPluginEditor(int handle, std::string& error)
             {
                 session->editorWindow = std::make_unique<PluginEditorWindow>(
                     *plugin,
-                    juce::String(plugin->getName()).isNotEmpty() ? plugin->getName() : "Sandboxed VST");
+                    windowTitle.empty()
+                        ? (juce::String(plugin->getName()).isNotEmpty() ? plugin->getName() : "Sandboxed VST")
+                        : juce::String::fromUTF8(windowTitle.c_str()));
             }
             else
             {
@@ -2785,6 +3295,42 @@ bool setWorkerPluginParameterStateBase64(int handle, const std::string& paramete
 #else
     (void) handle;
     (void) parameterStateBase64;
+    error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
+    return false;
+#endif
+}
+
+std::string workerPluginParameterInfo(int handle, std::string& error)
+{
+    error.clear();
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    std::lock_guard lock(workerSessionsMutex);
+    auto* plugin = workerPluginInstanceLocked(handle, error);
+    return plugin == nullptr ? std::string {} : capturePluginParameterInfo(*plugin, error);
+#else
+    (void) handle;
+    error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
+    return {};
+#endif
+}
+
+bool setWorkerPluginNamedControl(
+    int handle,
+    const std::string& controlName,
+    const std::string& valueText,
+    std::string& result,
+    std::string& error)
+{
+    result.clear();
+    error.clear();
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    std::lock_guard lock(workerSessionsMutex);
+    auto* plugin = workerPluginInstanceLocked(handle, error);
+    return plugin != nullptr && setPluginNamedControl(*plugin, controlName, valueText, result, error);
+#else
+    (void) handle;
+    (void) controlName;
+    (void) valueText;
     error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
     return false;
 #endif
@@ -3904,7 +4450,7 @@ void PluginHostLayer::clearPluginNodes() noexcept
 #endif
 }
 
-bool PluginHostLayer::openPluginEditor(int slot)
+bool PluginHostLayer::openPluginEditor(int slot, const std::string& windowTitle)
 {
     error.clear();
 
@@ -3921,7 +4467,7 @@ bool PluginHostLayer::openPluginEditor(int slot)
     {
         if (auto* sandboxed = dynamic_cast<SandboxedPluginProcessor*>(impl->nodeProcessors[index].get()))
         {
-            if (sandboxed->openEditor(error))
+            if (sandboxed->openEditor(windowTitle, error))
                 return true;
 
             if (error.empty())
@@ -3941,7 +4487,9 @@ bool PluginHostLayer::openPluginEditor(int slot)
             {
                 impl->nodeEditors[index] = std::make_unique<PluginEditorWindow>(
                     *processor->pluginInstance(),
-                    juce::String::fromUTF8(impl->nodeSummaries[index].name.c_str()));
+                    windowTitle.empty()
+                        ? juce::String::fromUTF8(impl->nodeSummaries[index].name.c_str())
+                        : juce::String::fromUTF8(windowTitle.c_str()));
             }
             else
             {
@@ -4229,6 +4777,71 @@ bool PluginHostLayer::setPluginNodeParameterStateBase64(int slot, const std::str
 #endif
 }
 
+std::string PluginHostLayer::pluginNodeParameterInfo(int slot)
+{
+    error.clear();
+
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes)
+    {
+        error = "No VST node is selected.";
+        return {};
+    }
+
+    auto* realtime = impl->nodeProcessors[static_cast<size_t>(slot)].get();
+    if (auto* sandboxed = dynamic_cast<SandboxedPluginProcessor*>(realtime))
+        return sandboxed->parameterInfo(error);
+
+    auto* processor = dynamic_cast<HostedVst3Processor*>(realtime);
+    if (processor == nullptr || processor->pluginInstance() == nullptr)
+    {
+        error = "No VST node is selected.";
+        return {};
+    }
+
+    return capturePluginParameterInfo(*processor->pluginInstance(), error);
+#else
+    error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
+    return {};
+#endif
+}
+
+bool PluginHostLayer::setPluginNodeNamedControl(
+    int slot,
+    const std::string& controlName,
+    const std::string& valueText,
+    std::string& result)
+{
+    error.clear();
+    result.clear();
+
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes)
+    {
+        error = "No VST node is selected.";
+        return false;
+    }
+
+    auto* realtime = impl->nodeProcessors[static_cast<size_t>(slot)].get();
+    if (auto* sandboxed = dynamic_cast<SandboxedPluginProcessor*>(realtime))
+        return sandboxed->setNamedControl(controlName, valueText, result, error);
+
+    auto* processor = dynamic_cast<HostedVst3Processor*>(realtime);
+    if (processor == nullptr || processor->pluginInstance() == nullptr)
+    {
+        error = "No VST node is selected.";
+        return false;
+    }
+
+    return setPluginNamedControl(*processor->pluginInstance(), controlName, valueText, result, error);
+#else
+    (void) controlName;
+    (void) valueText;
+    error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
+    return false;
+#endif
+}
+
 bool PluginHostLayer::togglePluginNodeInputRoute(int slot, int sourceChannel, int pluginPin) noexcept
 {
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
@@ -4486,6 +5099,28 @@ bool PluginHostLayer::isPluginNodeBypassed(int slot) const noexcept
         return false;
 
     return impl->nodeSummaries[static_cast<size_t>(slot)].bypassed;
+#else
+    return false;
+#endif
+}
+
+void PluginHostLayer::setPluginNodePowered(int slot, bool powered) noexcept
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes)
+        return;
+
+    impl->nodeSummaries[static_cast<size_t>(slot)].powered = powered;
+#endif
+}
+
+bool PluginHostLayer::isPluginNodePowered(int slot) const noexcept
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes)
+        return false;
+
+    return impl->nodeSummaries[static_cast<size_t>(slot)].powered;
 #else
     return false;
 #endif

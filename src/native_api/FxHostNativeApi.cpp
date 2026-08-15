@@ -1507,7 +1507,8 @@ void syncPluginNodeLocked(NativeHost& target, int slot)
         outputRoutes.data(),
         outputRouteCount,
         true,
-        nodeIt->bypassed);
+        nodeIt->bypassed,
+        nodeIt->powered);
 }
 
 void syncAllPluginNodesLocked(NativeHost& target)
@@ -2572,11 +2573,12 @@ __declspec(dllexport) int __cdecl ElkaFx_WorkerProcessPlugin(
 
 __declspec(dllexport) int __cdecl ElkaFx_WorkerOpenPluginEditor(
     int handle,
+    const wchar_t* windowTitle,
     wchar_t* status,
     int statusChars)
 {
     std::string error;
-    if (openWorkerPluginEditor(handle, error))
+    if (openWorkerPluginEditor(handle, narrowWide(windowTitle), error))
     {
         writeWide(L"Worker plugin editor opened.", status, statusChars);
         return 0;
@@ -2691,6 +2693,43 @@ __declspec(dllexport) int __cdecl ElkaFx_WorkerSetPluginParameterState(
     }
 
     writeWide(L"Worker plugin parameter restore failed: " + widenUtf8(error), status, statusChars);
+    return -1;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_WorkerGetPluginParameterInfo(
+    int handle,
+    char* utf8Buffer,
+    int bufferBytes,
+    wchar_t* status,
+    int statusChars)
+{
+    std::string error;
+    const auto value = workerPluginParameterInfo(handle, error);
+    if (!error.empty())
+    {
+        writeWide(L"Worker plugin parameter information failed: " + widenUtf8(error), status, statusChars);
+        return -1;
+    }
+
+    return writeUtf8WorkerText(value, utf8Buffer, bufferBytes, status, statusChars, L"Worker plugin parameter information");
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_WorkerSetPluginControl(
+    int handle,
+    const wchar_t* controlName,
+    const wchar_t* valueText,
+    wchar_t* status,
+    int statusChars)
+{
+    std::string result;
+    std::string error;
+    if (setWorkerPluginNamedControl(handle, narrowWide(controlName), narrowWide(valueText), result, error))
+    {
+        writeWide(L"Worker plugin control applied: " + widenUtf8(result), status, statusChars);
+        return 0;
+    }
+
+    writeWide(L"Worker plugin control failed: " + widenUtf8(error), status, statusChars);
     return -1;
 }
 
@@ -3064,6 +3103,15 @@ __declspec(dllexport) int __cdecl ElkaFx_SetPluginNodeBypassed(int slot, int byp
     return 0;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_SetPluginNodePowered(int slot, int powered)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    target.plugins.setPluginNodePowered(slot, powered != 0);
+    syncPluginNodeLocked(target, slot);
+    return 0;
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_TogglePluginNodeInputRoute(int slot, int sourceChannel, int pluginPin)
 {
     std::lock_guard lock(g_mutex);
@@ -3099,11 +3147,11 @@ __declspec(dllexport) int __cdecl ElkaFx_TogglePluginNodeModuleRoute(
     return active ? 1 : 0;
 }
 
-__declspec(dllexport) int __cdecl ElkaFx_OpenPluginEditor(int slot, wchar_t* status, int statusChars)
+__declspec(dllexport) int __cdecl ElkaFx_OpenPluginEditor(int slot, const wchar_t* windowTitle, wchar_t* status, int statusChars)
 {
     std::lock_guard lock(g_mutex);
     auto& target = host();
-    if (!target.plugins.openPluginEditor(slot))
+    if (!target.plugins.openPluginEditor(slot, narrowWide(windowTitle)))
     {
         writeWide(L"Plugin editor failed: " + widenUtf8(target.plugins.lastError()), status, statusChars);
         return -1;
@@ -3247,6 +3295,66 @@ __declspec(dllexport) int __cdecl ElkaFx_SetPluginNodeParameterState(int slot, c
     }
     catch (...)
     {
+        return -1;
+    }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeParameterInfoLength(int slot)
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        auto& target = host();
+        const auto info = target.plugins.pluginNodeParameterInfo(slot);
+        return info.empty() ? 1 : static_cast<int>(info.size()) + 1;
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeParameterInfo(int slot, wchar_t* buffer, int bufferChars)
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        auto& target = host();
+        const auto info = target.plugins.pluginNodeParameterInfo(slot);
+        writeWide(widenUtf8(info), buffer, bufferChars);
+        return info.empty() && !target.plugins.lastError().empty() ? -1 : 0;
+    }
+    catch (...)
+    {
+        writeWide(L"", buffer, bufferChars);
+        return -1;
+    }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_SetPluginNodeControl(
+    int slot,
+    const wchar_t* controlName,
+    const wchar_t* valueText,
+    wchar_t* status,
+    int statusChars)
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        auto& target = host();
+        std::string result;
+        if (target.plugins.setPluginNodeNamedControl(slot, narrowWide(controlName), narrowWide(valueText), result))
+        {
+            writeWide(widenUtf8(result), status, statusChars);
+            return 0;
+        }
+
+        writeWide(widenUtf8(target.plugins.lastError()), status, statusChars);
+        return -1;
+    }
+    catch (...)
+    {
+        writeWide(L"The VST control could not be applied.", status, statusChars);
         return -1;
     }
 }

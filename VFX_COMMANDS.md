@@ -45,6 +45,60 @@ Strip(6) = AUX
 Strip(7) = VAIO3
 ```
 
+## VST State Commands
+
+VST(ID) targets the stable ID shown at the top of the node's right-click menu and in the editor title.
+
+Power the VST on or off:
+
+    SendText("vban1", VFX.VST(0).Enable=1;);
+    SendText("vban1", VFX.VST(0).Enable=0;);
+
+Enable=0 stops VST processing and blocks audio at that node. It does not silently turn bypass on.
+
+Enable or disable the dry bypass path:
+
+    SendText("vban1", VFX.VST(0).Bypass=1;);
+    SendText("vban1", VFX.VST(0).Bypass=0;);
+
+Bypass=1 sends dry audio directly from matching input pins to output pins. When the VST is enabled it still receives and processes audio for editor meters, but its processed output is discarded. Enable=0 plus Bypass=1 keeps the VST powered off while dry audio passes around it.
+
+## Exposed VST Parameter Commands
+
+Right-click a loaded VST and choose **Info** to see friendly VBAN-TEXT commands followed by every host-automatable parameter exposed by that exact VST instance. The window inserts the stable VST ID, parameter index, name, current value, and unit. Friendly controls that the VST does not expose are omitted.
+
+The host provides conservative shorthand matching for common controls:
+
+    SendText("vban1", VFX.VST(0).InputGain=-6 dB;);
+    SendText("vban1", VFX.VST(0).OutputGain=-3 dB;);
+    SendText("vban1", VFX.VST(0).MainGain=0 dB;);
+    SendText("vban1", VFX.VST(0).GainScale=100%;);
+    SendText("vban1", VFX.VST(0).DryGain=-12 dB;);
+    SendText("vban1", VFX.VST(0).WetGain=0 dB;);
+    SendText("vban1", VFX.VST(0).Mix=50%;);
+    SendText("vban1", VFX.VST(0).Width=100%;);
+    SendText("vban1", VFX.VST(0).InputPan=25%;);
+    SendText("vban1", VFX.VST(0).OutputPan=-25%;);
+    SendText("vban1", VFX.VST(0).DryPan=-25%;);
+    SendText("vban1", VFX.VST(0).WetPan=25%;);
+    SendText("vban1", VFX.VST(0).AB=B;);
+
+Every exposed host parameter can also be controlled directly by its zero-based index:
+
+    SendText("vban1", VFX.VST(0).Parameter(580)=-6 dB;);
+
+Numeric friendly controls and indexed parameters support relative adjustments:
+
+    SendText("vban1", VFX.VST(0).InputGain+=1 dB;);
+    SendText("vban1", VFX.VST(0).OutputGain-=1 dB;);
+    SendText("vban1", VFX.VST(0).Parameter(580)+=0.5 dB;);
+
+`+=` adds to the parameter's current displayed value and `-=` subtracts from it every time the command is received. `=5`, `=+5`, and `=-5` are absolute assignments: repeated commands keep the parameter at positive 5 or negative 5 rather than accumulating. Relative results are clamped to the range exposed by the VST. Non-numeric parameters and A/B accept absolute `=` only.
+
+Use the index shown by **Info** for that loaded VST. Parameter indexes are defined by the plugin and can change after a plugin update, so recheck Info when upgrading a VST. Indexed commands affect only the requested parameter and return an error when the index is outside the plugin's current parameter range.
+
+These commands work only when the plugin exposes a matching host parameter. Unsupported controls return an error and do not alter another parameter. Values use the plugin's displayed format. The wrapper verifies the plugin's text-to-value result and, when necessary, resolves numeric display values itself so a broken plugin conversion cannot silently jump to the minimum value. `MainGain` also accepts the aliases `Gain` and `PluginGain`; it matches only a plugin-wide gain parameter, never a band-specific gain. `Width` also accepts `StereoWidth` and `OutputWidth`. GainScale accepts the plugin's displayed percentage format, such as `100%` or `200%`. A/B accepts A, B, 0, or 1 only when the plugin exposes A/B as a host parameter.
+
 ## Input Strip Commands
 
 Enable or disable delay/volume processing on a source channel:
@@ -207,6 +261,6 @@ on, off
 yes, no
 ```
 
-## V1 Scope
+## Current Scope
 
-The V1 text command surface controls delay, volume, direct routing, route enable, and mute-standard routing. It intentionally does not control VST plugin loading, VST editor windows, plugin parameters, plugin bypass, or VST node wiring.
+The text command surface controls delay, volume, direct routing, route enable, mute-standard routing, independent VST power/bypass, and selected exposed VST gain, gain-scale, mix, width, pan, and A/B parameters by stable VST ID. It does not control VST loading, editor windows, presets, or VST node wiring.

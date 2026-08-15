@@ -3,6 +3,7 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$Tag = "",
+    [string]$LocalRevision = "",
     [switch]$Upload
 )
 
@@ -53,7 +54,26 @@ function Get-InnoSetupCompiler {
     throw "Inno Setup compiler was not found. Install Inno Setup 6 or add ISCC.exe to PATH."
 }
 
-$version = Get-ProjectVersion
+$baseVersion = Get-ProjectVersion
+if (![string]::IsNullOrWhiteSpace($LocalRevision) -and $LocalRevision -notmatch '^\d+$') {
+    throw "LocalRevision must be a non-negative whole number."
+}
+
+$version = if ([string]::IsNullOrWhiteSpace($LocalRevision)) {
+    $baseVersion
+} else {
+    "$baseVersion.$LocalRevision"
+}
+
+if (![string]::IsNullOrWhiteSpace($LocalRevision)) {
+    if ($Upload) {
+        throw "Local revision $version is for unsigned local builds and cannot be uploaded."
+    }
+
+    $releaseExe = Join-Path $releaseDir "ElkaVoiceMeeterFxHost-v$version.exe"
+    $zipPath = Join-Path $releaseDir "ElkaVoiceMeeterFxHost-v$version-$Runtime-framework-dependent.zip"
+}
+
 $installerBaseName = "ElkaVoiceMeeterFxHostSetup-v$version"
 $installerPath = Join-Path $releaseDir "$installerBaseName.exe"
 
@@ -76,7 +96,9 @@ dotnet publish $project `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:IncludeAllContentForSelfExtract=true `
     -p:ElkaCreateReleaseArtifacts=false `
-    -p:ElkaUploadGitHubRelease=false
+    -p:ElkaUploadGitHubRelease=false `
+    -p:InformationalVersion=$version `
+    -p:IncludeSourceRevisionInInformationalVersion=false
 
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE"
@@ -85,6 +107,9 @@ if ($LASTEXITCODE -ne 0) {
 if (!(Test-Path $publishExe)) {
     throw "Publish did not create $publishExe"
 }
+
+Get-ChildItem -LiteralPath $publishDir -Recurse -File -Filter "*.pdb" |
+    Remove-Item -Force
 
 dotnet publish $project `
     -c $Configuration `
@@ -95,7 +120,9 @@ dotnet publish $project `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:IncludeAllContentForSelfExtract=true `
     -p:ElkaCreateReleaseArtifacts=false `
-    -p:ElkaUploadGitHubRelease=false
+    -p:ElkaUploadGitHubRelease=false `
+    -p:InformationalVersion=$version `
+    -p:IncludeSourceRevisionInInformationalVersion=false
 
 if ($LASTEXITCODE -ne 0) {
     throw "single-file dotnet publish failed with exit code $LASTEXITCODE"

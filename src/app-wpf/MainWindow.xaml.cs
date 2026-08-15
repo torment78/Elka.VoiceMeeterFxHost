@@ -101,6 +101,8 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _trayIcon;
     private System.Drawing.Icon? _trayIconHandle;
     private WindowState _windowStateBeforeTray = WindowState.Normal;
+
+    internal bool ShouldStartHiddenToTray { get; private set; }
     private bool _isShuttingDown;
     private bool _trayCloseHintShown;
     private HwndSource? _windowMessageSource;
@@ -141,7 +143,7 @@ public partial class MainWindow : Window
     private const string ConnectionGroupOutputToNode = "group-output-to-node";
     private const string ConnectionGroupOutputToGroupInput = "group-output-to-group-input";
     private const int GroupSidechainPinBase = 100;
-    private const double VstCanvasMinWidth = 980.0;
+    private const double VstCanvasMinWidth = 900.0;
     private const double VstCanvasMinHeight = 920.0;
     private const double VstCanvasWallMargin = 24.0;
     private const double VstEndpointCardWidth = 124.0;
@@ -151,6 +153,7 @@ public partial class MainWindow : Window
     private const double VstCardPinTopOffset = 38.0;
     private const double VstCardPinRowSpacing = 13.0;
     private const int CollapsedVisiblePinCount = 2;
+    private const int MaxPluginInstanceIds = 200;
     private const int MaxSavedPluginRestoreAttempts = 80;
     private const double DragPreviewXCorrection = 0.0;
     private static readonly TimeSpan RealtimeCallbackStaleThreshold = TimeSpan.FromSeconds(4);
@@ -263,9 +266,10 @@ public partial class MainWindow : Window
 
         LoadSettings();
         ApplySavedWindowPlacement();
-        if (StartupTrayOptions.StartHiddenToTray || _settings.StartToTray)
+        ShouldStartHiddenToTray = StartupTrayOptions.StartHiddenToTray || _settings.StartToTray;
+        if (ShouldStartHiddenToTray)
         {
-            HideInitialWindowToTrayOnLoaded();
+            ShowInTaskbar = false;
         }
 
         if (!InsertAsioPatchControlEnabled)
@@ -288,6 +292,12 @@ public partial class MainWindow : Window
         ApplyVbanControlSettingsFromUi(showErrors: false);
         AppendLog("Ready.");
         AppendLog($"Runtime log: {RuntimeLog.LogPath}");
+        if (ShouldStartHiddenToTray)
+        {
+            AppendLog(StartupTrayOptions.StartHiddenToTray
+                ? $"Started hidden to tray from {StartupTrayOptions.MatchedArgument}."
+                : "Started hidden to tray from saved Start Tray setting.");
+        }
         UpdateLiveStatusText();
         _statusTimer.Start();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
@@ -316,21 +326,6 @@ public partial class MainWindow : Window
         _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray));
     }
 
-    private void HideInitialWindowToTrayOnLoaded()
-    {
-        Loaded += (_, _) =>
-        {
-            Dispatcher.BeginInvoke(
-                new Action(() =>
-                {
-                    HideToTray(showHint: false);
-                    AppendLog(StartupTrayOptions.StartHiddenToTray
-                        ? $"Started hidden to tray from {StartupTrayOptions.MatchedArgument}."
-                        : "Started hidden to tray from saved Start Tray setting.");
-                }),
-                DispatcherPriority.ApplicationIdle);
-        };
-    }
 
     private int ConfiguredStartupDelaySeconds()
     {
@@ -1701,6 +1696,7 @@ public partial class MainWindow : Window
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
         _settingsByEndpoint.Clear();
         NormalizePluginScanFolders();
+        NormalizePluginInstanceIds();
         NormalizePluginGroups();
         _kind = _settings.Kind == VoicemeeterKind.Unknown ? VoicemeeterKind.Potato : _settings.Kind;
         _selectedMode = _settings.SelectedMode == CallbackMode.None ? CallbackMode.Input : _settings.SelectedMode;
@@ -1742,6 +1738,48 @@ public partial class MainWindow : Window
         }
 
         MigratePlainInputOutputCanvasRoutesToSharedChannelRoutes();
+    }
+
+    private void NormalizePluginInstanceIds()
+    {
+        var assigned = new HashSet<int>();
+        foreach (var node in _settings.PluginNodes)
+        {
+            if (node.InstanceId >= 0 &&
+                node.InstanceId < MaxPluginInstanceIds &&
+                assigned.Add(node.InstanceId))
+            {
+                continue;
+            }
+
+            node.InstanceId = -1;
+            for (var candidate = 0; candidate < MaxPluginInstanceIds; candidate++)
+            {
+                if (assigned.Add(candidate))
+                {
+                    node.InstanceId = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    private int NextAvailablePluginInstanceId()
+    {
+        var assigned = _settings.PluginNodes
+            .Where(static node => node.InstanceId >= 0 && node.InstanceId < MaxPluginInstanceIds)
+            .Select(static node => node.InstanceId)
+            .ToHashSet();
+
+        for (var candidate = 0; candidate < MaxPluginInstanceIds; candidate++)
+        {
+            if (!assigned.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return -1;
     }
 
     private void ApplyImportedSave(FxHostSettings imported)
@@ -2308,6 +2346,12 @@ public partial class MainWindow : Window
 
     private bool ApplyVfxTextCommand(VfxTextCommand command)
     {
+        if (command.TargetKind == VfxTextCommandTargetKind.Vst)
+        {
+            ApplyVfxTextCommandToPlugin(command);
+            return false;
+        }
+
         if (command.Property is VfxTextCommandProperty.Route or VfxTextCommandProperty.RouteEnable or VfxTextCommandProperty.RouteMuteNormal
             && command.TargetKind != VfxTextCommandTargetKind.Strip)
         {
@@ -2332,6 +2376,97 @@ public partial class MainWindow : Window
 
         QueueChannelApply(settings);
         return _selectedChannelSettings?.Key == settings.Key;
+    }
+
+    private void ApplyVfxTextCommandToPlugin(VfxTextCommand command)
+    {
+
+        if (!int.TryParse(command.Target, NumberStyles.Integer, CultureInfo.InvariantCulture, out var instanceId) ||
+            instanceId < 0 ||
+            instanceId >= MaxPluginInstanceIds)
+        {
+            throw new InvalidOperationException($"{command.SourceText}: VST ID must be between 0 and {MaxPluginInstanceIds - 1}.");
+        }
+
+        var node = _settings.PluginNodes.FirstOrDefault(candidate => candidate.InstanceId == instanceId);
+        if (node is null)
+        {
+            throw new InvalidOperationException($"{command.SourceText}: VST ID {instanceId} is not active.");
+        }
+
+        if (node.MissingPlugin)
+        {
+            throw new InvalidOperationException($"{command.SourceText}: VST ID {instanceId} is a missing plugin placeholder.");
+        }
+
+        if (command.Property == VfxTextCommandProperty.Enable)
+        {
+            if (command.Operator != VfxTextCommandOperator.Set)
+            {
+                throw new InvalidOperationException($"{command.SourceText}: VST Enable only supports '='.");
+            }
+
+            var enabled = VfxTextCommandParser.ParseBoolean(command.ValueText);
+            if (node.Enabled != enabled)
+            {
+                SetNodeEnabled(node, enabled);
+            }
+
+            AppendLog($"VST ID {instanceId} ({node.Name}) turned {(enabled ? "on" : "off")} by VFX text command.");
+            return;
+        }
+
+        if (command.Property == VfxTextCommandProperty.Bypass)
+        {
+            if (command.Operator != VfxTextCommandOperator.Set)
+            {
+                throw new InvalidOperationException($"{command.SourceText}: VST Bypass only supports '='.");
+            }
+
+            var bypassed = VfxTextCommandParser.ParseBoolean(command.ValueText);
+            if (node.Bypassed != bypassed)
+            {
+                SetNodeBypass(node, bypassed);
+            }
+
+            AppendLog($"VST ID {instanceId} ({node.Name}) bypass {(bypassed ? "enabled" : "disabled")} by VFX text command.");
+            return;
+        }
+
+        var controlName = command.Property == VfxTextCommandProperty.Parameter
+            ? command.PluginParameterIndex is { } parameterIndex
+                ? $"Parameter({parameterIndex})"
+                : throw new InvalidOperationException($"{command.SourceText}: VST parameter index is missing.")
+            : command.Property switch
+            {
+                VfxTextCommandProperty.InputGain => "InputGain",
+                VfxTextCommandProperty.OutputGain => "OutputGain",
+                VfxTextCommandProperty.MainGain => "MainGain",
+                VfxTextCommandProperty.GainScale => "GainScale",
+                VfxTextCommandProperty.DryGain => "DryGain",
+                VfxTextCommandProperty.WetGain => "WetGain",
+                VfxTextCommandProperty.Mix => "Mix",
+                VfxTextCommandProperty.Width => "Width",
+                VfxTextCommandProperty.InputPan => "InputPan",
+                VfxTextCommandProperty.OutputPan => "OutputPan",
+                VfxTextCommandProperty.DryPan => "DryPan",
+                VfxTextCommandProperty.WetPan => "WetPan",
+                VfxTextCommandProperty.Ab => "AB",
+                _ => throw new InvalidOperationException($"{command.SourceText}: unsupported VST property.")
+            };
+
+        var valueText = command.Operator switch
+        {
+            VfxTextCommandOperator.Add => $"+={command.ValueText}",
+            VfxTextCommandOperator.Subtract => $"-={command.ValueText}",
+            _ => command.ValueText
+        };
+        if (!_engine.SetPluginNodeControl(node.Slot, controlName, valueText, out var status))
+        {
+            throw new InvalidOperationException($"{command.SourceText}: {status}");
+        }
+
+        AppendLog($"VST ID {instanceId} ({node.Name}): {status}");
     }
 
     private IoEndpoint ResolveVfxEndpoint(VfxTextCommand command)
@@ -4056,12 +4191,41 @@ private void RefreshEndpointButtonSelection()
             return MissingPluginBrush();
         }
 
+        var normalBackground = HueFillBrush(SourceHueKeyForNode(node.Slot, []))
+            ?? ThemeBrushOr("RouteActiveBrush", "#14392F");
         if (node.Bypassed)
         {
-            return ThemeBrushOr("NeutralBrush", "#26313A");
+            return StateStripeBrush(normalBackground, Color.FromArgb(170, 240, 138, 62));
         }
 
-        return HueFillBrush(SourceHueKeyForNode(node.Slot, [])) ?? ThemeBrushOr("RouteActiveBrush", "#14392F");
+        if (!node.Enabled)
+        {
+            return StateStripeBrush(SolidBrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
+        }
+
+        return normalBackground;
+    }
+
+    private static Brush StateStripeBrush(Brush background, Color stripeColor)
+    {
+        const double tileSize = 18.0;
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(
+            background,
+            null,
+            new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
+        group.Children.Add(new GeometryDrawing(
+            null,
+            new Pen(new SolidColorBrush(stripeColor), 6.0),
+            new LineGeometry(new Point(0, tileSize), new Point(tileSize, 0))));
+        return new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            Viewbox = new Rect(0, 0, tileSize, tileSize),
+            ViewboxUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, tileSize, tileSize),
+            ViewportUnits = BrushMappingMode.Absolute
+        };
     }
 
     private static Brush MissingPluginBrush()
@@ -6441,6 +6605,13 @@ private void RefreshEndpointButtonSelection()
             return null;
         }
 
+        var instanceId = NextAvailablePluginInstanceId();
+        if (instanceId < 0)
+        {
+            AppendLog($"The VST ID limit of {MaxPluginInstanceIds} active nodes has been reached.");
+            return null;
+        }
+
         var point = canvasPoint ?? _lastCanvasClick;
         var mode = targetGroup?.Mode ?? CurrentVstCanvasNodeMode();
         var x = Math.Max(300, (int)point.X);
@@ -6516,6 +6687,7 @@ private void RefreshEndpointButtonSelection()
             return null;
         }
 
+        node.InstanceId = instanceId;
         node.Name = UniquePluginNodeName(choice.Name);
         _settings.PluginNodes.RemoveAll(existing => existing.Slot == node.Slot);
         _settings.PluginNodes.Add(node);
@@ -6597,6 +6769,7 @@ private void RefreshEndpointButtonSelection()
                 var missing = ClonePluginNodeSnapshot(savedNode);
                 missing.Slot = nextMissingSlot--;
                 missing.MissingPlugin = true;
+                missing.Enabled = false;
                 missing.Bypassed = true;
                 slotMap[savedNode.Slot] = missing;
                 restoredNodes.Add(missing);
@@ -6630,6 +6803,11 @@ private void RefreshEndpointButtonSelection()
             }
 
             VerifyRestoredPluginState(restored, savedNode);
+            if (!restored.Enabled)
+            {
+                _engine.SetPluginNodePowered(restored.Slot, false);
+            }
+
             if (restored.Bypassed)
             {
                 _engine.SetPluginNodeBypassed(restored.Slot, true);
@@ -6867,10 +7045,12 @@ private void RefreshEndpointButtonSelection()
 
     private static void ApplySavedNodeVisualState(PluginNodeSnapshot restored, PluginNodeSnapshot saved)
     {
+        restored.InstanceId = saved.InstanceId;
         restored.Name = string.IsNullOrWhiteSpace(saved.Name) ? restored.Name : saved.Name;
         restored.X = saved.X;
         restored.Y = saved.Y;
         restored.Mode = saved.Mode == CallbackMode.None ? CallbackMode.Input : saved.Mode;
+        restored.Enabled = saved.Enabled;
         restored.Bypassed = saved.Bypassed;
         restored.PinsCollapsed = saved.PinsCollapsed;
         restored.Sandboxed = restored.Sandboxed ||
@@ -7141,6 +7321,7 @@ private void RefreshEndpointButtonSelection()
             PluginStateBase64 = node.PluginStateBase64,
             PluginPresetBase64 = node.PluginPresetBase64,
             PluginParameterStateBase64 = node.PluginParameterStateBase64,
+            InstanceId = node.InstanceId,
             Slot = node.Slot,
             X = node.X,
             Y = node.Y,
@@ -7148,6 +7329,7 @@ private void RefreshEndpointButtonSelection()
             SidechainInputPins = node.SidechainInputPins,
             InputPins = node.InputPins,
             OutputPins = node.OutputPins,
+            Enabled = node.Enabled,
             Bypassed = node.Bypassed,
             PinsCollapsed = node.PinsCollapsed,
             Sandboxed = node.Sandboxed,
@@ -7223,8 +7405,10 @@ private void RefreshEndpointButtonSelection()
                 Margin = new Thickness(0, 0, 0, 6)
             };
             border.MouseLeftButtonDown += (_, _) => SelectPluginNode(node.Slot, rebuildCanvas: true);
+            border.ContextMenu = BuildNodeContextMenu(node);
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -7237,6 +7421,17 @@ private void RefreshEndpointButtonSelection()
                 VerticalAlignment = VerticalAlignment.Center
             });
 
+            var enabled = new CheckBox
+            {
+                Content = "On",
+                IsChecked = node.Enabled,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            enabled.Checked += (_, _) => SetNodeEnabled(node, true);
+            enabled.Unchecked += (_, _) => SetNodeEnabled(node, false);
+            Grid.SetColumn(enabled, 1);
+            grid.Children.Add(enabled);
+
             var bypass = new CheckBox
             {
                 Content = "Bypass",
@@ -7245,7 +7440,7 @@ private void RefreshEndpointButtonSelection()
             };
             bypass.Checked += (_, _) => SetNodeBypass(node, true);
             bypass.Unchecked += (_, _) => SetNodeBypass(node, false);
-            Grid.SetColumn(bypass, 1);
+            Grid.SetColumn(bypass, 2);
             grid.Children.Add(bypass);
 
             var open = new Button
@@ -7257,7 +7452,7 @@ private void RefreshEndpointButtonSelection()
                 Style = (Style)FindResource("RouteButton")
             };
             open.Click += (_, _) => OpenPluginEditorWithSavedData(node);
-            Grid.SetColumn(open, 2);
+            Grid.SetColumn(open, 3);
             grid.Children.Add(open);
 
             var remove = new Button
@@ -7268,11 +7463,25 @@ private void RefreshEndpointButtonSelection()
                 Margin = new Thickness(8, 0, 0, 0)
             };
             remove.Click += (_, _) => RemovePluginNode(node);
-            Grid.SetColumn(remove, 3);
+            Grid.SetColumn(remove, 4);
             grid.Children.Add(remove);
 
             VstNodesPanel.Children.Add(border);
         }
+    }
+
+    private void SetNodeEnabled(PluginNodeSnapshot node, bool enabled)
+    {
+        if (node.MissingPlugin)
+        {
+            return;
+        }
+
+        node.Enabled = enabled;
+        _engine.SetPluginNodePowered(node.Slot, enabled);
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
     }
 
     private void SetNodeBypass(PluginNodeSnapshot node, bool bypassed)
@@ -7289,6 +7498,247 @@ private void RefreshEndpointButtonSelection()
         QueueSave();
     }
 
+    private void ShowExposedPluginParameters(PluginNodeSnapshot node)
+    {
+        if (node.MissingPlugin)
+        {
+            AppendLog($"{node.Name}: plugin is missing and has no exposed parameter list.");
+            return;
+        }
+
+        if (!_engine.TryGetPluginNodeParameterInfo(node.Slot, out var parameterInfo))
+        {
+            AppendLog($"{node.Name}: exposed parameter query failed. {_engine.StatusText}");
+            return;
+        }
+
+        var text = new TextBox
+        {
+            Text = FormatUsableVbanTextCommands(node, parameterInfo),
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            AcceptsTab = true,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            TextWrapping = TextWrapping.NoWrap,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Margin = new Thickness(12)
+        };
+
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = $"{node.Name} - ID {node.InstanceId} - VST Parameter Commands",
+            Width = 900,
+            Height = 620,
+            MinWidth = 620,
+            MinHeight = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = ThemeBrushOr("WindowBackgroundBrush", "#111417"),
+            Content = text
+        };
+        dialog.Show();
+    }
+
+    private static string FormatUsableVbanTextCommands(PluginNodeSnapshot node, string parameterInfo)
+    {
+        var id = node.InstanceId;
+        var output = new StringBuilder();
+        output.AppendLine($"{node.Name}");
+        output.AppendLine($"VST ID: {id}");
+        output.AppendLine();
+        output.AppendLine("Usable VBAN-TEXT commands");
+        output.AppendLine();
+        output.AppendLine("Always available:");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=1;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=0;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Bypass=1;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Bypass=0;);");
+        output.AppendLine();
+        output.AppendLine("Numeric parameter operators:");
+        output.AppendLine("+= adds to the current value; -= subtracts from it.");
+        output.AppendLine("=5, =+5, and =-5 set absolute values and do not accumulate.");
+        output.AppendLine($"Example: SendText(\"vban1\", VFX.VST({id}).Parameter(0)+=1;);");
+
+        var entries = parameterInfo
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Select(static line => line.Split('\t'))
+            .Where(static columns => columns.Length >= 4)
+            .Select(static columns => new
+            {
+                Control = columns[0].Trim(),
+                ParameterIndex = columns[1].Trim(),
+                ParameterName = columns[2].Trim(),
+                CurrentValue = columns[3].Trim(),
+                Unit = columns.Length >= 5 ? columns[4].Trim() : string.Empty
+            })
+            .ToList();
+        var controls = entries
+            .Where(static entry => !entry.Control.Equals("Parameter", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var parameters = entries
+            .Where(static entry => entry.Control.Equals("Parameter", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        static string NormalizeParameterName(string value) =>
+            new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+        static int MatchParameterName(string parameterName, IReadOnlyList<string> aliases)
+        {
+            var normalizedName = NormalizeParameterName(parameterName);
+            var score = 0;
+            foreach (var alias in aliases)
+            {
+                if (normalizedName.Equals(alias, StringComparison.Ordinal))
+                {
+                    score = Math.Max(score, 100);
+                }
+                else if (alias.Length >= 5 &&
+                         (normalizedName.StartsWith(alias, StringComparison.Ordinal) ||
+                          normalizedName.EndsWith(alias, StringComparison.Ordinal)))
+                {
+                    score = Math.Max(score, 80);
+                }
+                else if (alias.Length >= 5 && normalizedName.Contains(alias, StringComparison.Ordinal))
+                {
+                    score = Math.Max(score, 60);
+                }
+            }
+
+            return score;
+        }
+
+        var friendlyControlAliases = new (string Control, string[] Aliases)[]
+        {
+            ("InputGain", ["inputgain", "ingain", "inputlevel", "inlevel", "gaininput", "inputtrim", "triminput"]),
+            ("OutputGain", ["outputgain", "outgain", "outputlevel", "outlevel", "gainoutput", "outputtrim", "trimoutput", "masteroutput"]),
+            ("MainGain", ["maingain", "plugingain", "globalgain", "gain"]),
+            ("GainScale", ["gainscale", "outputgainscale", "overallgainscale"]),
+            ("DryGain", ["drygain", "drylevel"]),
+            ("WetGain", ["wetgain", "wetlevel"]),
+            ("Mix", ["mix", "drywet", "wetdry", "wetmix"]),
+            ("Width", ["width", "stereowidth", "outputwidth", "masterwidth"]),
+            ("InputPan", ["inputpan", "inpan", "inputpanning", "inputbalance", "balanceinput"]),
+            ("OutputPan", ["outputpan", "outpan", "outputpanning", "outputbalance", "balanceoutput", "masterpan"]),
+            ("DryPan", ["drypan"]),
+            ("WetPan", ["wetpan"]),
+            ("AB", ["ab", "compare", "abstate", "comparestate"])
+        };
+
+        // Parameter lists can be populated or renamed after a VST is activated.
+        // Reconstruct missing friendly rows from the raw catalog shown by Info.
+        foreach (var friendly in friendlyControlAliases)
+        {
+            if (controls.Any(control => control.Control.Equals(friendly.Control, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var match = parameters
+                .Select(parameter => new
+                {
+                    Parameter = parameter,
+                    Score = MatchParameterName(parameter.ParameterName, friendly.Aliases)
+                })
+                .Where(candidate => candidate.Score > 0)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenBy(candidate => int.TryParse(candidate.Parameter.ParameterIndex, out var index) ? index : int.MaxValue)
+                .FirstOrDefault();
+            if (match is null)
+            {
+                continue;
+            }
+
+            controls.Add(new
+            {
+                Control = friendly.Control,
+                match.Parameter.ParameterIndex,
+                match.Parameter.ParameterName,
+                match.Parameter.CurrentValue,
+                match.Parameter.Unit
+            });
+        }
+
+        controls = controls
+            .OrderBy(control => Array.FindIndex(
+                friendlyControlAliases,
+                friendly => friendly.Control.Equals(control.Control, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        static string ValuePlaceholder(string control) =>
+            control.Equals("AB", StringComparison.OrdinalIgnoreCase)
+                ? "<A|B>"
+                : control.Equals("GainScale", StringComparison.OrdinalIgnoreCase)
+                    ? "<0-200%>"
+                    : "<value>";
+
+        output.AppendLine();
+        output.AppendLine("Detected controls for this VST:");
+        if (controls.Count == 0)
+        {
+            output.AppendLine("No supported gain, gain-scale, mix, width, pan, or A/B command was detected.");
+        }
+        else
+        {
+            foreach (var control in controls)
+            {
+                var valuePlaceholder = ValuePlaceholder(control.Control);
+                var currentValue = control.CurrentValue;
+                if (!string.IsNullOrWhiteSpace(control.Unit) &&
+                    !currentValue.EndsWith(control.Unit, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentValue += $" {control.Unit}";
+                }
+
+                output.AppendLine();
+                output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).{control.Control}={valuePlaceholder};);");
+                output.AppendLine($"  Parameter #{control.ParameterIndex}: {control.ParameterName}");
+                output.AppendLine($"  Current: {currentValue}");
+                output.AppendLine($"  Exact index: SendText(\"vban1\", VFX.VST({id}).Parameter({control.ParameterIndex})={valuePlaceholder};);");
+            }
+        }
+
+        output.AppendLine();
+        output.AppendLine("All exposed host parameters:");
+        output.AppendLine("Parameter indexes belong to this exact plugin version and may change after a plugin update.");
+        if (parameters.Count == 0)
+        {
+            output.AppendLine("This VST did not report any host-automatable parameters.");
+        }
+        else
+        {
+            foreach (var parameter in parameters)
+            {
+                var currentValue = parameter.CurrentValue;
+                if (!string.IsNullOrWhiteSpace(parameter.Unit) &&
+                    !currentValue.EndsWith(parameter.Unit, StringComparison.OrdinalIgnoreCase))
+                {
+                    currentValue += $" {parameter.Unit}";
+                }
+
+                output.AppendLine();
+                output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Parameter({parameter.ParameterIndex})=<value>;);");
+                output.AppendLine($"  {parameter.ParameterName}");
+                output.AppendLine($"  Current: {currentValue}");
+            }
+        }
+
+        output.AppendLine();
+        output.AppendLine("Multiple commands can be sent together:");
+        if (controls.Count >= 2)
+        {
+            output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).{controls[0].Control}={ValuePlaceholder(controls[0].Control)}; VFX.VST({id}).{controls[1].Control}={ValuePlaceholder(controls[1].Control)};);");
+        }
+        else
+        {
+            output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=1; VFX.VST({id}).Bypass=0;);");
+        }
+
+        return output.ToString();
+    }
+
     private async void OpenPluginEditorWithSavedData(PluginNodeSnapshot node)
     {
         if (node.MissingPlugin)
@@ -7303,7 +7753,7 @@ private void RefreshEndpointButtonSelection()
             ApplySavedPluginNodeData(node, node);
         }
 
-        AppendLog(_engine.OpenPluginEditor(node.Slot));
+        AppendLog(_engine.OpenPluginEditor(node.Slot, $"{node.Name} - ID {node.InstanceId}"));
 
         if (!shouldApplySavedData)
         {
@@ -7420,9 +7870,12 @@ private void RefreshEndpointButtonSelection()
 
     private void UpdateVstCanvasSize()
     {
-        var availableWidth = VstWorkspaceView.ActualWidth;
+        var viewportWidth = VstCanvasScrollViewer.ViewportWidth;
+        var availableWidth = double.IsFinite(viewportWidth) && viewportWidth > 0
+            ? viewportWidth - 1.0
+            : VstWorkspaceView.ActualWidth - SystemParameters.VerticalScrollBarWidth - 3.0;
         var width = double.IsFinite(availableWidth) && availableWidth > 0
-            ? Math.Max(VstCanvasMinWidth, availableWidth - 2)
+            ? Math.Max(VstCanvasMinWidth, availableWidth)
             : VstCanvasMinWidth;
 
         RoutingCanvas.Width = width;
@@ -7911,9 +8364,7 @@ private void RefreshEndpointButtonSelection()
         {
             Width = VstGroupWidth,
             Height = height,
-            Background = GroupIsBypassed(members)
-                ? ThemeBrushOr("NeutralBrush", "#26313A")
-                : (Brush)FindResource("PanelBrush"),
+            Background = GroupBackgroundBrush(members),
             BorderBrush = selected
                 ? (Brush)FindResource("VolumeAccentBrush")
                 : (Brush)FindResource("RouteAccentBrush"),
@@ -8126,7 +8577,7 @@ private void RefreshEndpointButtonSelection()
 
         var members = GroupMembers(group).ToList();
         var groupBypassed = GroupIsBypassed(members);
-        var bypass = CreateNodeMenuItem(groupBypassed ? "Turn On Group" : "Shut Off / Bypass Group", () => SetGroupBypass(group, !groupBypassed));
+        var bypass = CreateNodeMenuItem(groupBypassed ? "Disable Group Bypass" : "Bypass Group", () => SetGroupBypass(group, !groupBypassed));
         if (members.Count == 0)
         {
             bypass.IsEnabled = false;
@@ -8138,6 +8589,14 @@ private void RefreshEndpointButtonSelection()
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem("Auto-Wire Chain", () => AutoWirePluginGroup(group)));
         menu.Items.Add(new Separator());
+        var groupEnabled = GroupIsEnabled(members);
+        var power = CreateNodeMenuItem(groupEnabled ? "Turn Off Group" : "Turn On Group", () => SetGroupEnabled(group, !groupEnabled));
+        if (members.Count == 0)
+        {
+            power.IsEnabled = false;
+            power.ToolTip = "Add VSTs to the group before changing its power state.";
+        }
+        menu.Items.Add(power);
 
         var remove = CreateNodeMenuItem("Remove Group", () => RemovePluginGroup(group));
         remove.Foreground = (Brush)FindResource("DangerBrush");
@@ -8145,15 +8604,62 @@ private void RefreshEndpointButtonSelection()
         return menu;
     }
 
+    private Brush GroupBackgroundBrush(IReadOnlyCollection<PluginNodeSnapshot> members)
+    {
+        var background = ThemeBrushOr("PanelBrush", "#1A2025");
+        if (GroupIsBypassed(members))
+        {
+            return StateStripeBrush(background, Color.FromArgb(170, 240, 138, 62));
+        }
+
+        if (members.Count > 0 && !GroupIsEnabled(members))
+        {
+            return StateStripeBrush(SolidBrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
+        }
+
+        return background;
+    }
+
     private static bool GroupIsBypassed(IReadOnlyCollection<PluginNodeSnapshot> members)
     {
         return members.Count > 0 && members.All(static node => node.Bypassed);
     }
 
+    private static bool GroupIsEnabled(IReadOnlyCollection<PluginNodeSnapshot> members)
+    {
+        return members.Count > 0 && members.All(static node => node.Enabled);
+    }
+
     private static string GroupStatusText(IReadOnlyCollection<PluginNodeSnapshot> members)
     {
         var label = members.Count == 1 ? "1 VST" : $"{members.Count} VSTs";
-        return GroupIsBypassed(members) ? $"{label} off / bypass" : label;
+        if (!GroupIsEnabled(members))
+        {
+            return $"{label} off";
+        }
+
+        return GroupIsBypassed(members) ? $"{label} bypassed" : label;
+    }
+
+    private void SetGroupEnabled(PluginGroupSnapshot group, bool enabled)
+    {
+        var members = GroupMembers(group).ToList();
+        if (members.Count == 0)
+        {
+            AppendLog($"{group.Name}: no VSTs to change.");
+            return;
+        }
+
+        foreach (var member in members)
+        {
+            member.Enabled = enabled;
+            _engine.SetPluginNodePowered(member.Slot, enabled);
+        }
+
+        AppendLog($"{group.Name}: turned {members.Count} VST node(s) {(enabled ? "on" : "off")}.");
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
     }
 
     private void SetGroupBypass(PluginGroupSnapshot group, bool bypassed)
@@ -8161,7 +8667,7 @@ private void RefreshEndpointButtonSelection()
         var members = GroupMembers(group).ToList();
         if (members.Count == 0)
         {
-            AppendLog($"{group.Name}: no VSTs to shut off.");
+            AppendLog($"{group.Name}: no VSTs to bypass.");
             return;
         }
 
@@ -8171,7 +8677,7 @@ private void RefreshEndpointButtonSelection()
             _engine.SetPluginNodeBypassed(member.Slot, bypassed);
         }
 
-        AppendLog($"{group.Name}: {(bypassed ? "shut off / bypassed" : "turned on")} {members.Count} VST node(s).");
+        AppendLog($"{group.Name}: {(bypassed ? "bypassed" : "disabled bypass for")} {members.Count} VST node(s).");
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         QueueSave();
@@ -8656,6 +9162,7 @@ private void RefreshEndpointButtonSelection()
     private ContextMenu BuildNodeContextMenu(PluginNodeSnapshot node)
     {
         var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem { Header = $"ID {node.InstanceId}", IsEnabled = false });
         if (node.MissingPlugin)
         {
             menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });
@@ -8666,7 +9173,8 @@ private void RefreshEndpointButtonSelection()
         }
 
         menu.Items.Add(CreateNodeMenuItem("Open Editor", () => OpenPluginEditorWithSavedData(node)));
-        menu.Items.Add(CreateNodeMenuItem(node.Bypassed ? "Turn On" : "Shut Off / Bypass", () => SetNodeBypass(node, !node.Bypassed)));
+        menu.Items.Add(CreateNodeMenuItem("Info", () => ShowExposedPluginParameters(node)));
+        menu.Items.Add(CreateNodeMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem("Properties", () => ShowNodeProperties(node)));
         menu.Items.Add(CreateNodeMenuItem("Add Stereo Sidechain Input", () => AddStereoSidechainInput(node)));
@@ -8678,6 +9186,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         menu.Items.Add(new Separator());
+        menu.Items.Add(CreateNodeMenuItem(node.Enabled ? "Turn Off" : "Turn On", () => SetNodeEnabled(node, !node.Enabled)));
 
         var remove = CreateNodeMenuItem("Remove", () => RemovePluginNode(node));
         remove.Foreground = (Brush)FindResource("DangerBrush");
@@ -8822,6 +9331,8 @@ private void RefreshEndpointButtonSelection()
             RemovePluginNode,
             OpenPluginEditorWithSavedData,
             ShowNodeProperties,
+            ShowExposedPluginParameters,
+            SetNodeEnabled,
             SetNodeBypass)
         {
             Owner = this
@@ -9014,6 +9525,13 @@ private void RefreshEndpointButtonSelection()
                 continue;
             }
 
+            var instanceId = NextAvailablePluginInstanceId();
+            if (instanceId < 0)
+            {
+                AppendLog($"The VST ID limit of {MaxPluginInstanceIds} active nodes has been reached.");
+                break;
+            }
+
             var copy = _engine.AddPluginNode(
                 new PluginChoice(member.PluginIndex, member.Name, member.PluginFormat, member.PluginIdentifier),
                 member.Mode,
@@ -9033,6 +9551,7 @@ private void RefreshEndpointButtonSelection()
                 continue;
             }
 
+            copy.InstanceId = instanceId;
             copy.Name = UniquePluginNodeName(member.Name);
             copy.PluginFormat = member.PluginFormat;
             copy.PluginIdentifier = member.PluginIdentifier;
@@ -9041,8 +9560,14 @@ private void RefreshEndpointButtonSelection()
             copy.PluginParameterStateBase64 = member.PluginParameterStateBase64;
             copy.Sandboxed = member.Sandboxed;
             VerifyRestoredPluginState(copy, member);
+            copy.Enabled = member.Enabled;
             copy.Bypassed = member.Bypassed;
             copy.PinsCollapsed = member.PinsCollapsed;
+            if (!copy.Enabled)
+            {
+                _engine.SetPluginNodePowered(copy.Slot, false);
+            }
+
             if (copy.Bypassed)
             {
                 _engine.SetPluginNodeBypassed(copy.Slot, true);
@@ -9314,6 +9839,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        var wasEnabled = node.Enabled;
         var wasBypassed = node.Bypassed;
         var hadPendingSavedDataApply = _pluginNodesPendingSavedDataApply.Remove(node.Slot);
         var savedState = _engine.GetPluginNodeState(node.Slot);
@@ -9385,6 +9911,7 @@ private void RefreshEndpointButtonSelection()
         node.OutputLayoutName = replacement.OutputLayoutName;
         node.SupportedInputLayouts = replacement.SupportedInputLayouts.ToList();
         node.SupportedOutputLayouts = replacement.SupportedOutputLayouts.ToList();
+        node.Enabled = wasEnabled;
         node.Bypassed = wasBypassed;
         node.Sandboxed = replacement.Sandboxed;
         if (hadPendingSavedDataApply && HasSavedPluginData(node))
@@ -9403,6 +9930,11 @@ private void RefreshEndpointButtonSelection()
                     group.MemberSlots[index] = node.Slot;
                 }
             }
+        }
+
+        if (!wasEnabled)
+        {
+            _engine.SetPluginNodePowered(node.Slot, false);
         }
 
         if (wasBypassed)

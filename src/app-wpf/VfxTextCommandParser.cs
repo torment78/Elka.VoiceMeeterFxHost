@@ -6,7 +6,8 @@ namespace Elka.VoiceMeeterFxHost.App;
 internal enum VfxTextCommandTargetKind
 {
     Strip,
-    Bus
+    Bus,
+    Vst
 }
 
 internal enum VfxTextCommandProperty
@@ -16,7 +17,22 @@ internal enum VfxTextCommandProperty
     Volume,
     Route,
     RouteEnable,
-    RouteMuteNormal
+    RouteMuteNormal,
+    Bypass,
+    InputGain,
+    OutputGain,
+    MainGain,
+    GainScale,
+    DryGain,
+    WetGain,
+    Mix,
+    Width,
+    InputPan,
+    OutputPan,
+    DryPan,
+    WetPan,
+    Ab,
+    Parameter
 }
 
 internal enum VfxTextCommandOperator
@@ -33,7 +49,8 @@ internal sealed record VfxTextCommand(
     VfxTextCommandProperty Property,
     VfxTextCommandOperator Operator,
     string ValueText,
-    string SourceText);
+    string SourceText,
+    int? PluginParameterIndex = null);
 
 internal sealed record VfxTextCommandChannelSelection(bool IsAll, IReadOnlyList<int> OneBasedChannels)
 {
@@ -118,6 +135,31 @@ internal static partial class VfxTextCommandParser
 
     private static VfxTextCommand ParseCommand(string rawCommand)
     {
+        var vstMatch = VstCommandPattern().Match(rawCommand);
+        if (vstMatch.Success)
+        {
+            int? parameterIndex = null;
+            if (vstMatch.Groups["parameterIndex"].Success)
+            {
+                if (!int.TryParse(vstMatch.Groups["parameterIndex"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedIndex))
+                {
+                    throw new InvalidOperationException("VST parameter index must be a non-negative whole number.");
+                }
+
+                parameterIndex = parsedIndex;
+            }
+
+            return new VfxTextCommand(
+                VfxTextCommandTargetKind.Vst,
+                vstMatch.Groups["target"].Value.Trim(),
+                new VfxTextCommandChannelSelection(IsAll: true, []),
+                ParseProperty(vstMatch.Groups["property"].Value),
+                ParseOperator(vstMatch.Groups["op"].Value),
+                vstMatch.Groups["value"].Value.Trim(),
+                rawCommand,
+                parameterIndex);
+        }
+
         var match = CommandPattern().Match(rawCommand);
         if (!match.Success)
         {
@@ -151,6 +193,21 @@ internal static partial class VfxTextCommandParser
             "route" => VfxTextCommandProperty.Route,
             "routeenable" or "routeenabled" => VfxTextCommandProperty.RouteEnable,
             "routemute" or "muteroute" or "mutenormal" or "routemutenormal" => VfxTextCommandProperty.RouteMuteNormal,
+            "bypass" or "bypassed" => VfxTextCommandProperty.Bypass,
+            "inputgain" or "ingain" => VfxTextCommandProperty.InputGain,
+            "outputgain" or "outgain" => VfxTextCommandProperty.OutputGain,
+            "maingain" or "plugingain" or "gain" => VfxTextCommandProperty.MainGain,
+            "gainscale" or "scale" => VfxTextCommandProperty.GainScale,
+            "drygain" => VfxTextCommandProperty.DryGain,
+            "wetgain" => VfxTextCommandProperty.WetGain,
+            "mix" or "drywet" => VfxTextCommandProperty.Mix,
+            "width" or "stereowidth" or "outputwidth" => VfxTextCommandProperty.Width,
+            "inputpan" or "inpan" => VfxTextCommandProperty.InputPan,
+            "outputpan" or "outpan" => VfxTextCommandProperty.OutputPan,
+            "drypan" => VfxTextCommandProperty.DryPan,
+            "wetpan" => VfxTextCommandProperty.WetPan,
+            "ab" or "compare" => VfxTextCommandProperty.Ab,
+            "parameter" => VfxTextCommandProperty.Parameter,
             _ => throw new InvalidOperationException($"Unsupported VFX property: {value}")
         };
     }
@@ -201,6 +258,11 @@ internal static partial class VfxTextCommandParser
 
         return new VfxTextCommandChannelSelection(IsAll: false, channels);
     }
+
+    [GeneratedRegex(
+        @"^\s*VFX\.VST\((?<target>\d+)\)\.(?:(?<property>Parameter)\((?<parameterIndex>\d+)\)|(?<property>Enable|Enabled|Bypass|Bypassed|InputGain|InGain|OutputGain|OutGain|MainGain|PluginGain|Gain|GainScale|Scale|DryGain|WetGain|Mix|DryWet|Width|StereoWidth|OutputWidth|InputPan|InPan|OutputPan|OutPan|DryPan|WetPan|AB|Compare))\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex VstCommandPattern();
 
     [GeneratedRegex(
         @"^\s*VFX\.(?<targetKind>Strip|Bus)\((?<target>[^)]+)\)\.Ch\((?<channels>[^)]+)\)\.(?<property>Enable|Enabled|Delay|DelayMs|Ms|Volume|Vol|Gain|Route|RouteEnable|RouteEnabled|RouteMute|MuteRoute|MuteNormal|RouteMuteNormal)\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",

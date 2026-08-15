@@ -552,7 +552,8 @@
                   BorderThickness="1"
                   CornerRadius="6">
                         <Grid>
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                            <ScrollViewer x:Name="VstCanvasScrollViewer"
+                            HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                                 <Canvas x:Name="RoutingCanvas"
                         Width="929"

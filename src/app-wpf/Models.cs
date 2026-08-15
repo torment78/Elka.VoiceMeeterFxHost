@@ -453,6 +453,7 @@ internal sealed class PluginNodeSnapshot
     public string PluginStateBase64 { get; set; } = string.Empty;
     public string PluginPresetBase64 { get; set; } = string.Empty;
     public string PluginParameterStateBase64 { get; set; } = string.Empty;
+    public int InstanceId { get; set; } = -1;
     public int Slot { get; set; }
     public int X { get; set; } = 430;
     public int Y { get; set; } = 120;
@@ -466,6 +467,7 @@ internal sealed class PluginNodeSnapshot
     public string OutputLayoutName { get; set; } = "Stereo";
     public List<PluginLayoutChoice> SupportedInputLayouts { get; set; } = [new(1, "Stereo", 2)];
     public List<PluginLayoutChoice> SupportedOutputLayouts { get; set; } = [new(1, "Stereo", 2)];
+    public bool Enabled { get; set; } = true;
     public bool Bypassed { get; set; }
     public bool PinsCollapsed { get; set; }
     public bool Sandboxed { get; set; }
@@ -656,6 +658,10 @@ internal sealed class NativeEngineClient : IDisposable
     private string _lastDirectRouteSignature = string.Empty;
     private string _lastPluginPassthroughRouteSignature = string.Empty;
     private readonly Dictionary<int, bool> _inputCallbackSuppressionCache = [];
+    private TimeSpan _lastProcessCpuTime;
+    private long _lastProcessCpuTimestamp;
+    private double _processCpuPercent;
+    private bool _hasProcessCpuSample;
 
     public NativeEngineClient()
     {
@@ -710,19 +716,95 @@ internal sealed class NativeEngineClient : IDisposable
 
             var rate = stats.SampleRate > 0 ? $"{stats.SampleRate} Hz" : "no audio yet";
             var block = stats.BlockSize > 0 ? $"{stats.BlockSize} spl" : "block --";
-            var ramText = "RAM --";
-            try
+            var processResources = ReadProcessResources();
+            var cpuText = processResources.CpuPercent is { } cpuPercent
+                ? $"CPU {cpuPercent:0.0}%"
+                : "CPU --";
+            var ramText = processResources.PrivateWorkingSetBytes is { } privateWorkingSetBytes
+                ? $"RAM {privateWorkingSetBytes / (1024d * 1024d):0} MB"
+                : "RAM --";
+
+            return $"{state} | {rate} | {block} | {cpuText} | peak {stats.PeakProcessUsec:0} us | {ramText}";
+        }
+    }
+
+    private (double? CpuPercent, long? PrivateWorkingSetBytes) ReadProcessResources()
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            process.Refresh();
+
+            var timestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            var processorTime = process.TotalProcessorTime;
+            if (_hasProcessCpuSample)
             {
-                using var process = System.Diagnostics.Process.GetCurrentProcess();
-                ramText = $"RAM {process.WorkingSet64 / (1024d * 1024d):0} MB";
+                var elapsedSeconds = (timestamp - _lastProcessCpuTimestamp) /
+                    (double)System.Diagnostics.Stopwatch.Frequency;
+                if (elapsedSeconds >= 0.75)
+                {
+                    var processorSeconds = (processorTime - _lastProcessCpuTime).TotalSeconds;
+                    _processCpuPercent = Math.Clamp(
+                        processorSeconds / elapsedSeconds / Math.Max(1, Environment.ProcessorCount) * 100.0,
+                        0.0,
+                        100.0);
+                    _lastProcessCpuTime = processorTime;
+                    _lastProcessCpuTimestamp = timestamp;
+                }
             }
-            catch
+            else
             {
-                // Best-effort UI status only.
+                _lastProcessCpuTime = processorTime;
+                _lastProcessCpuTimestamp = timestamp;
+                _hasProcessCpuSample = true;
             }
 
-            return $"{state} | {rate} | {block} | CPU {stats.CallbackCpuPercent:0.0}% | peak {stats.PeakProcessUsec:0} us | {ramText}";
+            if (!TryGetPrivateWorkingSetBytes(process.Handle, out var privateWorkingSetBytes))
+            {
+                privateWorkingSetBytes = process.WorkingSet64;
+            }
+
+            return (_processCpuPercent, privateWorkingSetBytes);
         }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private static bool TryGetPrivateWorkingSetBytes(IntPtr processHandle, out long privateWorkingSetBytes)
+    {
+        var counters = new ProcessMemoryCountersEx2
+        {
+            Size = (uint)Marshal.SizeOf<ProcessMemoryCountersEx2>()
+        };
+        if (GetProcessMemoryInfo(processHandle, ref counters, counters.Size) &&
+            (ulong)counters.PrivateWorkingSetSize <= long.MaxValue)
+        {
+            privateWorkingSetBytes = (long)counters.PrivateWorkingSetSize;
+            return true;
+        }
+
+        privateWorkingSetBytes = 0;
+        return false;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessMemoryCountersEx2
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public nuint PeakWorkingSetSize;
+        public nuint WorkingSetSize;
+        public nuint QuotaPeakPagedPoolUsage;
+        public nuint QuotaPagedPoolUsage;
+        public nuint QuotaPeakNonPagedPoolUsage;
+        public nuint QuotaNonPagedPoolUsage;
+        public nuint PagefileUsage;
+        public nuint PeakPagefileUsage;
+        public nuint PrivateUsage;
+        public nuint PrivateWorkingSetSize;
+        public ulong SharedCommitUsage;
     }
 
     public string CallbackDebugText
@@ -1653,6 +1735,14 @@ internal sealed class NativeEngineClient : IDisposable
         }
     }
 
+    public void SetPluginNodePowered(int slot, bool powered)
+    {
+        if (_attached)
+        {
+            ElkaFx_SetPluginNodePowered(slot, powered ? 1 : 0);
+        }
+    }
+
     public bool TogglePluginInputRoute(int slot, int sourceChannel, int pluginPin)
     {
         return _attached && ElkaFx_TogglePluginNodeInputRoute(slot, sourceChannel, pluginPin) != 0;
@@ -1668,7 +1758,7 @@ internal sealed class NativeEngineClient : IDisposable
         return _attached && ElkaFx_TogglePluginNodeModuleRoute(sourceSlot, sourcePin, destinationSlot, destinationPin) != 0;
     }
 
-    public string OpenPluginEditor(int slot)
+    public string OpenPluginEditor(int slot, string windowTitle)
     {
         if (!_attached)
         {
@@ -1676,7 +1766,7 @@ internal sealed class NativeEngineClient : IDisposable
         }
 
         var status = new StringBuilder(512);
-        ElkaFx_OpenPluginEditor(slot, status, status.Capacity);
+        ElkaFx_OpenPluginEditor(slot, windowTitle, status, status.Capacity);
         _lastStatus = status.Length > 0 ? status.ToString() : _lastStatus;
         return _lastStatus;
     }
@@ -1853,6 +1943,57 @@ internal sealed class NativeEngineClient : IDisposable
         }
 
         return false;
+    }
+
+    public bool TryGetPluginNodeParameterInfo(int slot, out string parameterInfo)
+    {
+        parameterInfo = string.Empty;
+        if (!_attached)
+        {
+            return false;
+        }
+
+        try
+        {
+            // Keep this to one worker control-channel round trip so opening Info
+            // cannot query a sandboxed plugin twice while audio is running.
+            var builder = new StringBuilder(1024 * 1024);
+            if (ElkaFx_GetPluginNodeParameterInfo(slot, builder, builder.Capacity) != 0)
+            {
+                return false;
+            }
+
+            parameterInfo = builder.ToString();
+            return true;
+        }
+        catch (SEHException ex)
+        {
+            _lastStatus = $"Plugin parameter information failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    public bool SetPluginNodeControl(int slot, string controlName, string valueText, out string status)
+    {
+        var builder = new StringBuilder(2048);
+        if (!_attached)
+        {
+            status = "Native engine is not attached.";
+            return false;
+        }
+
+        try
+        {
+            var applied = ElkaFx_SetPluginNodeControl(slot, controlName, valueText, builder, builder.Capacity) == 0;
+            status = builder.ToString();
+            return applied;
+        }
+        catch (SEHException ex)
+        {
+            status = $"Plugin control failed: {ex.Message}";
+            _lastStatus = status;
+            return false;
+        }
     }
 
     public void RemovePluginNode(int slot)
@@ -2259,6 +2400,9 @@ internal sealed class NativeEngineClient : IDisposable
     private static extern int ElkaFx_SetPluginNodeBypassed(int slot, int bypassed);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_SetPluginNodePowered(int slot, int powered);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_TogglePluginNodeInputRoute(int slot, int sourceChannel, int pluginPin);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -2268,7 +2412,7 @@ internal sealed class NativeEngineClient : IDisposable
     private static extern int ElkaFx_TogglePluginNodeModuleRoute(int sourceSlot, int sourcePin, int destinationSlot, int destinationPin);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int ElkaFx_OpenPluginEditor(int slot, StringBuilder status, int statusChars);
+    private static extern int ElkaFx_OpenPluginEditor(int slot, string windowTitle, StringBuilder status, int statusChars);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginNodeStateLength(int slot);
@@ -2296,6 +2440,27 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_SetPluginNodeParameterState(int slot, string parameterStateBase64);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPluginNodeParameterInfoLength(int slot);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetPluginNodeParameterInfo(int slot, StringBuilder buffer, int bufferChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_SetPluginNodeControl(
+        int slot,
+        string controlName,
+        string valueText,
+        StringBuilder status,
+        int statusChars);
+
+    [DllImport("psapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetProcessMemoryInfo(
+        IntPtr process,
+        ref ProcessMemoryCountersEx2 counters,
+        uint size);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_RemovePluginNode(int slot);

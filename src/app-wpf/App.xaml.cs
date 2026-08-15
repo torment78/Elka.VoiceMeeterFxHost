@@ -10,6 +10,13 @@ public partial class App : Application
     {
         StartupCrashLogger.InstallDispatcherHandler(this);
         base.OnStartup(e);
+
+        var window = new MainWindow();
+        MainWindow = window;
+        if (!window.ShouldStartHiddenToTray)
+        {
+            window.Show();
+        }
     }
 }
 

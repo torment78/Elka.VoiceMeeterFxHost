@@ -19,13 +19,15 @@ using PluginLoadProgressCallback = std::function<void(const std::string& stage, 
 bool probePluginFile(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, std::string& error, PluginLoadProgressCallback progress = {});
 int createWorkerPluginProcessor(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, int inputPins, int outputPins, int inputLayoutId, int outputLayoutId, std::string& error);
 bool processWorkerPluginProcessor(int handle, float* planarData, int channelCount, int samples);
-bool openWorkerPluginEditor(int handle, std::string& error);
+bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::string& error);
 std::string workerPluginStateBase64(int handle, std::string& error);
 bool setWorkerPluginStateBase64(int handle, const std::string& stateBase64, std::string& error);
 std::string workerPluginPresetBase64(int handle, std::string& error);
 bool setWorkerPluginPresetBase64(int handle, const std::string& presetBase64, std::string& error);
 std::string workerPluginParameterStateBase64(int handle, std::string& error);
 bool setWorkerPluginParameterStateBase64(int handle, const std::string& parameterStateBase64, std::string& error);
+std::string workerPluginParameterInfo(int handle, std::string& error);
+bool setWorkerPluginNamedControl(int handle, const std::string& controlName, const std::string& valueText, std::string& result, std::string& error);
 void pollWorkerPluginMessages(int milliseconds);
 void destroyWorkerPluginProcessor(int handle);
 
@@ -83,6 +85,7 @@ struct PluginNodeSummary
     int outputRouteCount = 0;
     std::array<PluginModuleRouteSummary, MaxPluginNodeRoutes> moduleRoutes {};
     int moduleRouteCount = 0;
+    bool powered = true;
 };
 
 class PluginHostLayer
@@ -114,7 +117,7 @@ public:
     int addSandboxedDiscoveredPluginNode(size_t index, int sampleRate, int maxBlockSize, int mainInputPins, int sidechainInputPins, int outputPins, int inputLayoutId, const std::string& inputLayoutName, int outputLayoutId, const std::string& outputLayoutName, int kind, int sourceStart, int sourceCount, const std::string& initialStateBase64 = {}, const std::string& initialPresetBase64 = {}, PluginLoadProgressCallback progress = {});
     void removePluginNode(int slot) noexcept;
     void clearPluginNodes() noexcept;
-    bool openPluginEditor(int slot);
+    bool openPluginEditor(int slot, const std::string& windowTitle);
     void closePluginEditor(int slot) noexcept;
     std::string pluginNodeStateBase64(int slot);
     bool setPluginNodeStateBase64(int slot, const std::string& stateBase64);
@@ -122,6 +125,8 @@ public:
     bool setPluginNodePresetBase64(int slot, const std::string& presetBase64);
     std::string pluginNodeParameterStateBase64(int slot);
     bool setPluginNodeParameterStateBase64(int slot, const std::string& parameterStateBase64);
+    std::string pluginNodeParameterInfo(int slot);
+    bool setPluginNodeNamedControl(int slot, const std::string& controlName, const std::string& valueText, std::string& result);
     bool togglePluginNodeInputRoute(int slot, int sourceChannel, int pluginPin) noexcept;
     bool togglePluginNodeOutputRoute(int slot, int pluginPin, int destinationChannel) noexcept;
     bool togglePluginNodeModuleRoute(int sourceSlot, int sourcePin, int destinationSlot, int destinationPin) noexcept;
@@ -130,6 +135,8 @@ public:
     std::array<PluginOutputRoute, MaxPluginNodeRoutes> pluginNodeOutputRoutes(int slot, int& count) const noexcept;
     void setPluginNodeBypassed(int slot, bool bypassed) noexcept;
     bool isPluginNodeBypassed(int slot) const noexcept;
+    void setPluginNodePowered(int slot, bool powered) noexcept;
+    bool isPluginNodePowered(int slot) const noexcept;
     RealtimePluginProcessor* realtimeProcessor() noexcept;
     RealtimePluginProcessor* realtimeProcessorForSlot(int slot) noexcept;
     std::string loadedPluginName() const;

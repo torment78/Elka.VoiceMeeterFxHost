@@ -18,12 +18,12 @@ orange for VST/plugin work.
 - **Volume**: trim each selected channel from `0%` to `200%`, where `100%` is unity.
 - **Routing**: route input channels directly to one or more output bus channels.
 - **Mute standard routing**: route a channel somewhere else while silencing its normal path.
-- **VST hosting**: scan plugins, add plugin nodes, open plugin editors, bypass nodes, and wire channels through plugins.
+- **VST hosting**: scan plugins, add plugin nodes, inspect exposed parameters, independently power or bypass nodes, and wire channels through plugins.
 - **Node routing**: drag cables from VoiceMeeter channel pins into plugins, from plugin to plugin, and back to VoiceMeeter pins.
 - **Sidechain pins**: add stereo sidechain inputs to plugin nodes and feed them from endpoints or other node outputs.
 - **Route hue colors**: tint endpoints, wires, and connected nodes so related paths are easier to follow.
 - **Single ping tool**: run a basic callback timing/round-trip check.
-- **VFX text commands**: control delay, volume, direct routing, route enable, and mute-standard routing from MacroButtons over VBAN-TEXT.
+- **VFX text commands**: control delay, volume, direct routing, route enable, mute-standard routing, VST power/bypass, friendly VST controls, and every indexed host parameter by stable ID from MacroButtons over VBAN-TEXT.
 - **Idle callback mode**: when no route, active channel, ping, or connected VST path needs processing, the app stays connected but unregisters from the realtime callback path.
 - **VoiceMeeter FX Host button**: open or restore the app directly from VoiceMeeter; the button is removed during a normal FX Host shutdown.
 
@@ -70,7 +70,8 @@ on the right.
 
 **Header** shows the app icon, the app name, the detected VoiceMeeter profile,
 and the native engine status. The status text reports callback state, sample
-rate, block size, current CPU estimate, and peak callback processing time.
+rate, block size, Task Manager-style process CPU, peak callback processing time,
+and the process private working set used by Task Manager's Memory column.
 
 **Side** chooses which callback side you are viewing:
 
@@ -172,7 +173,8 @@ entry.
 
 Each node list row has:
 
-- **Bypass**: bypass only that plugin node while keeping the drawn routing path.
+- **On**: power only that plugin node on or off while keeping its saved instance and routing.
+- **Bypass**: send dry audio around only that plugin node while keeping the drawn routing path.
 - **Open**: open the plugin's native editor window.
 - **Remove**: unload the node and remove its cables.
 
@@ -233,15 +235,20 @@ Right-click a plugin node for node-level actions.
 **Open Editor** opens the plugin's native editor window. The editor remains
 usable while audio is processing.
 
-**Bypass / Enable** bypasses or re-enables only that node. Bypass keeps the
-route alive and passes audio through the node position without applying the
-plugin's processing.
+**Info** lists friendly VBAN-TEXT commands for that exact plugin instance, followed by every host-automatable parameter exposed by the VST. It inserts the stable VST ID and shows each parameter index, name, current value, unit, and ready-to-edit `Parameter(index)` command. Unsupported friendly gain, gain-scale, mix, width, pan, or A/B commands are omitted.
+
+**Bypass / Disable Bypass** controls the dry path around only that node. An
+enabled bypassed plugin still receives audio so its editor meters can move, but
+its processed output is discarded.
 
 **Properties** opens the node pin layout editor. This is where the plugin's main
 input count, sidechain input count, and output count can be adjusted.
 
 **Add Stereo Sidechain Input** adds two sidechain pins labeled `SL` and `SR`.
 Sidechain pins appear above the normal main input pins.
+
+**Turn Off / Turn On** stops or resumes the plugin processing. A powered-off
+node blocks audio unless its separate bypass option is enabled.
 
 **Remove** unloads the plugin node and removes cables connected to it.
 
@@ -280,10 +287,12 @@ this enabled for normal MacroButtons control from the same PC.
 **VFX Commands** opens an in-app command reference. The same examples are also
 available in [`VFX_COMMANDS.md`](VFX_COMMANDS.md).
 
-The V1 command surface intentionally controls only the non-plugin layer:
-channel enable, delay, volume, direct routes, route enable, and mute standard
-routing. VST loading, VST parameters, plugin editors, bypass, and node wiring
-stay controlled from the app UI.
+The command surface controls channel enable, delay, volume, direct routes, route
+enable, mute standard routing, independent VST power/bypass by stable VST ID,
+and supported exposed VST controls such as gain, gain scale, mix, width, pan, and A/B. Plugin
+loading, presets, editor windows, and node wiring stay controlled from the app
+UI. Right-click a loaded node and choose **Info** to get ready-to-use commands
+for only the controls that exact plugin instance supports.
 
 **Save...** opens the save manager. From there:
 
@@ -324,6 +333,7 @@ The app saves:
 - VST plugin state/preset/parameter save data where the plugin exposes it
 - missing-plugin placeholders for imported saves
 - node positions
+- node powered states
 - node bypass states
 - node pin layouts
 - VST canvas cables
@@ -348,8 +358,9 @@ realtime callback is idle/unregistered.
   `ELKA_VST2_SDK_PATH` points to a valid legacy VST2 SDK before configuring the
   native CMake build. The WPF project automatically re-runs native CMake
   configure before builds so this setting is not left stale.
-- VFX text commands currently cover delay, volume, direct routing, route enable,
-  and mute-standard routing only. Plugin control is intentionally left out.
+- VFX text commands cover delay, volume, direct routing, route enable,
+  mute-standard routing, independent VST power/bypass by stable VST ID, and a
+  conservative set of friendly VST gain, gain-scale, mix, width, pan, and A/B parameters, plus direct `Parameter(index)` access to every host-automatable parameter exposed by the plugin. A friendly control command fails safely when no match exists, and an indexed command fails when its index is outside the current plugin version's range.
 - Normal plugins load in the main host. Plugins that match known risky vendor markers can be loaded through the embedded worker host so they do not block the main UI during startup. A faulty main-host plugin can still crash the host process.
 - Some plugins do not support the requested pin layout. If a layout fails, remove
   and re-add the plugin or choose a simpler stereo layout.

@@ -28,6 +28,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot> _removePluginNode;
     private readonly Action<PluginNodeSnapshot> _openPluginEditor;
     private readonly Action<PluginNodeSnapshot> _showPluginNodeProperties;
+    private readonly Action<PluginNodeSnapshot> _showExposedPluginParameters;
+    private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeEnabled;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeBypass;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
@@ -63,6 +65,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot> removePluginNode,
         Action<PluginNodeSnapshot> openPluginEditor,
         Action<PluginNodeSnapshot> showPluginNodeProperties,
+        Action<PluginNodeSnapshot> showExposedPluginParameters,
+        Action<PluginNodeSnapshot, bool> setPluginNodeEnabled,
         Action<PluginNodeSnapshot, bool> setPluginNodeBypass)
     {
         _group = group;
@@ -72,6 +76,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _removePluginNode = removePluginNode;
         _openPluginEditor = openPluginEditor;
         _showPluginNodeProperties = showPluginNodeProperties;
+        _showExposedPluginParameters = showExposedPluginParameters;
+        _setPluginNodeEnabled = setPluginNodeEnabled;
         _setPluginNodeBypass = setPluginNodeBypass;
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
@@ -454,6 +460,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private ContextMenu BuildNodeMenu(PluginNodeSnapshot node)
     {
         var menu = new ContextMenu();
+        menu.Items.Add(new MenuItem { Header = $"ID {node.InstanceId}", IsEnabled = false });
         if (node.MissingPlugin)
         {
             menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });
@@ -465,15 +472,17 @@ internal sealed class PluginGroupPropertiesWindow : Window
         }
 
         menu.Items.Add(CreateMenuItem("Open Editor", () => _openPluginEditor(node)));
+        menu.Items.Add(CreateMenuItem("Info", () => _showExposedPluginParameters(node)));
         menu.Items.Add(CreateMenuItem("Port Setup", () =>
         {
             _showPluginNodeProperties(node);
             RebuildCanvas();
         }));
-        menu.Items.Add(CreateMenuItem(node.Bypassed ? "Turn On" : "Shut Off / Bypass", () => SetNodeBypass(node, !node.Bypassed)));
+        menu.Items.Add(CreateMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Remove From Group", () => RemoveNodeFromGroup(node)));
         menu.Items.Add(new Separator());
+        menu.Items.Add(CreateMenuItem(node.Enabled ? "Turn Off" : "Turn On", () => SetNodeEnabled(node, !node.Enabled)));
         var delete = CreateMenuItem("Delete VST", () => DeleteNode(node));
         delete.Foreground = BrushFrom("#E15F5F");
         menu.Items.Add(delete);
@@ -485,6 +494,12 @@ internal sealed class PluginGroupPropertiesWindow : Window
         var item = new MenuItem { Header = header };
         item.Click += (_, _) => action();
         return item;
+    }
+
+    private void SetNodeEnabled(PluginNodeSnapshot node, bool enabled)
+    {
+        _setPluginNodeEnabled(node, enabled);
+        RebuildCanvas();
     }
 
     private void SetNodeBypass(PluginNodeSnapshot node, bool bypassed)
@@ -1524,7 +1539,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
     {
         if (!node.MissingPlugin)
         {
-            return node.Bypassed ? BrushFrom("#24191A") : BrushFrom("#102327");
+            if (node.Bypassed)
+                return StateStripeBrush(BrushFrom("#102327"), Color.FromArgb(170, 240, 138, 62));
+
+            if (!node.Enabled)
+                return StateStripeBrush(BrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
+
+            return BrushFrom("#102327");
         }
 
         var group = new DrawingGroup();
@@ -1540,6 +1561,28 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             TileMode = TileMode.Tile,
             Viewport = new Rect(0, 0, 12, 12),
+            ViewportUnits = BrushMappingMode.Absolute
+        };
+    }
+
+    private static Brush StateStripeBrush(Brush background, Color stripeColor)
+    {
+        const double tileSize = 18.0;
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(
+            background,
+            null,
+            new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
+        group.Children.Add(new GeometryDrawing(
+            null,
+            new Pen(new SolidColorBrush(stripeColor), 6.0),
+            new LineGeometry(new Point(0, tileSize), new Point(tileSize, 0))));
+        return new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            Viewbox = new Rect(0, 0, tileSize, tileSize),
+            ViewboxUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, tileSize, tileSize),
             ViewportUnits = BrushMappingMode.Absolute
         };
     }

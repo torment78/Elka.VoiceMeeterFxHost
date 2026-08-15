@@ -26,6 +26,8 @@ internal static class Program
     private const int CommandSetPreset = 6;
     private const int CommandGetParameters = 7;
     private const int CommandSetParameters = 8;
+    private const int CommandGetParameterInfo = 9;
+    private const int CommandSetControl = 10;
 
     [STAThread]
     private static int Main(string[] args)
@@ -261,15 +263,31 @@ internal static class Program
         status.Clear();
         return command switch
         {
-            CommandOpenEditor => ElkaFx_WorkerOpenPluginEditor(handle, status, status.Capacity),
+            CommandOpenEditor => OpenWorkerEditor(accessor, handle, statePointer, stateCapacity, status),
             CommandGetState => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginState),
             CommandSetState => ApplyWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerSetPluginState),
             CommandGetPreset => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginPreset),
             CommandSetPreset => ApplyWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerSetPluginPreset),
             CommandGetParameters => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginParameterState),
             CommandSetParameters => ApplyWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerSetPluginParameterState),
+            CommandGetParameterInfo => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginParameterInfo),
+            CommandSetControl => SetWorkerControl(accessor, handle, statePointer, stateCapacity, status),
             _ => -1
         };
+    }
+
+    private static int OpenWorkerEditor(
+        MemoryMappedViewAccessor accessor,
+        int handle,
+        IntPtr statePointer,
+        int stateCapacity,
+        StringBuilder status)
+    {
+        var byteCount = Math.Clamp(accessor.ReadInt32(OffsetTextByteCount), 0, Math.Max(0, stateCapacity - 1));
+        var windowTitle = byteCount > 0
+            ? Marshal.PtrToStringUTF8(statePointer, byteCount) ?? string.Empty
+            : string.Empty;
+        return ElkaFx_WorkerOpenPluginEditor(handle, windowTitle, status, status.Capacity);
     }
 
     private static int CaptureWorkerText(
@@ -314,6 +332,35 @@ internal static class Program
 
         var byteCount = Math.Clamp(accessor.ReadInt32(OffsetTextByteCount), 0, stateCapacity);
         return command(handle, statePointer, byteCount, status, status.Capacity);
+    }
+
+    private static int SetWorkerControl(
+        MemoryMappedViewAccessor accessor,
+        int handle,
+        IntPtr statePointer,
+        int stateCapacity,
+        StringBuilder status)
+    {
+        if (statePointer == IntPtr.Zero || stateCapacity <= 1)
+        {
+            status.Append("Worker control buffer is not available.");
+            return -1;
+        }
+
+        var byteCount = Math.Clamp(accessor.ReadInt32(OffsetTextByteCount), 0, Math.Max(0, stateCapacity - 1));
+        var payload = byteCount > 0
+            ? Marshal.PtrToStringUTF8(statePointer, byteCount) ?? string.Empty
+            : string.Empty;
+        var separator = payload.IndexOf('\n');
+        if (separator <= 0)
+        {
+            status.Append("Worker control payload is invalid.");
+            return -1;
+        }
+
+        var controlName = payload[..separator].Trim();
+        var valueText = payload[(separator + 1)..].Trim();
+        return ElkaFx_WorkerSetPluginControl(handle, controlName, valueText, status, status.Capacity);
     }
 
     private static void RunAudioRequestLoop(
@@ -441,6 +488,7 @@ internal static class Program
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_WorkerOpenPluginEditor(
         int handle,
+        string windowTitle,
         StringBuilder status,
         int statusChars);
 
@@ -489,6 +537,22 @@ internal static class Program
         int handle,
         IntPtr utf8Buffer,
         int bufferBytes,
+        StringBuilder status,
+        int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_WorkerGetPluginParameterInfo(
+        int handle,
+        IntPtr utf8Buffer,
+        int bufferBytes,
+        StringBuilder status,
+        int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_WorkerSetPluginControl(
+        int handle,
+        string controlName,
+        string valueText,
         StringBuilder status,
         int statusChars);
 

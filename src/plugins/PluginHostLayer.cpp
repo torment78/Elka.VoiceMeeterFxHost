@@ -490,6 +490,38 @@ std::vector<std::string> pluginControlAliases(const std::string& controlName)
         return { "drypan" };
     if (control == "wetpan")
         return { "wetpan" };
+    if (control == "threshold" || control == "thresh")
+        return { "threshold", "thresh" };
+    if (control == "ratio" || control == "compressionratio")
+        return { "ratio", "compressionratio" };
+    if (control == "attack" || control == "attacktime")
+        return { "attack", "attacktime" };
+    if (control == "release" || control == "releasetime")
+        return { "release", "releasetime" };
+    if (control == "hold" || control == "holdtime")
+        return { "hold", "holdtime" };
+    if (control == "knee" || control == "kneewidth")
+        return { "knee", "kneewidth" };
+    if (control == "range" || control == "reductionrange")
+        return { "range", "reductionrange", "gainreductionrange" };
+    if (control == "makeupgain" || control == "makeup")
+        return { "makeupgain", "makeup", "makeuplevel", "compensationgain", "outputcompensation" };
+    if (control == "ceiling" || control == "outputceiling")
+        return { "ceiling", "outputceiling", "truepeakceiling" };
+    if (control == "lookahead" || control == "lookaheadtime")
+        return { "lookahead", "lookaheadtime" };
+    if (control == "rate" || control == "speed")
+        return { "rate", "speed", "modulationrate" };
+    if (control == "depth")
+        return { "depth", "modulationdepth" };
+    if (control == "feedback")
+        return { "feedback", "feedbackgain" };
+    if (control == "drive")
+        return { "drive", "inputdrive" };
+    if (control == "tone")
+        return { "tone" };
+    if (control == "mode")
+        return { "mode", "processingmode", "operationmode" };
     if (control == "ab" || control == "compare")
         return { "ab", "compare", "abstate", "comparestate" };
 
@@ -753,7 +785,7 @@ std::string capturePluginParameterInfo(juce::AudioPluginInstance& plugin, std::s
     {
         try
         {
-            static constexpr std::array<const char*, 13> supportedControls {
+            static constexpr std::array<const char*, 29> supportedControls {
                 "InputGain",
                 "OutputGain",
                 "MainGain",
@@ -766,6 +798,22 @@ std::string capturePluginParameterInfo(juce::AudioPluginInstance& plugin, std::s
                 "OutputPan",
                 "DryPan",
                 "WetPan",
+                "Threshold",
+                "Ratio",
+                "Attack",
+                "Release",
+                "Hold",
+                "Knee",
+                "Range",
+                "MakeupGain",
+                "Ceiling",
+                "Lookahead",
+                "Rate",
+                "Depth",
+                "Feedback",
+                "Drive",
+                "Tone",
+                "Mode",
                 "AB"
             };
 

@@ -22,9 +22,8 @@ orange for VST/plugin work.
 - **Node routing**: drag cables from VoiceMeeter channel pins into plugins, from plugin to plugin, and back to VoiceMeeter pins.
 - **Sidechain pins**: add stereo sidechain inputs to plugin nodes and feed them from endpoints or other node outputs.
 - **Route hue colors**: tint endpoints, wires, and connected nodes so related paths are easier to follow.
-- **Single ping tool**: run a basic callback timing/round-trip check.
 - **VFX text commands**: control delay, volume, direct routing, route enable, mute-standard routing, VST power/bypass, friendly VST controls, and every indexed host parameter by stable ID from MacroButtons over VBAN-TEXT.
-- **Idle callback mode**: when no route, active channel, ping, or connected VST path needs processing, the app stays connected but unregisters from the realtime callback path.
+- **Idle callback mode**: when no route, active channel, or connected VST path needs processing, the app stays connected but unregisters from the realtime callback path.
 - **VoiceMeeter FX Host button**: open or restore the app directly from VoiceMeeter; the button is removed during a normal FX Host shutdown.
 
 VST3 is the default working plugin format. The UI uses the short label **VST**
@@ -235,7 +234,7 @@ Right-click a plugin node for node-level actions.
 **Open Editor** opens the plugin's native editor window. The editor remains
 usable while audio is processing.
 
-**Info** lists friendly VBAN-TEXT commands for that exact plugin instance, followed by every host-automatable parameter exposed by the VST. It inserts the stable VST ID and shows each parameter index, name, current value, unit, numbered named-choice mappings, host programs, and a ready-to-edit `Parameter(index)` command. Unsupported friendly gain, gain-scale, mix, width, pan, or A/B commands are omitted. Ratios and unit values support exact `=`, relative `+=`/`-=`, and stepped values support `Next`, `Previous`, `Default`, or `Toggle` where applicable.
+**Info** lists friendly VBAN-TEXT commands for that exact plugin instance, followed by every host-automatable parameter exposed by the VST. It inserts the stable VST ID and shows each parameter index, name, current value, unit, numbered named-choice mappings, host programs, and a ready-to-edit `Parameter(index)` command. Unsupported friendly controls are omitted. Ratios and unit values support exact `=`, relative `+=`/`-=`, and stepped values support `Next`, `Previous`, `Default`, or `Toggle` where applicable.
 
 **Bypass / Disable Bypass** controls the dry path around only that node. An
 enabled bypassed plugin still receives audio so its editor meters can move, but
@@ -271,9 +270,6 @@ rewriting the whole engine.
 
 ## Tools
 
-**Single Ping** opens a small timing tester. It is used to check callback timing
-and routing behavior without the full round-trip tool from the Delay app.
-
 **ASIO Patch** is currently parked and locked in the UI. The card remains visible for later testing, but this build uses the normal VoiceMeeter callback routing path instead. Saved ASIO-patch auto-start settings are ignored while the card is parked.
 
 **VBAN Text** enables the V1 text command listener. It receives MacroButtons
@@ -289,7 +285,7 @@ available in [`VFX_COMMANDS.md`](VFX_COMMANDS.md).
 
 The command surface controls channel enable, delay, volume, direct routes, route
 enable, mute standard routing, independent VST power/bypass by stable VST ID,
-and supported exposed VST controls such as gain, gain scale, mix, width, pan, and A/B. Plugin
+and supported exposed VST controls such as gain, dynamics, mix, width, pan, drive, tone, mode, and A/B. Plugin
 loading, presets, editor windows, and node wiring stay controlled from the app
 UI. Right-click a loaded node and choose **Info** to get ready-to-use commands
 for only the controls that exact plugin instance supports.
@@ -361,7 +357,7 @@ realtime callback is idle/unregistered.
 - VFX text commands cover delay, volume, direct routing, route enable,
   mute-standard routing, independent VST power/bypass by stable VST ID, editor
   open/close, targeted VST reload, exposed host programs, and a conservative set
-  of friendly VST gain, gain-scale, mix, width, pan, and A/B parameters, plus
+  of friendly VST gain, dynamics, mix, width, pan, drive, tone, mode, and A/B parameters, plus
   direct `Parameter(index)` access to every host-automatable parameter exposed by
   the plugin. A friendly control command fails safely when no match exists, and
   an indexed command fails when its index is outside the current plugin version's range.

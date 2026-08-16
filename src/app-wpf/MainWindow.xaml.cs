@@ -853,14 +853,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SinglePingButton_Click(object sender, RoutedEventArgs e)
-    {
-        var window = new SinglePingWindow(_kind)
-        {
-            Owner = this
-        };
-        window.Show();
-    }
 
     private void ProbeInsertAsioButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1250,7 +1242,7 @@ public partial class MainWindow : Window
             Title = "Menu",
             Owner = this,
             Width = 360,
-            Height = 482,
+            Height = 510,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = ThemeBrushOr("WindowBackgroundBrush", "#11171B")
@@ -1362,7 +1354,44 @@ public partial class MainWindow : Window
         close.Click += (_, _) => window.Close();
         stack.Children.Add(close);
 
+        stack.Children.Add(new TextBlock
+        {
+            Text = CurrentApplicationVersionText(),
+            Style = (Style)FindResource("MutedText"),
+            FontSize = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 2, 0, 0)
+        });
         window.ShowDialog();
+    }
+
+    private static string CurrentApplicationVersionText()
+    {
+        string? version = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Environment.ProcessPath))
+            {
+                version = System.Diagnostics.FileVersionInfo
+                    .GetVersionInfo(Environment.ProcessPath)
+                    .ProductVersion;
+            }
+        }
+        catch
+        {
+        }
+
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var metadataSeparator = version.IndexOf('+');
+            if (metadataSeparator > 0)
+            {
+                version = version[..metadataSeparator];
+            }
+        }
+
+        version ??= typeof(MainWindow).Assembly.GetName().Version?.ToString();
+        return $"Version {version ?? "unknown"}";
     }
 
     private Button CreateSaveManagerButton(string text)
@@ -2491,6 +2520,22 @@ public partial class MainWindow : Window
                 VfxTextCommandProperty.OutputPan => "OutputPan",
                 VfxTextCommandProperty.DryPan => "DryPan",
                 VfxTextCommandProperty.WetPan => "WetPan",
+                VfxTextCommandProperty.Threshold => "Threshold",
+                VfxTextCommandProperty.Ratio => "Ratio",
+                VfxTextCommandProperty.Attack => "Attack",
+                VfxTextCommandProperty.Release => "Release",
+                VfxTextCommandProperty.Hold => "Hold",
+                VfxTextCommandProperty.Knee => "Knee",
+                VfxTextCommandProperty.Range => "Range",
+                VfxTextCommandProperty.MakeupGain => "MakeupGain",
+                VfxTextCommandProperty.Ceiling => "Ceiling",
+                VfxTextCommandProperty.Lookahead => "Lookahead",
+                VfxTextCommandProperty.Rate => "Rate",
+                VfxTextCommandProperty.Depth => "Depth",
+                VfxTextCommandProperty.Feedback => "Feedback",
+                VfxTextCommandProperty.Drive => "Drive",
+                VfxTextCommandProperty.Tone => "Tone",
+                VfxTextCommandProperty.Mode => "Mode",
                 VfxTextCommandProperty.Ab => "AB",
                 VfxTextCommandProperty.Program => "Program",
                 _ => throw new InvalidOperationException($"{command.SourceText}: unsupported VST property.")
@@ -7679,6 +7724,22 @@ private void RefreshEndpointButtonSelection()
             ("OutputPan", ["outputpan", "outpan", "outputpanning", "outputbalance", "balanceoutput", "masterpan"]),
             ("DryPan", ["drypan"]),
             ("WetPan", ["wetpan"]),
+            ("Threshold", ["threshold", "thresh"]),
+            ("Ratio", ["ratio", "compressionratio"]),
+            ("Attack", ["attack", "attacktime"]),
+            ("Release", ["release", "releasetime"]),
+            ("Hold", ["hold", "holdtime"]),
+            ("Knee", ["knee", "kneewidth"]),
+            ("Range", ["range", "reductionrange", "gainreductionrange"]),
+            ("MakeupGain", ["makeupgain", "makeup", "makeuplevel", "compensationgain", "outputcompensation"]),
+            ("Ceiling", ["ceiling", "outputceiling", "truepeakceiling"]),
+            ("Lookahead", ["lookahead", "lookaheadtime"]),
+            ("Rate", ["rate", "speed", "modulationrate"]),
+            ("Depth", ["depth", "modulationdepth"]),
+            ("Feedback", ["feedback", "feedbackgain"]),
+            ("Drive", ["drive", "inputdrive"]),
+            ("Tone", ["tone"]),
+            ("Mode", ["mode", "processingmode", "operationmode"]),
             ("AB", ["ab", "compare", "abstate", "comparestate"])
         };
 
@@ -7750,7 +7811,7 @@ private void RefreshEndpointButtonSelection()
         output.AppendLine("Detected controls for this VST:");
         if (controls.Count == 0)
         {
-            output.AppendLine("No supported gain, gain-scale, mix, width, pan, or A/B command was detected.");
+            output.AppendLine("No supported friendly VST control was detected.");
         }
         else
         {

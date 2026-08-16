@@ -65,10 +65,16 @@ Enable or disable the dry bypass path:
 
 Bypass=1 sends dry audio directly from matching input pins to output pins. When the VST is enabled it still receives and processes audio for editor meters, but its processed output is discarded. Enable=0 plus Bypass=1 keeps the VST powered off while dry audio passes around it.
 
-Open or close the native editor, or reload one node while preserving its state, stable VST ID, group membership, and cables:
+Open Editor:
 
     SendText("vban1", VFX.VST(0).Editor=Open;);
+
+Close Editor:
+
     SendText("vban1", VFX.VST(0).Editor=Close;);
+
+Reload one VST while preserving its state, stable VST ID, group membership, and cables:
+
     SendText("vban1", VFX.VST(0).Reload=1;);
 
 ## Exposed VST Parameter Commands
@@ -89,6 +95,22 @@ The host provides conservative shorthand matching for common controls:
     SendText("vban1", VFX.VST(0).OutputPan=-25%;);
     SendText("vban1", VFX.VST(0).DryPan=-25%;);
     SendText("vban1", VFX.VST(0).WetPan=25%;);
+    SendText("vban1", VFX.VST(0).Threshold=-18 dB;);
+    SendText("vban1", VFX.VST(0).Ratio=4.0;);
+    SendText("vban1", VFX.VST(0).Attack=10 ms;);
+    SendText("vban1", VFX.VST(0).Release=100 ms;);
+    SendText("vban1", VFX.VST(0).Hold=25 ms;);
+    SendText("vban1", VFX.VST(0).Knee=6 dB;);
+    SendText("vban1", VFX.VST(0).Range=24 dB;);
+    SendText("vban1", VFX.VST(0).MakeupGain=3 dB;);
+    SendText("vban1", VFX.VST(0).Ceiling=-1 dB;);
+    SendText("vban1", VFX.VST(0).Lookahead=2 ms;);
+    SendText("vban1", VFX.VST(0).Rate=1.5 Hz;);
+    SendText("vban1", VFX.VST(0).Depth=50%;);
+    SendText("vban1", VFX.VST(0).Feedback=25%;);
+    SendText("vban1", VFX.VST(0).Drive=6 dB;);
+    SendText("vban1", VFX.VST(0).Tone=50%;);
+    SendText("vban1", VFX.VST(0).Mode=Next;);
     SendText("vban1", VFX.VST(0).AB=B;);
     SendText("vban1", VFX.VST(0).AB=Toggle;);
 
@@ -269,6 +291,22 @@ MuteRoute
 RouteMuteNormal
 ```
 
+Common VST control aliases:
+
+```text
+Thresh = Threshold
+CompressionRatio = Ratio
+AttackTime = Attack
+ReleaseTime = Release
+HoldTime = Hold
+KneeWidth = Knee
+ReductionRange = Range
+Makeup = MakeupGain
+OutputCeiling = Ceiling
+LookaheadTime = Lookahead
+Speed = Rate
+```
+
 Boolean values:
 
 ```text
@@ -280,4 +318,4 @@ yes, no
 
 ## Current Scope
 
-The text command surface controls delay, volume, direct routing, route enable, mute-standard routing, independent VST power/bypass, and selected exposed VST gain, gain-scale, mix, width, pan, and A/B parameters by stable VST ID. It does not control VST loading, editor windows, presets, or VST node wiring.
+The text command surface controls delay, volume, direct routing, route enable, mute-standard routing, independent VST power/bypass, editor visibility, targeted reload, host programs, common exposed VST gain, dynamics and effect controls, and every indexed host parameter by stable VST ID. It does not load new VSTs or alter VST node wiring.

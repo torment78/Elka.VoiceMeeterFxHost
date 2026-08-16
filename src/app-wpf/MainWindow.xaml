@@ -478,11 +478,6 @@
                          FontWeight="SemiBold"
                          Cursor="Hand"
                          MouseLeftButtonDown="LogHeader_MouseLeftButtonDown" />
-                            <Button Grid.Row="0"
-                      Grid.Column="1"
-                      Content="Single Ping"
-                      Width="112"
-                      Click="SinglePingButton_Click" />
                             <TextBlock x:Name="RouteSummaryTextBlock"
                          Grid.Row="1"
                          Grid.ColumnSpan="2"

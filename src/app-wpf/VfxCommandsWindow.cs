@@ -116,8 +116,14 @@ SendText("vban1", VFX.VST(0).Enable=Toggle;);
 SendText("vban1", VFX.VST(0).Bypass=1;);
 SendText("vban1", VFX.VST(0).Bypass=0;);
 SendText("vban1", VFX.VST(0).Bypass=Toggle;);
+
+Open Editor:
 SendText("vban1", VFX.VST(0).Editor=Open;);
+
+Close Editor:
 SendText("vban1", VFX.VST(0).Editor=Close;);
+
+Reload VST:
 SendText("vban1", VFX.VST(0).Reload=1;);
 
 Enable=0 stops VST processing and blocks the node output.
@@ -138,6 +144,22 @@ SendText("vban1", VFX.VST(0).InputPan=25%;);
 SendText("vban1", VFX.VST(0).OutputPan=-25%;);
 SendText("vban1", VFX.VST(0).DryPan=-25%;);
 SendText("vban1", VFX.VST(0).WetPan=25%;);
+SendText("vban1", VFX.VST(0).Threshold=-18 dB;);
+SendText("vban1", VFX.VST(0).Ratio=4.0;);
+SendText("vban1", VFX.VST(0).Attack=10 ms;);
+SendText("vban1", VFX.VST(0).Release=100 ms;);
+SendText("vban1", VFX.VST(0).Hold=25 ms;);
+SendText("vban1", VFX.VST(0).Knee=6 dB;);
+SendText("vban1", VFX.VST(0).Range=24 dB;);
+SendText("vban1", VFX.VST(0).MakeupGain=3 dB;);
+SendText("vban1", VFX.VST(0).Ceiling=-1 dB;);
+SendText("vban1", VFX.VST(0).Lookahead=2 ms;);
+SendText("vban1", VFX.VST(0).Rate=1.5 Hz;);
+SendText("vban1", VFX.VST(0).Depth=50%;);
+SendText("vban1", VFX.VST(0).Feedback=25%;);
+SendText("vban1", VFX.VST(0).Drive=6 dB;);
+SendText("vban1", VFX.VST(0).Tone=50%;);
+SendText("vban1", VFX.VST(0).Mode=Next;);
 SendText("vban1", VFX.VST(0).AB=B;);
 SendText("vban1", VFX.VST(0).AB=Toggle;);
 
@@ -207,7 +229,7 @@ Route enable: RouteEnable, RouteEnabled
 Mute normal: MuteNormal, RouteMute, MuteRoute, RouteMuteNormal
 VST bypass: Bypass, Bypassed
 VST program: Program, Preset
-VST parameter aliases: InGain, OutGain, Gain, PluginGain, Scale, DryWet, StereoWidth, OutputWidth, InPan, OutPan, Compare
+VST parameter aliases: InGain, OutGain, Gain, PluginGain, Scale, DryWet, StereoWidth, OutputWidth, InPan, OutPan, Thresh, CompressionRatio, AttackTime, ReleaseTime, HoldTime, KneeWidth, ReductionRange, Makeup, OutputCeiling, LookaheadTime, Speed, Compare
 Boolean values: 1, 0, true, false, on, off, yes, no
 
 Right-click a loaded VST and choose Info to see the friendly VBAN-TEXT commands
@@ -220,7 +242,7 @@ when the plugin exposes A/B as a host parameter.
 
 This command surface controls delay, volume, direct routing, mute-standard routing,
 VST power/bypass, editor visibility, targeted VST reload, exposed host programs,
-friendly VST controls, and indexed exposed parameters by stable ID. It does not load
+friendly dynamics/effect controls, and indexed exposed parameters by stable ID. It does not load
 new plugins or alter VST node wiring.
 """;
 }

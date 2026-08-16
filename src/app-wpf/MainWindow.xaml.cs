@@ -2406,7 +2406,9 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException($"{command.SourceText}: VST Enable only supports '='.");
             }
 
-            var enabled = VfxTextCommandParser.ParseBoolean(command.ValueText);
+            var enabled = command.ValueText.Trim().Equals("Toggle", StringComparison.OrdinalIgnoreCase)
+                ? !node.Enabled
+                : VfxTextCommandParser.ParseBoolean(command.ValueText);
             if (node.Enabled != enabled)
             {
                 SetNodeEnabled(node, enabled);
@@ -2423,13 +2425,51 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException($"{command.SourceText}: VST Bypass only supports '='.");
             }
 
-            var bypassed = VfxTextCommandParser.ParseBoolean(command.ValueText);
+            var bypassed = command.ValueText.Trim().Equals("Toggle", StringComparison.OrdinalIgnoreCase)
+                ? !node.Bypassed
+                : VfxTextCommandParser.ParseBoolean(command.ValueText);
             if (node.Bypassed != bypassed)
             {
                 SetNodeBypass(node, bypassed);
             }
 
             AppendLog($"VST ID {instanceId} ({node.Name}) bypass {(bypassed ? "enabled" : "disabled")} by VFX text command.");
+            return;
+        }
+
+        if (command.Property == VfxTextCommandProperty.Editor)
+        {
+            if (command.Operator != VfxTextCommandOperator.Set)
+            {
+                throw new InvalidOperationException($"{command.SourceText}: VST Editor only supports '='.");
+            }
+
+            if (command.ValueText.Trim().Equals("Open", StringComparison.OrdinalIgnoreCase))
+            {
+                OpenPluginEditorWithSavedData(node);
+                return;
+            }
+
+            if (command.ValueText.Trim().Equals("Close", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog(_engine.ClosePluginEditor(node.Slot));
+                return;
+            }
+
+            throw new InvalidOperationException($"{command.SourceText}: VST Editor must be Open or Close.");
+        }
+
+        if (command.Property == VfxTextCommandProperty.Reload)
+        {
+            if (command.Operator != VfxTextCommandOperator.Set)
+            {
+                throw new InvalidOperationException($"{command.SourceText}: VST Reload only supports '='.");
+            }
+
+            if (VfxTextCommandParser.ParseBoolean(command.ValueText))
+            {
+                ReloadPluginNode(node);
+            }
             return;
         }
 
@@ -2452,6 +2492,7 @@ public partial class MainWindow : Window
                 VfxTextCommandProperty.DryPan => "DryPan",
                 VfxTextCommandProperty.WetPan => "WetPan",
                 VfxTextCommandProperty.Ab => "AB",
+                VfxTextCommandProperty.Program => "Program",
                 _ => throw new InvalidOperationException($"{command.SourceText}: unsupported VST property.")
             };
 
@@ -7553,13 +7594,20 @@ private void RefreshEndpointButtonSelection()
         output.AppendLine("Always available:");
         output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=1;);");
         output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=0;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Enable=Toggle;);");
         output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Bypass=1;);");
         output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Bypass=0;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Bypass=Toggle;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Editor=Open;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Editor=Close;);");
+        output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Reload=1;);");
         output.AppendLine();
-        output.AppendLine("Numeric parameter operators:");
-        output.AppendLine("+= adds to the current value; -= subtracts from it.");
-        output.AppendLine("=5, =+5, and =-5 set absolute values and do not accumulate.");
-        output.AppendLine($"Example: SendText(\"vban1\", VFX.VST({id}).Parameter(0)+=1;);");
+        output.AppendLine("Parameter values:");
+        output.AppendLine("= sets an exact displayed value. += adds to the current value; -= subtracts from it.");
+        output.AppendLine("For a ratio, =4.5 sets 4.5:1, +=0.05 adds 0.05, and -=1 subtracts 1.");
+        output.AppendLine("Unit values work the same way, for example Parameter(<attack index>)=10 ms or +=0.5 ms.");
+        output.AppendLine("Stepped controls also accept Next, Previous, and Default; two-position controls accept Toggle.");
+        output.AppendLine($"Example: SendText(\"vban1\", VFX.VST({id}).Parameter(0)=4.5;);");
 
         var entries = parameterInfo
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
@@ -7572,11 +7620,18 @@ private void RefreshEndpointButtonSelection()
                 ParameterIndex = columns[1].Trim(),
                 ParameterName = columns[2].Trim(),
                 CurrentValue = columns[3].Trim(),
-                Unit = columns.Length >= 5 ? columns[4].Trim() : string.Empty
+                Unit = columns.Length >= 5 ? columns[4].Trim() : string.Empty,
+                CurrentChoice = columns.Length >= 6 ? columns[5].Trim() : string.Empty,
+                Choices = columns.Length >= 7 ? columns[6].Trim() : string.Empty
             })
             .ToList();
+        var programs = entries
+            .Where(static entry => entry.Control.Equals("Program", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         var controls = entries
-            .Where(static entry => !entry.Control.Equals("Parameter", StringComparison.OrdinalIgnoreCase))
+            .Where(static entry =>
+                !entry.Control.Equals("Parameter", StringComparison.OrdinalIgnoreCase) &&
+                !entry.Control.Equals("Program", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var parameters = entries
             .Where(static entry => entry.Control.Equals("Parameter", StringComparison.OrdinalIgnoreCase))
@@ -7657,7 +7712,9 @@ private void RefreshEndpointButtonSelection()
                 match.Parameter.ParameterIndex,
                 match.Parameter.ParameterName,
                 match.Parameter.CurrentValue,
-                match.Parameter.Unit
+                match.Parameter.Unit,
+                match.Parameter.CurrentChoice,
+                match.Parameter.Choices
             });
         }
 
@@ -7669,10 +7726,25 @@ private void RefreshEndpointButtonSelection()
 
         static string ValuePlaceholder(string control) =>
             control.Equals("AB", StringComparison.OrdinalIgnoreCase)
-                ? "<A|B>"
+                ? "<A|B|Toggle>"
                 : control.Equals("GainScale", StringComparison.OrdinalIgnoreCase)
                     ? "<0-200%>"
                     : "<value>";
+
+        if (programs.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("Programs exposed by this VST:");
+            foreach (var program in programs)
+            {
+                output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Program=<number|Next|Previous>;);");
+                output.AppendLine($"  Current: {program.CurrentChoice} = {program.CurrentValue}");
+                if (!string.IsNullOrWhiteSpace(program.Choices))
+                {
+                    output.AppendLine($"  Values: {program.Choices}");
+                }
+            }
+        }
 
         output.AppendLine();
         output.AppendLine("Detected controls for this VST:");
@@ -7695,7 +7767,13 @@ private void RefreshEndpointButtonSelection()
                 output.AppendLine();
                 output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).{control.Control}={valuePlaceholder};);");
                 output.AppendLine($"  Parameter #{control.ParameterIndex}: {control.ParameterName}");
-                output.AppendLine($"  Current: {currentValue}");
+                output.AppendLine(string.IsNullOrWhiteSpace(control.CurrentChoice)
+                    ? $"  Current: {currentValue}"
+                    : $"  Current: {control.CurrentChoice} = {currentValue}");
+                if (!string.IsNullOrWhiteSpace(control.Choices))
+                {
+                    output.AppendLine($"  Values: {control.Choices}");
+                }
                 output.AppendLine($"  Exact index: SendText(\"vban1\", VFX.VST({id}).Parameter({control.ParameterIndex})={valuePlaceholder};);");
             }
         }
@@ -7721,7 +7799,13 @@ private void RefreshEndpointButtonSelection()
                 output.AppendLine();
                 output.AppendLine($"SendText(\"vban1\", VFX.VST({id}).Parameter({parameter.ParameterIndex})=<value>;);");
                 output.AppendLine($"  {parameter.ParameterName}");
-                output.AppendLine($"  Current: {currentValue}");
+                output.AppendLine(string.IsNullOrWhiteSpace(parameter.CurrentChoice)
+                    ? $"  Current: {currentValue}"
+                    : $"  Current: {parameter.CurrentChoice} = {currentValue}");
+                if (!string.IsNullOrWhiteSpace(parameter.Choices))
+                {
+                    output.AppendLine($"  Values: {parameter.Choices}");
+                }
             }
         }
 
@@ -7738,7 +7822,6 @@ private void RefreshEndpointButtonSelection()
 
         return output.ToString();
     }
-
     private async void OpenPluginEditorWithSavedData(PluginNodeSnapshot node)
     {
         if (node.MissingPlugin)
@@ -9831,7 +9914,26 @@ private void RefreshEndpointButtonSelection()
             : $"{node.InputPins} in\n{node.OutputPins} out";
     }
 
-    private void ReconfigurePluginNode(PluginNodeSnapshot node, int mainInputPins, int sidechainInputPins, int outputPins, int mainInputLayoutId, int outputLayoutId)
+    private void ReloadPluginNode(PluginNodeSnapshot node)
+    {
+        ReconfigurePluginNode(
+            node,
+            node.MainInputPins,
+            node.SidechainInputPins,
+            node.OutputPins,
+            node.MainInputLayoutId,
+            node.OutputLayoutId,
+            isReload: true);
+    }
+
+    private void ReconfigurePluginNode(
+        PluginNodeSnapshot node,
+        int mainInputPins,
+        int sidechainInputPins,
+        int outputPins,
+        int mainInputLayoutId,
+        int outputLayoutId,
+        bool isReload = false)
     {
         if (node.PluginIndex < 0)
         {
@@ -9951,7 +10053,9 @@ private void RefreshEndpointButtonSelection()
             oldOutputPins,
             oldConnections);
         ApplyAllGroupExternalRoutes(active: true);
-        AppendLog($"{node.Name}: pin layout set to {NodePinSummary(node)}. Restored {restored} cable(s).");
+        AppendLog(isReload
+            ? $"{node.Name}: reloaded. Restored {restored} cable(s)."
+            : $"{node.Name}: pin layout set to {NodePinSummary(node)}. Restored {restored} cable(s).");
         RefreshEngineCallbackMode();
         RebuildVstNodeList();
         RebuildRoutingCanvas();

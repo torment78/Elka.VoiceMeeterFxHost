@@ -235,7 +235,7 @@ Right-click a plugin node for node-level actions.
 **Open Editor** opens the plugin's native editor window. The editor remains
 usable while audio is processing.
 
-**Info** lists friendly VBAN-TEXT commands for that exact plugin instance, followed by every host-automatable parameter exposed by the VST. It inserts the stable VST ID and shows each parameter index, name, current value, unit, and ready-to-edit `Parameter(index)` command. Unsupported friendly gain, gain-scale, mix, width, pan, or A/B commands are omitted.
+**Info** lists friendly VBAN-TEXT commands for that exact plugin instance, followed by every host-automatable parameter exposed by the VST. It inserts the stable VST ID and shows each parameter index, name, current value, unit, numbered named-choice mappings, host programs, and a ready-to-edit `Parameter(index)` command. Unsupported friendly gain, gain-scale, mix, width, pan, or A/B commands are omitted. Ratios and unit values support exact `=`, relative `+=`/`-=`, and stepped values support `Next`, `Previous`, `Default`, or `Toggle` where applicable.
 
 **Bypass / Disable Bypass** controls the dry path around only that node. An
 enabled bypassed plugin still receives audio so its editor meters can move, but
@@ -359,8 +359,12 @@ realtime callback is idle/unregistered.
   native CMake build. The WPF project automatically re-runs native CMake
   configure before builds so this setting is not left stale.
 - VFX text commands cover delay, volume, direct routing, route enable,
-  mute-standard routing, independent VST power/bypass by stable VST ID, and a
-  conservative set of friendly VST gain, gain-scale, mix, width, pan, and A/B parameters, plus direct `Parameter(index)` access to every host-automatable parameter exposed by the plugin. A friendly control command fails safely when no match exists, and an indexed command fails when its index is outside the current plugin version's range.
+  mute-standard routing, independent VST power/bypass by stable VST ID, editor
+  open/close, targeted VST reload, exposed host programs, and a conservative set
+  of friendly VST gain, gain-scale, mix, width, pan, and A/B parameters, plus
+  direct `Parameter(index)` access to every host-automatable parameter exposed by
+  the plugin. A friendly control command fails safely when no match exists, and
+  an indexed command fails when its index is outside the current plugin version's range.
 - Normal plugins load in the main host. Plugins that match known risky vendor markers can be loaded through the embedded worker host so they do not block the main UI during startup. A faulty main-host plugin can still crash the host process.
 - Some plugins do not support the requested pin layout. If a layout fails, remove
   and re-add the plugin or choose a simpler stereo layout.

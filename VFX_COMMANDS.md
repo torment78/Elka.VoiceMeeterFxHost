@@ -53,6 +53,7 @@ Power the VST on or off:
 
     SendText("vban1", VFX.VST(0).Enable=1;);
     SendText("vban1", VFX.VST(0).Enable=0;);
+    SendText("vban1", VFX.VST(0).Enable=Toggle;);
 
 Enable=0 stops VST processing and blocks audio at that node. It does not silently turn bypass on.
 
@@ -60,8 +61,15 @@ Enable or disable the dry bypass path:
 
     SendText("vban1", VFX.VST(0).Bypass=1;);
     SendText("vban1", VFX.VST(0).Bypass=0;);
+    SendText("vban1", VFX.VST(0).Bypass=Toggle;);
 
 Bypass=1 sends dry audio directly from matching input pins to output pins. When the VST is enabled it still receives and processes audio for editor meters, but its processed output is discarded. Enable=0 plus Bypass=1 keeps the VST powered off while dry audio passes around it.
+
+Open or close the native editor, or reload one node while preserving its state, stable VST ID, group membership, and cables:
+
+    SendText("vban1", VFX.VST(0).Editor=Open;);
+    SendText("vban1", VFX.VST(0).Editor=Close;);
+    SendText("vban1", VFX.VST(0).Reload=1;);
 
 ## Exposed VST Parameter Commands
 
@@ -82,6 +90,13 @@ The host provides conservative shorthand matching for common controls:
     SendText("vban1", VFX.VST(0).DryPan=-25%;);
     SendText("vban1", VFX.VST(0).WetPan=25%;);
     SendText("vban1", VFX.VST(0).AB=B;);
+    SendText("vban1", VFX.VST(0).AB=Toggle;);
+
+When the VST exposes more than one host program or preset, Info lists them as one-based choices:
+
+    SendText("vban1", VFX.VST(0).Program=1;);
+    SendText("vban1", VFX.VST(0).Program=Next;);
+    SendText("vban1", VFX.VST(0).Program=Previous;);
 
 Every exposed host parameter can also be controlled directly by its zero-based index:
 
@@ -93,11 +108,13 @@ Numeric friendly controls and indexed parameters support relative adjustments:
     SendText("vban1", VFX.VST(0).OutputGain-=1 dB;);
     SendText("vban1", VFX.VST(0).Parameter(580)+=0.5 dB;);
 
-`+=` adds to the parameter's current displayed value and `-=` subtracts from it every time the command is received. `=5`, `=+5`, and `=-5` are absolute assignments: repeated commands keep the parameter at positive 5 or negative 5 rather than accumulating. Relative results are clamped to the range exposed by the VST. Non-numeric parameters and A/B accept absolute `=` only.
+`+=` adds to the parameter's current displayed value and `-=` subtracts from it every time the command is received. `=5`, `=+5`, and `=-5` are absolute assignments: repeated commands keep the parameter at positive 5 or negative 5 rather than accumulating. Relative results are clamped to the range exposed by the VST.
+
+Ratios and unit-bearing parameters use their displayed numbers. For example, `Parameter(12)=4.5` sets a ratio to `4.5:1`, `Parameter(12)+=0.05` adds exactly `0.05`, and an attack parameter accepts values such as `10 ms`. Info numbers named stepped values from one, for example `1=Clean` and `2=Vocal`; send that number as the value. Stepped controls also accept `Next`, `Previous`, and `Default`, while two-position controls accept `Toggle`. Minimum and Maximum commands are intentionally not provided.
 
 Use the index shown by **Info** for that loaded VST. Parameter indexes are defined by the plugin and can change after a plugin update, so recheck Info when upgrading a VST. Indexed commands affect only the requested parameter and return an error when the index is outside the plugin's current parameter range.
 
-These commands work only when the plugin exposes a matching host parameter. Unsupported controls return an error and do not alter another parameter. Values use the plugin's displayed format. The wrapper verifies the plugin's text-to-value result and, when necessary, resolves numeric display values itself so a broken plugin conversion cannot silently jump to the minimum value. `MainGain` also accepts the aliases `Gain` and `PluginGain`; it matches only a plugin-wide gain parameter, never a band-specific gain. `Width` also accepts `StereoWidth` and `OutputWidth`. GainScale accepts the plugin's displayed percentage format, such as `100%` or `200%`. A/B accepts A, B, 0, or 1 only when the plugin exposes A/B as a host parameter.
+These commands work only when the plugin exposes a matching host parameter. Unsupported controls return an error and do not alter another parameter. Values use the plugin's displayed format. The wrapper verifies the plugin's text-to-value result and, when necessary, resolves numeric display values itself so a broken plugin conversion cannot silently jump to the minimum value. `MainGain` also accepts the aliases `Gain` and `PluginGain`; it matches only a plugin-wide gain parameter, never a band-specific gain. `Width` also accepts `StereoWidth` and `OutputWidth`. GainScale accepts the plugin's displayed percentage format, such as `100%` or `200%`. A/B accepts A, B, 0, 1, or Toggle only when the plugin exposes A/B as a host parameter.
 
 ## Input Strip Commands
 

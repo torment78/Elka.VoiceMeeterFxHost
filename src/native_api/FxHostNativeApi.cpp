@@ -2588,6 +2588,22 @@ __declspec(dllexport) int __cdecl ElkaFx_WorkerOpenPluginEditor(
     return -1;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_WorkerClosePluginEditor(
+    int handle,
+    wchar_t* status,
+    int statusChars)
+{
+    std::string error;
+    if (closeWorkerPluginEditor(handle, error))
+    {
+        writeWide(L"Worker plugin editor closed.", status, statusChars);
+        return 0;
+    }
+
+    writeWide(L"Worker plugin editor close failed: " + widenUtf8(error), status, statusChars);
+    return -1;
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_WorkerGetPluginState(
     int handle,
     char* utf8Buffer,
@@ -3158,6 +3174,20 @@ __declspec(dllexport) int __cdecl ElkaFx_OpenPluginEditor(int slot, const wchar_
     }
 
     writeWide(L"Plugin editor opened", status, statusChars);
+    return 0;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_ClosePluginEditor(int slot, wchar_t* status, int statusChars)
+{
+    std::lock_guard lock(g_mutex);
+    auto& target = host();
+    if (!target.plugins.closePluginEditor(slot))
+    {
+        writeWide(L"Plugin editor close failed: " + widenUtf8(target.plugins.lastError()), status, statusChars);
+        return -1;
+    }
+
+    writeWide(L"Plugin editor closed", status, statusChars);
     return 0;
 }
 

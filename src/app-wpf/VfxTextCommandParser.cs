@@ -32,6 +32,9 @@ internal enum VfxTextCommandProperty
     DryPan,
     WetPan,
     Ab,
+    Program,
+    Editor,
+    Reload,
     Parameter
 }
 
@@ -207,6 +210,9 @@ internal static partial class VfxTextCommandParser
             "drypan" => VfxTextCommandProperty.DryPan,
             "wetpan" => VfxTextCommandProperty.WetPan,
             "ab" or "compare" => VfxTextCommandProperty.Ab,
+            "program" or "preset" => VfxTextCommandProperty.Program,
+            "editor" => VfxTextCommandProperty.Editor,
+            "reload" => VfxTextCommandProperty.Reload,
             "parameter" => VfxTextCommandProperty.Parameter,
             _ => throw new InvalidOperationException($"Unsupported VFX property: {value}")
         };
@@ -260,7 +266,7 @@ internal static partial class VfxTextCommandParser
     }
 
     [GeneratedRegex(
-        @"^\s*VFX\.VST\((?<target>\d+)\)\.(?:(?<property>Parameter)\((?<parameterIndex>\d+)\)|(?<property>Enable|Enabled|Bypass|Bypassed|InputGain|InGain|OutputGain|OutGain|MainGain|PluginGain|Gain|GainScale|Scale|DryGain|WetGain|Mix|DryWet|Width|StereoWidth|OutputWidth|InputPan|InPan|OutputPan|OutPan|DryPan|WetPan|AB|Compare))\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",
+        @"^\s*VFX\.VST\((?<target>\d+)\)\.(?:(?<property>Parameter)\((?<parameterIndex>\d+)\)|(?<property>Enable|Enabled|Bypass|Bypassed|InputGain|InGain|OutputGain|OutGain|MainGain|PluginGain|Gain|GainScale|Scale|DryGain|WetGain|Mix|DryWet|Width|StereoWidth|OutputWidth|InputPan|InPan|OutputPan|OutPan|DryPan|WetPan|AB|Compare|Program|Preset|Editor|Reload))\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex VstCommandPattern();
 

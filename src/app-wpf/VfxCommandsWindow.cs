@@ -112,8 +112,13 @@ Ch(*)
 VST power and bypass by ID:
 SendText("vban1", VFX.VST(0).Enable=1;);
 SendText("vban1", VFX.VST(0).Enable=0;);
+SendText("vban1", VFX.VST(0).Enable=Toggle;);
 SendText("vban1", VFX.VST(0).Bypass=1;);
 SendText("vban1", VFX.VST(0).Bypass=0;);
+SendText("vban1", VFX.VST(0).Bypass=Toggle;);
+SendText("vban1", VFX.VST(0).Editor=Open;);
+SendText("vban1", VFX.VST(0).Editor=Close;);
+SendText("vban1", VFX.VST(0).Reload=1;);
 
 Enable=0 stops VST processing and blocks the node output.
 Bypass=1 sends dry audio around the node. If the VST is enabled, it still receives
@@ -134,6 +139,12 @@ SendText("vban1", VFX.VST(0).OutputPan=-25%;);
 SendText("vban1", VFX.VST(0).DryPan=-25%;);
 SendText("vban1", VFX.VST(0).WetPan=25%;);
 SendText("vban1", VFX.VST(0).AB=B;);
+SendText("vban1", VFX.VST(0).AB=Toggle;);
+
+Host programs/presets when the VST exposes more than one:
+SendText("vban1", VFX.VST(0).Program=1;);
+SendText("vban1", VFX.VST(0).Program=Next;);
+SendText("vban1", VFX.VST(0).Program=Previous;);
 
 Any exposed host parameter by index:
 SendText("vban1", VFX.VST(0).Parameter(580)=-6 dB;);
@@ -145,7 +156,11 @@ SendText("vban1", VFX.VST(0).Parameter(580)+=0.5 dB;);
 
 += adds to the current displayed value and -= subtracts from it. The forms =5,
 =+5, and =-5 are absolute assignments and do not accumulate on repeated presses.
-Relative values are clamped to the limits reported by the VST.
+Relative values are clamped to the limits reported by the VST. Ratio and unit values
+use their displayed numbers: =4.5 sets 4.5:1, +=0.05 adds 0.05 to the ratio, and
+Parameter(<attack index>)=10 ms sets ten milliseconds. Named stepped values are numbered from 1 in Info,
+for example 1=Clean and 2=Vocal. They also accept Next, Previous, and Default.
+Two-position parameters accept Toggle. Minimum and Maximum commands are not provided.
 
 Use right-click Info on the loaded VST to find its parameter indexes. Indexes belong
 to that exact plugin version and may change when the plugin is updated.
@@ -191,6 +206,7 @@ Volume: Volume, Vol, Gain
 Route enable: RouteEnable, RouteEnabled
 Mute normal: MuteNormal, RouteMute, MuteRoute, RouteMuteNormal
 VST bypass: Bypass, Bypassed
+VST program: Program, Preset
 VST parameter aliases: InGain, OutGain, Gain, PluginGain, Scale, DryWet, StereoWidth, OutputWidth, InPan, OutPan, Compare
 Boolean values: 1, 0, true, false, on, off, yes, no
 
@@ -203,7 +219,8 @@ displayed percentage format, such as 100% or 200%. A/B is available only
 when the plugin exposes A/B as a host parameter.
 
 This command surface controls delay, volume, direct routing, mute-standard routing,
-VST power/bypass, friendly VST controls, and indexed exposed parameters by stable ID. It does not load
-plugins, open editors, change presets, or alter VST node wiring.
+VST power/bypass, editor visibility, targeted VST reload, exposed host programs,
+friendly VST controls, and indexed exposed parameters by stable ID. It does not load
+new plugins or alter VST node wiring.
 """;
 }

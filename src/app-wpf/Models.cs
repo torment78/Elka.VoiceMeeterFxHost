@@ -1771,6 +1771,19 @@ internal sealed class NativeEngineClient : IDisposable
         return _lastStatus;
     }
 
+    public string ClosePluginEditor(int slot)
+    {
+        if (!_attached)
+        {
+            return _lastStatus;
+        }
+
+        var status = new StringBuilder(512);
+        ElkaFx_ClosePluginEditor(slot, status, status.Capacity);
+        _lastStatus = status.Length > 0 ? status.ToString() : _lastStatus;
+        return _lastStatus;
+    }
+
     public string GetPluginNodeState(int slot)
     {
         return TryGetPluginNodeState(slot, out var state) ? state : string.Empty;
@@ -2413,6 +2426,9 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_OpenPluginEditor(int slot, string windowTitle, StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_ClosePluginEditor(int slot, StringBuilder status, int statusChars);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginNodeStateLength(int slot);

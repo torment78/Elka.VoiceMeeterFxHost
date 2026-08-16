@@ -20,6 +20,7 @@ bool probePluginFile(const std::string& format, const std::string& fileOrIdentif
 int createWorkerPluginProcessor(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, int inputPins, int outputPins, int inputLayoutId, int outputLayoutId, std::string& error);
 bool processWorkerPluginProcessor(int handle, float* planarData, int channelCount, int samples);
 bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::string& error);
+bool closeWorkerPluginEditor(int handle, std::string& error);
 std::string workerPluginStateBase64(int handle, std::string& error);
 bool setWorkerPluginStateBase64(int handle, const std::string& stateBase64, std::string& error);
 std::string workerPluginPresetBase64(int handle, std::string& error);
@@ -118,7 +119,7 @@ public:
     void removePluginNode(int slot) noexcept;
     void clearPluginNodes() noexcept;
     bool openPluginEditor(int slot, const std::string& windowTitle);
-    void closePluginEditor(int slot) noexcept;
+    bool closePluginEditor(int slot);
     std::string pluginNodeStateBase64(int slot);
     bool setPluginNodeStateBase64(int slot, const std::string& stateBase64);
     std::string pluginNodePresetBase64(int slot);

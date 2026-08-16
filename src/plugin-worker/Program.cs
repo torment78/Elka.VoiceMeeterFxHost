@@ -28,6 +28,7 @@ internal static class Program
     private const int CommandSetParameters = 8;
     private const int CommandGetParameterInfo = 9;
     private const int CommandSetControl = 10;
+    private const int CommandCloseEditor = 11;
 
     [STAThread]
     private static int Main(string[] args)
@@ -264,6 +265,7 @@ internal static class Program
         return command switch
         {
             CommandOpenEditor => OpenWorkerEditor(accessor, handle, statePointer, stateCapacity, status),
+            CommandCloseEditor => ElkaFx_WorkerClosePluginEditor(handle, status, status.Capacity),
             CommandGetState => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginState),
             CommandSetState => ApplyWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerSetPluginState),
             CommandGetPreset => CaptureWorkerText(accessor, handle, statePointer, stateCapacity, status, ElkaFx_WorkerGetPluginPreset),
@@ -489,6 +491,12 @@ internal static class Program
     private static extern int ElkaFx_WorkerOpenPluginEditor(
         int handle,
         string windowTitle,
+        StringBuilder status,
+        int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_WorkerClosePluginEditor(
+        int handle,
         StringBuilder status,
         int statusChars);
 

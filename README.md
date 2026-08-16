@@ -384,7 +384,7 @@ Release publish artifacts land here:
 ```text
 artifacts\release\ElkaVoiceMeeterFxHost.exe
 artifacts\release\ElkaVoiceMeeterFxHost-win-x64-framework-dependent.zip
-artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.7.6.5.exe
+artifacts\release\ElkaVoiceMeeterFxHostSetup-v0.8.0.0.exe
 ```
 
 The release EXE is a compact framework-dependent direct download and needs the

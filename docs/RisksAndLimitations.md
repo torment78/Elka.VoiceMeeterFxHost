@@ -1,42 +1,83 @@
-# Risks and Limitations
+# Risks And Limitations
 
-## VoiceMeeter Callback Ownership
+## VoiceMeeter Callback Limits
 
-Only one app can own a callback stream for a given mode. Registration can fail
-if another application already registered that stream.
+VoiceMeeter owns the audio clock and callback schedule. Very high sample rates
+combined with very small block sizes can produce clicks even when the FX Host
+processing time is low. The practical limit depends on the VoiceMeeter edition,
+driver, system, and active routing.
+
+Use a stable VoiceMeeter buffer first, then reduce it gradually. ASIO Patch is an
+alternative engine path for systems that need different low-latency behavior.
+
+Only one application can own a given VoiceMeeter callback mode. Registration can
+fail when another callback client already owns it.
+
+## Incomplete Routes Are Silent
+
+Connecting a source into a VST path claims that audio channel. The path stays
+silent until a cable reaches a valid destination. This is intentional and
+prevents dry audio from leaking around an unfinished graph.
+
+An empty VST group is also silent until a complete internal chain exists.
 
 ## Plugin Safety
 
-Third-party plugins run arbitrary native code. If a plugin is hosted in-process
-and crashes, the host process can crash.
+VST plugins are third-party native code. They can crash, deadlock, allocate,
+perform disk or network access, or block on licensing.
 
-## Real-Time Behavior
+Known risky vendor patterns can use the sandbox worker, which protects the main
+WPF process from many plugin failures. It cannot make a faulty plugin
+realtime-safe, and normal in-process plugins can still crash the main host.
 
-Some plugins allocate, lock, start threads, touch disk, or perform license checks
-from their processing path. That can cause dropouts in a VoiceMeeter callback.
+## Plugin Authorization
+
+UAD, Waves, Slate, iLok, and similar plugins can take longer to initialize while
+their vendor software checks licensing or account state. Keep UA Connect, iLok
+License Manager, and related vendor services correctly authenticated.
+
+The app log distinguishes scan, probe, worker startup, state restoration, and
+editor operations so a licensing delay is not mistaken for a frozen scan.
+
+## Plugin State
+
+The host saves JUCE state data, presets, and parameter fallbacks where exposed.
+Not every VST implements state storage correctly, and state formats can change
+between plugin versions. Keep exported saves before updating important plugins.
 
 ## Plugin Latency
 
-Many effects report latency. VoiceMeeter's callback API does not provide a
-host-style latency compensation contract for this app. We need a deliberate
-latency policy before using lookahead limiters, linear-phase EQs, and similar
-plugins.
+Lookahead limiters, linear-phase EQs, convolution processors, and oversampling
+plugins can report significant latency. VoiceMeeter's callback API does not
+provide a DAW-style automatic latency compensation contract for this graph.
+
+## Channel Layouts
+
+The UI can expose stereo, wider multichannel, and stereo sidechain pins. A VST
+must accept the requested JUCE bus layout. Some plugins advertise a layout but
+fail when the host activates it.
+
+Use stereo when a wider layout fails. Sidechain pins work only when the plugin
+provides a usable sidechain bus.
 
 ## VST2
 
-VST2 support is a legal/dependency issue. Steinberg discontinued the public VST2
-SDK and no longer issues new VST2 agreements. JUCE can host VST2 only when the
-project is built with valid VST2 SDK headers available to the developer.
+VST2 support requires valid legacy SDK headers at build time. The released app
+is x64 and cannot load 32-bit plugin binaries. Prefer VST3 when both formats are
+available.
 
-Recommendation: implement VST3 first, then add VST2 only if the local SDK/legal
-position is settled.
+## ASIO Patch Ownership
 
-## Main Mode Complexity
+ASIO Patch and the normal VoiceMeeter callback do not run together. While ASIO
+Patch is active, Output, Main, In -> Out, and Out -> Out controls are disabled.
+Stop ASIO Patch to return to those callback routes.
 
-Main mode can replace output busses and inspect both inputs and outputs. It is
-powerful, but it is easier to make a routing mistake than in Input Insert or
-Output Insert mode.
+The selected ASIO Patch inputs correspond to VoiceMeeter `Patch.insert` state.
+An input with Patch.insert enabled needs an active insert host to return audio.
 
-Recommendation: validate Phase 1 in Input Insert first, then Output Insert, then
-Main.
+## Resource Use
 
+Large VSTs can reserve substantial private memory, and sandboxed VSTs appear as
+a separate worker process in Task Manager. The app status uses Task
+Manager-style process CPU and working-set memory, while vendor plugins can also
+reserve memory outside the visible main process.

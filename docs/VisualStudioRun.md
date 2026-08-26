@@ -1,81 +1,92 @@
-# Run in Visual Studio
+# Run In Visual Studio
+
+This page is for developers. Normal users should install a release and follow
+the [User Guide](UserGuide.md).
 
 ## Prerequisites
 
-- Windows 10 or Windows 11.
-- Visual Studio 2026 Insider or Visual Studio 2022 with:
-  - `.NET desktop development`
-  - `Desktop development with C++`
-  - CMake tools for Windows
-- .NET 8 Desktop Runtime installed on the target PC.
-- VoiceMeeter installed and running for audio callback testing.
-- `external/JUCE` present when VST3 hosting is needed.
-- Optional: a valid local VST2 SDK path. See `docs/VST2Workflow.md`.
+- Windows 10 or Windows 11 x64.
+- Visual Studio 2026 Insider or Visual Studio 2022.
+- `.NET desktop development` workload.
+- `Desktop development with C++` workload.
+- CMake tools for Windows.
+- .NET 8 SDK and Desktop Runtime.
+- VoiceMeeter installed and running for callback tests.
+- JUCE under `external/JUCE`.
+- Optional valid VST2 SDK headers; see [VST2 Workflow](VST2Workflow.md).
 
-## Open the Solution
+## Open The Solution
 
-Open this file in Visual Studio:
+Open this file from the repository root:
 
 ```text
-C:\Users\torme\source\repos\Elka.VoiceMeeterFxHost\Elka.VoiceMeeterFxHost.sln
+Elka.VoiceMeeterFxHost.sln
 ```
 
 Set `Elka.VoiceMeeterFxHost.App` as the startup project if Visual Studio does
-not pick it automatically.
+not select it automatically.
 
-## Build and Launch
+## Build And Launch
 
-Use `Debug` and `x64`.
+Use `Debug` and `x64`, start VoiceMeeter, then press `F5`.
 
-When the WPF project builds, MSBuild also runs CMake for the native bridge and
-copies the native DLL beside the WPF EXE:
+Building the WPF project also configures and builds the native CMake targets,
+builds the plugin worker, and copies the native DLLs beside the WPF output:
 
 ```text
 src\app-wpf\bin\Debug\net8.0-windows\win-x64\Elka.VoiceMeeterFxHost.App.exe
 src\app-wpf\bin\Debug\net8.0-windows\win-x64\ElkaVoiceMeeterFxHost.Native.dll
+src\app-wpf\bin\Debug\net8.0-windows\win-x64\ElkaVoiceMeeterFxHost.RealtimeCore.dll
 ```
 
-Start VoiceMeeter first, then press `F5` in Visual Studio.
-
-The WPF project re-runs CMake configure before the native bridge build. This is
-intentional: it keeps the native build cache synchronized with the current VST2
-SDK setting instead of leaving stale CMake settings behind.
-
-Native CMake uses `vs2026-x64` by default, with `vs2022-x64` as the fallback.
-The project should not use the old `vs2019-x64` preset.
-
-If the app fails before the main window appears, check:
-
-```text
-%LOCALAPPDATA%\ElkaVoiceMeeterFxHost\startup-crash.log
-```
-
-Startup exceptions are also shown in a message box.
+The project re-runs CMake configure before the native build so the current
+JUCE and VST2 paths do not remain stale in the CMake cache. Native CMake uses
+the `vs2026-x64` preset first and `vs2022-x64` as the supported fallback.
 
 ## VST2 SDK
 
-VST2 is optional. The easiest local layout is:
+VST2 is optional. The repo-local layout is:
 
 ```text
 external\VST2_SDK\pluginterfaces\vst2.x\aeffect.h
 ```
 
-If that file exists, the Visual Studio build enables VST2 hosting. For custom
-locations, set `Vst2SdkPath` or `ELKA_VST2_SDK_PATH`; see
-`docs/VST2Workflow.md`.
+For a custom location, set `Vst2SdkPath` or `ELKA_VST2_SDK_PATH` before opening
+or building the project. See [VST2 Workflow](VST2Workflow.md).
 
 ## First Test
 
-1. Open the app.
-2. Select `Input`.
-3. Select a VoiceMeeter input section such as `VAIO`.
-4. Use `Channels` to verify delay, volume, and direct routing.
-5. Use `VST` to add a plugin node and drag cables from the left endpoint pins
-   through the plugin to the right endpoint pins.
-6. Right-click an endpoint card to switch between `Minimize Pins`, `Expand Pins`,
-   and route hue colors.
-7. Right-click a VST node to open the editor, bypass it, change pin layout, add
-   sidechain input, or remove it.
+1. Start VoiceMeeter.
+2. Run the WPF startup project.
+3. Confirm the header reports the current VoiceMeeter sample rate and block size.
+4. Select **Input** and a hardware or virtual input.
+5. Open **Channels** and test delay or volume on one enabled channel.
+6. Open **VST / Route**, scan plugins, and add a stereo VST.
+7. Complete the route from a left source, through the VST, to the matching right
+   destination. An incomplete VST route is intentionally silent.
+8. Test the [Ctrl-click workflow](CtrlClickRouting.md).
 
-The `Input`, `Output`, and `Main` buttons switch the visible canvas. They should
-not disable audio already running on another side.
+The **Input**, **Output**, and **Main** buttons change the visible callback
+canvas. Existing active routes on another side continue running. When ASIO Patch
+is active, Output and Main are disabled because the normal callback is fully
+disconnected.
+
+## Startup Diagnostics
+
+If the app fails before the main window appears, check:
+
+```text
+%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost\startup-crash.log
+```
+
+Runtime diagnostics are written to:
+
+```text
+%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost\runtime.log
+```
+
+## Next Steps
+
+- [Build Instructions](BuildInstructions.md)
+- [Publishing And GitHub Releases](Publishing.md)
+- [Current Architecture](Architecture.md)

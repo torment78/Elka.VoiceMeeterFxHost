@@ -1,10 +1,19 @@
-# Realtime Core Isolation
+# Realtime Core Status
 
-This branch keeps the legacy native bridge as the default application backend and adds a second native bridge:
+The build produces two native DLLs:
 
-- `ElkaVoiceMeeterFxHost.Native.dll`: existing full bridge with VoiceMeeter, realtime callback, JUCE plugin host, plugin scanning/editor support, and Insert ASIO.
-- `ElkaVoiceMeeterFxHost.RealtimeCore.dll`: new JUCE-free realtime callback bridge containing only VoiceMeeter Remote API access and `RealtimeEngine`.
+- `ElkaVoiceMeeterFxHost.Native.dll` is the active application backend. It
+  contains VoiceMeeter integration, the realtime engine, JUCE plugin hosting,
+  plugin scanning/editors, sandbox transport, and Insert ASIO support.
+- `ElkaVoiceMeeterFxHost.RealtimeCore.dll` is a secondary JUCE-free callback
+  bridge containing VoiceMeeter Remote API access and `RealtimeEngine`.
 
-The first phase is intentionally conservative. The WPF app still calls the legacy bridge, while build and publish also produce the realtime core DLL beside it. This gives us a testable rollback point before moving callback routing into the isolated path.
+The released WPF application currently imports
+`ElkaVoiceMeeterFxHost.Native.dll`. It does not expose a backend selector for the
+secondary realtime-core DLL.
 
-The next phase should add a managed backend selector and then move callback-only commands to `ElkaVoiceMeeterFxHost.RealtimeCore.dll`. Plugin hosting should remain outside the realtime callback path and communicate with the core through a small, explicit audio/control boundary.
+`ElkaVoiceMeeterFxHost.RealtimeCore.dll` remains in build and portable outputs
+as a tested architectural boundary and rollback/reference implementation. Any
+future switch to it must preserve the current routing graph, callback ownership,
+ASIO Patch exclusivity, plugin boundary, and saved-state behavior before it can
+replace the active bridge.

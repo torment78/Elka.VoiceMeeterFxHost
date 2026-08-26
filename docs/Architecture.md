@@ -1,170 +1,137 @@
-# Architecture Proposal
+# Current Architecture
 
-## Goal
+Elka VoiceMeeter FX Host is a WPF control application backed by native C++
+audio, VoiceMeeter integration, and JUCE plugin hosting.
 
-Build a Windows application that inserts directly into VoiceMeeter's audio path
-using the VoiceMeeter Remote Audio Callback API.
+## Signal Paths
 
-The target signal flow is:
+Normal callback operation:
 
 ```text
-VoiceMeeter -> Elka VoiceMeeter FX Host -> VoiceMeeter
+VoiceMeeter callback -> native realtime engine -> VST graph -> VoiceMeeter callback
 ```
 
-This avoids external ASIO Insert routing through Cantabile, LightHost,
-Minihost, Element, Pedalboard, and similar hosts.
+ASIO Patch operation:
 
-## First Principle
+```text
+VoiceMeeter Insert Virtual ASIO -> native realtime engine -> VST graph -> Insert ASIO
+```
 
-VoiceMeeter is the audio device and clock owner. The app is a callback processor
-inside that stream. JUCE should be used later for plugin hosting, scanning,
-plugin editors, state management, and UI, but the first prototype should verify
-the VoiceMeeter callback path without VST complexity.
+The two engine modes are mutually exclusive. Starting ASIO Patch disconnects
+the normal VoiceMeeter callback before opening the Insert ASIO driver. Stopping
+ASIO Patch returns ownership to the normal callback path.
 
-## Layers
+## Application Layers
 
 ```mermaid
-classDiagram
-  MainWindow --> AppController
-  AppController --> VoiceMeeterClient
-  AppController --> RealtimeEngine
-  AppController --> PluginHostLayer
-  VoiceMeeterClient --> VoicemeeterRemoteApi
-  VoiceMeeterClient --> RealtimeEngine
-  RealtimeEngine --> GainProcessor
-  RealtimeEngine --> PluginChain
-  PluginHostLayer --> PluginScanner
-  PluginHostLayer --> PluginInstanceFactory
-  PluginChain --> HostedPluginNode
-  HostedPluginNode --> PluginEditorWindow
+flowchart LR
+    UI[WPF control surface] --> Managed[Managed state and routing model]
+    Managed --> NativeAPI[Native C API bridge]
+    NativeAPI --> VM[VoiceMeeter Remote API]
+    NativeAPI --> Engine[Realtime engine]
+    NativeAPI --> Host[JUCE plugin host]
+    Host --> Worker[Optional sandbox worker]
+    Engine --> Host
 ```
 
-## Core Engine
+### WPF Control Surface
 
-Responsible for real-time audio processing and callback statistics.
+`src/app-wpf` owns:
 
-Current prototype:
+- the main window, canvases, nodes, groups, cables, menus, and tray behavior
+- plugin browser and scan progress
+- save/load/export state
+- VBAN-TEXT command parsing and dispatch
+- plugin editor window requests
+- non-realtime status and log presentation
 
-- Per-channel atomic gain parameters.
-- Per-channel atomic delay parameters.
-- Per-channel atomic enable/bypass parameters.
-- Atomic selected source-group range.
-- No allocations inside the callback.
-- No file I/O, logging, UI, or locks inside the callback.
-- Interprets VoiceMeeter input/output/main callback buffer layouts.
+The WPF layer does not process audio samples.
 
-Future:
+### Managed State And Routing
 
-- Plugin chain processing.
-- Latency reporting.
-- Delay compensation strategy.
-- Offline-free, real-time-only processing mode.
+The managed model stores channel settings, endpoint layouts, VST nodes, VST
+groups, stable VST IDs, cable definitions, plugin state, window placement, and
+user preferences. UI changes are converted into compact native control updates.
 
-## VoiceMeeter Integration Layer
+The graph is directional. Endpoint sources are on the left, processing nodes are
+in the middle, and destinations are on the right. A claimed but incomplete VST
+path is silent until it reaches a destination.
 
-Responsible for:
+### Native API Bridge
 
-- Finding the installed VoiceMeeter Remote DLL.
-- Loading the correct 32-bit or 64-bit DLL.
-- Calling `VBVMR_Login()` and `VBVMR_Logout()`.
-- Registering one callback mode at a time.
-- Starting/stopping callback processing.
-- Passing callback buffers to the core engine.
+`src/native_api` exports the C interface consumed by WPF. It coordinates:
 
-## Plugin Host Layer
+- VoiceMeeter login and callback registration
+- Input, Output, and Main callback modes
+- Insert ASIO probing, start, stop, and format handling
+- realtime engine preparation and statistics
+- plugin scan, load, state, parameter, editor, and worker operations
 
-Use JUCE hosting classes where possible:
+The released WPF app currently calls `ElkaVoiceMeeterFxHost.Native.dll`.
 
-- `juce::AudioPluginFormatManager`
-- `juce::KnownPluginList`
-- `juce::PluginDirectoryScanner`
-- `juce::AudioPluginInstance`
-- `juce::AudioProcessorGraph`
-- `juce::AudioProcessorEditor`
+### Realtime Engine
 
-LightHost is useful as an architectural reference because it demonstrates a
-simple JUCE `AudioProcessorGraph` chain and plugin editor windows. It should not
-be used as the starting point for this project.
+`src/engine` owns the time-critical sample path:
 
-Current implementation:
+- channel delay and gain
+- direct routes and passthrough claims
+- VST input/output routing
+- VST group edge routing
+- callback and ASIO block processing
+- preallocated scratch and delay storage
 
-- JUCE is optional and expected at `external/JUCE`.
-- If JUCE is present, the app builds a VST3 discovery layer using
-  `juce::AudioPluginFormatManager`, `juce::KnownPluginList`, and
-  `juce::PluginDirectoryScanner`.
-- Discovery runs from the UI thread for the prototype and does not touch the
-  VoiceMeeter callback thread.
-- Audio processing through VST plugins is not enabled yet.
+Preparation occurs outside the callback. The callback avoids UI access, file
+access, logging, plugin scanning, and avoidable allocation or locking.
 
-## UI Layer
+### Plugin Host
 
-Phase 1 uses a native Win32 UI so the VoiceMeeter callback can be verified
-without external dependencies. The design leaves the engine isolated so a JUCE
-UI can replace or wrap it later.
+`src/plugins` uses JUCE for VST discovery and hosting. It owns plugin instances,
+bus layouts, state blobs, exposed parameters, programs, editors, bypass/power
+state, and processing calls.
 
-Required first controls:
+Normal plugins can run in the main host. Plugins matching known risky vendor
+markers can run in the embedded `Elka.PluginWorker` process. The worker keeps
+licensing and plugin faults away from the WPF UI process while shared audio and
+control structures connect it to the native engine.
 
-- Connection status.
-- Callback mode selector.
-- Enable/disable processing.
-- Source/group selector.
-- Visible per-channel delay and gain strip bank.
-- Link faders control.
-- Start/stop callback.
-- Sample rate, block size, channel count, callback CPU, and latency display.
+### VoiceMeeter Integration
 
-## Routing Layer
+`src/voicemeeter` dynamically loads the installed VoiceMeeter Remote API. The
+engine registers one callback mode at a time and receives non-interleaved float
+channel buffers owned and clocked by VoiceMeeter.
 
-Routing is intentionally a separate future layer. VoiceMeeter buffers are
-channel-separated float pointers, so routing should be modeled explicitly as a
-read-channel/write-channel map.
+The custom VoiceMeeter **FX Host** button uses the Remote API custom-button
+contract and sends a Windows command back to the WPF window.
 
-Future routing features:
+## Persistence
 
-- Multiple simultaneous input channel maps.
-- Multiple simultaneous output channel maps.
-- Mono to stereo.
-- Stereo to mono.
-- Multichannel plugin handling.
-- Per-strip or per-bus processing chains.
+User data is stored under:
 
-Current routing foundation:
+```text
+%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost
+```
 
-- Input Insert exposes named source groups: Strip 1-5, Virtual Input 1,
-  Virtual AUX, and Virtual VAIO 3.
-- Output Insert and Main expose named bus groups A1-A5/B1-B3.
-- Selecting a source group opens two visible channel lanes for stereo strips or
-  eight visible channel lanes for virtual inputs and busses.
-- Each lane has a delay strip on the left and gain fader on the right.
-- Delay range is `0-10000 ms`.
-- The `Link faders` control lets one moved strip/fader update every channel in
-  the selected group together.
-- Untargeted channels are passed through unchanged.
-- Selecting a group changes what the controls edit; previously configured
-  channels keep processing.
+Saved state includes plugin cache, custom scan folders, channel controls,
+routes, nodes, groups, cables, VST state, endpoint display settings, VBAN
+settings, tray/startup settings, and window placement.
 
-This keeps both workflows available:
+**Save As** exports a portable JSON representation. A missing plugin remains as
+a visible placeholder so the graph can be repaired without losing its layout.
 
-- Group processing: one chain across a stereo strip, virtual input block, or bus.
-- Mono processing: one chain on a single channel, such as only left or right.
+## Secondary Realtime Core
 
-Future node editor direction:
+The build also produces `ElkaVoiceMeeterFxHost.RealtimeCore.dll`. It is a
+JUCE-free experimental callback bridge and rollback/reference boundary. The
+released WPF application does not currently select it as its backend. See
+[Realtime Core Status](RealtimeCoreIsolation.md).
 
-- VoiceMeeter targets become input/output pins.
-- Plugin chains become graph nodes.
-- Dragging from a channel pin to a plugin input creates a processing edge.
-- Dragging from the plugin output to a channel pin creates the return edge.
-- The current per-channel settings bank is the first lightweight version of
-  that lane model.
+## Main Source Areas
 
-## Persistence Layer
-
-Future settings:
-
-- Plugin scan paths.
-- Plugin blacklist.
-- Active chains.
-- Plugin state blobs.
-- Window positions.
-- Callback mode.
-- Routing maps.
+- `src/app-wpf`: WPF UI and managed state
+- `src/native_api`: primary native bridge
+- `src/realtime_core_api`: secondary JUCE-free bridge
+- `src/engine`: realtime processing
+- `src/plugins`: JUCE VST host and sandbox transport
+- `src/plugin-worker`: out-of-process plugin worker
+- `src/voicemeeter`: VoiceMeeter Remote API integration
+- `installer`: Inno Setup packaging

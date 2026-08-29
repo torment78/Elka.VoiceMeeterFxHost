@@ -83,6 +83,21 @@ internal static class VoicemeeterIoLayout
 
     public static IReadOnlyList<IoEndpoint> BuildCanvasOutputs(VoicemeeterKind kind) => BuildOutputEndpoints(kind);
 
+    public static int InputChannelCount(VoicemeeterKind kind)
+    {
+        return BuildInputEndpoints(kind).Sum(static endpoint => endpoint.ChannelCount);
+    }
+
+    public static int OutputChannelCount(VoicemeeterKind kind)
+    {
+        return BuildOutputEndpoints(kind).Sum(static endpoint => endpoint.ChannelCount);
+    }
+
+    public static bool IsChannelAvailable(CallbackMode mode, VoicemeeterKind kind, int channel)
+    {
+        return channel >= 0 && channel < (mode == CallbackMode.Output ? OutputChannelCount(kind) : InputChannelCount(kind));
+    }
+
     private static IReadOnlyList<IoEndpoint> BuildInputEndpoints(VoicemeeterKind kind)
     {
         var spec = GetSpec(kind);
@@ -510,6 +525,22 @@ internal sealed class CanvasConnectionSnapshot
     public int ToPin { get; set; } = -1;
 }
 
+internal sealed class VoicemeeterEditionWorkspace
+{
+    public CallbackMode SelectedMode { get; set; } = CallbackMode.Input;
+    public string? SelectedEndpointName { get; set; }
+    public string? SelectedInputEndpointName { get; set; }
+    public string? SelectedOutputEndpointName { get; set; }
+    public bool InsertAsioAutoStart { get; set; }
+    public List<string> InsertAsioEndpointKeys { get; set; } = [];
+    public List<ChannelSettingsSnapshot> Endpoints { get; set; } = [];
+    public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];
+    public List<PluginGroupSnapshot> PluginGroups { get; set; } = [];
+    public List<CanvasConnectionSnapshot> CanvasConnections { get; set; } = [];
+    public Dictionary<string, double> EndpointCanvasYOffsets { get; set; } = [];
+    public Dictionary<string, string> EndpointRouteHues { get; set; } = [];
+}
+
 internal sealed class FxHostSettings
 {
     public VoicemeeterKind Kind { get; set; } = VoicemeeterKind.Potato;
@@ -541,6 +572,7 @@ internal sealed class FxHostSettings
     public List<CanvasConnectionSnapshot> CanvasConnections { get; set; } = [];
     public Dictionary<string, double> EndpointCanvasYOffsets { get; set; } = [];
     public Dictionary<string, string> EndpointRouteHues { get; set; } = [];
+    public Dictionary<string, VoicemeeterEditionWorkspace> EditionWorkspaces { get; set; } = [];
 }
 
 internal static class FxHostSettingsStore
@@ -693,6 +725,22 @@ internal sealed class NativeEngineClient : IDisposable
     public bool IsAttached => _attached;
 
     public string LastStatus => _lastStatus;
+
+    public VoicemeeterKind GetRunningVoicemeeterKind()
+    {
+        if (!_attached)
+        {
+            return VoicemeeterKind.Unknown;
+        }
+
+        return ElkaFx_GetVoicemeeterType() switch
+        {
+            1 => VoicemeeterKind.Standard,
+            2 => VoicemeeterKind.Banana,
+            3 => VoicemeeterKind.Potato,
+            _ => VoicemeeterKind.Unknown
+        };
+    }
 
     public bool HasAudioClock => _attached && GetStats().SampleRate > 0;
 
@@ -1196,7 +1244,7 @@ internal sealed class NativeEngineClient : IDisposable
         var status = new StringBuilder(1024);
         try
         {
-            ElkaFx_ProbeInsertAsio(ExpectedInsertAsioChannelCount(kind), status, status.Capacity);
+            ElkaFx_ProbeInsertAsio(VoicemeeterIoLayout.InputChannelCount(kind), status, status.Capacity);
         }
         catch (SEHException ex)
         {
@@ -1218,7 +1266,7 @@ internal sealed class NativeEngineClient : IDisposable
         var status = new StringBuilder(1024);
         try
         {
-            ElkaFx_StartInsertAsio(ExpectedInsertAsioChannelCount(kind), status, status.Capacity);
+            ElkaFx_StartInsertAsio(VoicemeeterIoLayout.InputChannelCount(kind), status, status.Capacity);
         }
         catch (SEHException ex)
         {
@@ -1242,7 +1290,7 @@ internal sealed class NativeEngineClient : IDisposable
         int result;
         try
         {
-            result = ElkaFx_RestartInsertAsioIfFormatChanged(ExpectedInsertAsioChannelCount(kind), status, status.Capacity);
+            result = ElkaFx_RestartInsertAsioIfFormatChanged(VoicemeeterIoLayout.InputChannelCount(kind), status, status.Capacity);
         }
         catch (SEHException ex)
         {
@@ -1312,16 +1360,6 @@ internal sealed class NativeEngineClient : IDisposable
 
     public bool IsInsertAsioRunning => _attached && ElkaFx_IsInsertAsioRunning() != 0;
     public bool IsInsertAsioOpen => _attached && ElkaFx_IsInsertAsioOpen() != 0;
-
-    private static int ExpectedInsertAsioChannelCount(VoicemeeterKind kind)
-    {
-        return kind switch
-        {
-            VoicemeeterKind.Standard => 12,
-            VoicemeeterKind.Banana => 22,
-            _ => 34
-        };
-    }
 
     public void ApplyChannelSettings(EndpointChannelSettings settings)
     {
@@ -2198,6 +2236,9 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_Initialize(StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetVoicemeeterType();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_Shutdown();

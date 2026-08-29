@@ -230,6 +230,20 @@ std::wstring VoicemeeterClient::dllPath() const
     return api.dllPath();
 }
 
+bool VoicemeeterClient::getVoicemeeterType(int& type) const noexcept
+{
+    type = 0;
+    if (connectionState == ConnectionState::Disconnected)
+        return false;
+
+    long apiType = 0;
+    if (api.getVoicemeeterType(&apiType) != 0 || apiType < 1 || apiType > 3)
+        return false;
+
+    type = static_cast<int>(apiType);
+    return true;
+}
+
 bool VoicemeeterClient::getConfiguredSampleRate(int& sampleRate) const noexcept
 {
     float value = 0.0f;

@@ -57,6 +57,7 @@ public:
     CallbackCommandStats callbackStats() const noexcept;
     std::wstring statusText() const;
     std::wstring dllPath() const;
+    bool getVoicemeeterType(int& type) const noexcept;
     bool getConfiguredSampleRate(int& sampleRate) const noexcept;
     bool refreshParameters() const noexcept;
     bool getParameterFloat(const char* parameterName, float& value) const noexcept;

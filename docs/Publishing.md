@@ -45,7 +45,7 @@ To test that profile without uploading, set:
 After `gh auth login`:
 
 ```powershell
-.\scripts\publish-release.ps1 -Tag v0.8.0.0 -Upload
+.\scripts\publish-release.ps1 -Tag v0.8.1.0 -Upload
 ```
 
 The repository script creates or updates the release and uploads the normal EXE,

@@ -1702,6 +1702,25 @@ __declspec(dllexport) int __cdecl ElkaFx_Initialize(wchar_t* status, int statusC
     return started ? 0 : -1;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_GetVoicemeeterType()
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        auto& target = host();
+        std::wstring error;
+        if (!target.client.connect(error))
+            return 0;
+
+        int type = 0;
+        return target.client.getVoicemeeterType(type) ? type : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
 __declspec(dllexport) void __cdecl ElkaFx_Shutdown()
 {
     std::unique_lock scanLock(g_scanMutex, std::try_to_lock);

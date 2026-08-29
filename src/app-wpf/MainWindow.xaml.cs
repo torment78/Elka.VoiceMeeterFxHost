@@ -26,6 +26,10 @@ public partial class MainWindow : Window
     private PluginScanProgressWindow? _pluginScanWindow;
     private FxHostSettings _settings = new();
     private VoicemeeterKind _kind = VoicemeeterKind.Potato;
+    private bool _voicemeeterKindDetectedFromApi;
+    private VoicemeeterKind _workspaceSourceKind = VoicemeeterKind.Unknown;
+    private bool _restoredSavedEditionWorkspace;
+    private bool _normalizedEndpointLayout;
     private CallbackMode _selectedMode = CallbackMode.Input;
     private IoEndpoint? _selectedEndpoint;
     private EndpointChannelSettings? _selectedChannelSettings;
@@ -291,6 +295,20 @@ public partial class MainWindow : Window
         SelectWorkspaceView(WorkspaceView.Vst);
         ApplyVbanControlSettingsFromUi(showErrors: false);
         AppendLog("Ready.");
+        AppendLog(_voicemeeterKindDetectedFromApi
+            ? $"Detected running {VoicemeeterKindInfo.DisplayName(_kind)} from the VoiceMeeter Remote API."
+            : $"VoiceMeeter edition was not available from the Remote API; using saved {VoicemeeterKindInfo.DisplayName(_kind)} layout.");
+        if (_workspaceSourceKind != VoicemeeterKind.Unknown && _workspaceSourceKind != _kind)
+        {
+            var action = _restoredSavedEditionWorkspace ? "Restored its saved workspace." : "Started a new workspace.";
+            AppendLog(
+                $"VoiceMeeter edition changed from {VoicemeeterKindInfo.DisplayName(_workspaceSourceKind)} to " +
+                $"{VoicemeeterKindInfo.DisplayName(_kind)}. {action} The previous workspace remains stored and inactive.");
+        }
+        if (_normalizedEndpointLayout)
+        {
+            AppendLog("Reset overlapping endpoint positions to the default ordered layout.");
+        }
         AppendLog($"Runtime log: {RuntimeLog.LogPath}");
         if (ShouldStartHiddenToTray)
         {
@@ -428,6 +446,11 @@ public partial class MainWindow : Window
                 Forms.ToolTipIcon.Info);
             _trayCloseHintShown = true;
         }
+    }
+
+    internal void ActivateFromSecondInstance()
+    {
+        BringFxHostWindowToFront();
     }
 
     private void RestoreFromTray()
@@ -1721,13 +1744,24 @@ public partial class MainWindow : Window
         _settings.PluginScanFolders ??= [];
         _settings.EndpointCanvasYOffsets ??= [];
         _settings.EndpointRouteHues ??= [];
+        _settings.EditionWorkspaces ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
+
+        var savedKind = _settings.Kind == VoicemeeterKind.Unknown
+            ? VoicemeeterKind.Potato
+            : _settings.Kind;
+        var runningKind = _engine.GetRunningVoicemeeterKind();
+        _voicemeeterKindDetectedFromApi = runningKind != VoicemeeterKind.Unknown;
+        _workspaceSourceKind = savedKind;
+        _kind = _voicemeeterKindDetectedFromApi ? runningKind : savedKind;
+        _restoredSavedEditionWorkspace = ActivateVoicemeeterEditionWorkspace(_settings, savedKind, _kind);
+        _settings.Kind = _kind;
+
         _settingsByEndpoint.Clear();
         NormalizePluginScanFolders();
         NormalizePluginInstanceIds();
         NormalizePluginGroups();
-        _kind = _settings.Kind == VoicemeeterKind.Unknown ? VoicemeeterKind.Potato : _settings.Kind;
         _selectedMode = _settings.SelectedMode == CallbackMode.None ? CallbackMode.Input : _settings.SelectedMode;
         if (!string.IsNullOrWhiteSpace(_settings.SelectedEndpointName))
         {
@@ -1766,8 +1800,137 @@ public partial class MainWindow : Window
             _settingsByEndpoint[endpointSettings.Key] = endpointSettings;
         }
 
+        _normalizedEndpointLayout = NormalizeOverlappingEndpointCanvasOffsets();
         MigratePlainInputOutputCanvasRoutesToSharedChannelRoutes();
     }
+
+    private bool NormalizeOverlappingEndpointCanvasOffsets()
+    {
+        var normalized = false;
+        foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output })
+        {
+            var endpoints = VoicemeeterIoLayout.GetEndpoints(mode, _kind);
+            var baseY = 42.0;
+            var previousBottom = double.NegativeInfinity;
+            var overlaps = false;
+            foreach (var endpoint in endpoints)
+            {
+                var pinCount = CanvasPinCount(mode, endpoint, outputSide: mode == CallbackMode.Output);
+                var top = baseY + EndpointCanvasYOffset(endpoint.Key(mode));
+                if (top < previousBottom + 8.0)
+                {
+                    overlaps = true;
+                    break;
+                }
+
+                previousBottom = top + VstEndpointCardHeight(mode, endpoint, pinCount);
+                baseY += VstEndpointCardSpacing(pinCount);
+            }
+
+            if (!overlaps)
+            {
+                continue;
+            }
+
+            foreach (var endpoint in endpoints)
+            {
+                _settings.EndpointCanvasYOffsets.Remove(endpoint.Key(mode));
+            }
+            normalized = true;
+        }
+
+        return normalized;
+    }
+
+    private static bool ActivateVoicemeeterEditionWorkspace(
+        FxHostSettings settings,
+        VoicemeeterKind sourceKind,
+        VoicemeeterKind destinationKind)
+    {
+        if (sourceKind == destinationKind)
+        {
+            return true;
+        }
+
+        RemoveEditionWorkspace(settings, sourceKind);
+        settings.EditionWorkspaces[EditionWorkspaceKey(sourceKind)] = CaptureEditionWorkspace(settings);
+
+        if (TryTakeEditionWorkspace(settings, destinationKind, out var workspace))
+        {
+            ApplyEditionWorkspace(settings, workspace);
+            return true;
+        }
+
+        ApplyEditionWorkspace(settings, new VoicemeeterEditionWorkspace());
+        return false;
+    }
+
+    private static VoicemeeterEditionWorkspace CaptureEditionWorkspace(FxHostSettings settings)
+    {
+        return new VoicemeeterEditionWorkspace
+        {
+            SelectedMode = settings.SelectedMode,
+            SelectedEndpointName = settings.SelectedEndpointName,
+            SelectedInputEndpointName = settings.SelectedInputEndpointName,
+            SelectedOutputEndpointName = settings.SelectedOutputEndpointName,
+            InsertAsioAutoStart = settings.InsertAsioAutoStart,
+            InsertAsioEndpointKeys = settings.InsertAsioEndpointKeys,
+            Endpoints = settings.Endpoints,
+            PluginNodes = settings.PluginNodes,
+            PluginGroups = settings.PluginGroups,
+            CanvasConnections = settings.CanvasConnections,
+            EndpointCanvasYOffsets = settings.EndpointCanvasYOffsets,
+            EndpointRouteHues = settings.EndpointRouteHues
+        };
+    }
+
+    private static void ApplyEditionWorkspace(FxHostSettings settings, VoicemeeterEditionWorkspace workspace)
+    {
+        settings.SelectedMode = workspace.SelectedMode == CallbackMode.None
+            ? CallbackMode.Input
+            : workspace.SelectedMode;
+        settings.SelectedEndpointName = workspace.SelectedEndpointName;
+        settings.SelectedInputEndpointName = workspace.SelectedInputEndpointName;
+        settings.SelectedOutputEndpointName = workspace.SelectedOutputEndpointName;
+        settings.InsertAsioAutoStart = workspace.InsertAsioAutoStart;
+        settings.InsertAsioEndpointKeys = workspace.InsertAsioEndpointKeys ?? [];
+        settings.Endpoints = workspace.Endpoints ?? [];
+        settings.PluginNodes = workspace.PluginNodes ?? [];
+        settings.PluginGroups = workspace.PluginGroups ?? [];
+        settings.CanvasConnections = workspace.CanvasConnections ?? [];
+        settings.EndpointCanvasYOffsets = workspace.EndpointCanvasYOffsets ?? [];
+        settings.EndpointRouteHues = workspace.EndpointRouteHues ?? [];
+    }
+
+    private static bool TryTakeEditionWorkspace(
+        FxHostSettings settings,
+        VoicemeeterKind kind,
+        out VoicemeeterEditionWorkspace workspace)
+    {
+        var key = settings.EditionWorkspaces.Keys.FirstOrDefault(
+            candidate => string.Equals(candidate, EditionWorkspaceKey(kind), StringComparison.OrdinalIgnoreCase));
+        if (key is null)
+        {
+            workspace = new VoicemeeterEditionWorkspace();
+            return false;
+        }
+
+        workspace = settings.EditionWorkspaces[key] ?? new VoicemeeterEditionWorkspace();
+        settings.EditionWorkspaces.Remove(key);
+        return true;
+    }
+
+    private static void RemoveEditionWorkspace(FxHostSettings settings, VoicemeeterKind kind)
+    {
+        var key = settings.EditionWorkspaces.Keys.FirstOrDefault(
+            candidate => string.Equals(candidate, EditionWorkspaceKey(kind), StringComparison.OrdinalIgnoreCase));
+        if (key is not null)
+        {
+            settings.EditionWorkspaces.Remove(key);
+        }
+    }
+
+    private static string EditionWorkspaceKey(VoicemeeterKind kind) => kind.ToString();
 
     private void NormalizePluginInstanceIds()
     {

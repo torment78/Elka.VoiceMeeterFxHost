@@ -189,6 +189,8 @@ The **Menu** window contains:
 - **Start to Tray** to begin future automatic or manual launches hidden in the notification area
 - **Close to Tray** to make the window X hide the app instead of shutting down
 - **Delay Start** with a `0` to `60` second engine startup delay
+- independent automatic stable and beta update checks
+- **Stable** and **Beta** buttons for manual checks and installer downloads
 - the installed application version at the bottom
 
 Imported saves keep missing VSTs as red striped placeholders with their cables
@@ -196,6 +198,32 @@ visible. Reinstall and rescan the plugin to restore that part of the layout.
 
 **Reload** restarts every VST node while preserving the graph and saved state.
 Use it after a sample-rate change or when a plugin has become unresponsive.
+
+## Application Updates
+
+In **Menu**, startup and tray controls are on the left; **Save**, **Save As**, and
+**Load** are on the right. Update controls sit below **Close**, with the current
+version at the bottom.
+
+Enable either **Automatically check** checkbox to check that channel once on the
+next application launch. Both can be enabled independently. Automatic checks
+do not download or install anything. The options are off until you select them.
+
+- A gray **Stable** or **Beta** button remains clickable for a manual check.
+- A newer stable release turns **Stable** green. A newer GitHub pre-release
+  turns **Beta** orange. The available version appears below the button.
+- Click the highlighted button to download its installer. FX Host verifies the
+  download, saves the current layout, opens the installer with Windows admin
+  approval, and shuts down normally so the installer can replace the files.
+- Stable installers must pass Windows Authenticode signature verification.
+  Beta builds can be unsigned, but their download must match GitHub's SHA-256
+  checksum. A failed check or canceled download never launches an installer.
+- Closing the menu cancels an in-progress download. A failed connection leaves
+  the manual check available to retry.
+
+Only versions newer than the running build are offered. In particular, the app
+will not replace a newer development build with an older stable release.
+Installers are downloaded under `%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost\Updates`.
 
 ## ASIO Patch
 

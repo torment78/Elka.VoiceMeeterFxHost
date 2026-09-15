@@ -99,6 +99,8 @@ The full selection rules and examples are in the
 - Saved layouts, **Save As**, **Load**, missing-plugin placeholders, remembered
   window size and position, startup delay, Start with Windows, Start to Tray,
   and Close to Tray.
+- Optional stable/beta update checks and installer downloads from the
+  [Menu](docs/UserGuide.md#application-updates).
 - A custom **FX Host** button inside supported VoiceMeeter versions.
 
 ## Documentation

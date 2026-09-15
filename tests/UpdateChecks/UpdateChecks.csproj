@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/app-wpf/ReleaseVersion.cs" Link="ReleaseVersion.cs" />
+    <Compile Include="../../src/app-wpf/ApplicationUpdates.cs" Link="ApplicationUpdates.cs" />
+    <Compile Include="../../src/app-wpf/InstallerSignature.cs" Link="InstallerSignature.cs" />
+  </ItemGroup>
+</Project>

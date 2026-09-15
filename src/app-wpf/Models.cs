@@ -558,6 +558,8 @@ internal sealed class FxHostSettings
     public bool InsertAsioAutoStart { get; set; }
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
+    public bool CheckStableUpdatesAutomatically { get; set; }
+    public bool CheckBetaUpdatesAutomatically { get; set; }
     public bool StartupDelayEnabled { get; set; }
     public int StartupDelaySeconds { get; set; }
     public double? MainWindowLeft { get; set; }

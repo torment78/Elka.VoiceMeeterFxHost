@@ -321,6 +321,7 @@ public partial class MainWindow : Window
         UpdateLiveStatusText();
         _statusTimer.Start();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
+        _ = CheckStartupUpdatesAsync();
     }
 
     private void InitializeTrayIcon()
@@ -1348,8 +1349,9 @@ public partial class MainWindow : Window
         {
             Title = "Menu",
             Owner = this,
-            Width = 360,
-            Height = 510,
+            Width = 410,
+            SizeToContent = SizeToContent.Height,
+            MaxHeight = SystemParameters.WorkArea.Height,
             ResizeMode = ResizeMode.NoResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = ThemeBrushOr("WindowBackgroundBrush", "#11171B")
@@ -1365,7 +1367,12 @@ public partial class MainWindow : Window
         window.Content = shell;
 
         var stack = new StackPanel { Orientation = Orientation.Vertical };
-        shell.Child = stack;
+        shell.Child = new ScrollViewer
+        {
+            Content = stack,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
 
         stack.Children.Add(new TextBlock
         {
@@ -1376,24 +1383,22 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 12)
         });
 
+        var actions = CreateMenuColumns();
+        for (var i = 0; i < 4; i++)
+            actions.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        stack.Children.Add(actions);
+
         var save = CreateSaveManagerButton("Save");
         save.Click += async (_, _) => await RunSaveManagerActionAsync(save, async () => await SaveCurrentLayoutAsync());
-        stack.Children.Add(save);
+        AddMenuCell(actions, save, 0, 2);
 
         var export = CreateSaveManagerButton("Save As");
         export.Click += async (_, _) => await RunSaveManagerActionAsync(export, ExportSaveAsync);
-        stack.Children.Add(export);
+        AddMenuCell(actions, export, 1, 2);
 
         var load = CreateSaveManagerButton("Load");
         load.Click += async (_, _) => await RunSaveManagerActionAsync(load, LoadSaveAsync);
-        stack.Children.Add(load);
-
-        stack.Children.Add(new TextBlock
-        {
-            Text = "Tray",
-            Style = (Style)FindResource("MutedText"),
-            Margin = new Thickness(0, 6, 0, 6)
-        });
+        AddMenuCell(actions, load, 2, 2);
 
         var autoStart = CreateSaveManagerToggleButton("Start with Windows", WindowsAutoStart.IsEnabled());
         autoStart.Click += (_, _) =>
@@ -1412,7 +1417,7 @@ public partial class MainWindow : Window
                 ? "Start with Windows enabled. FX Host will launch when this Windows account signs in."
                 : "Start with Windows disabled.");
         };
-        stack.Children.Add(autoStart);
+        AddMenuCell(actions, autoStart, 0, 0);
 
         var startTray = CreateSaveManagerToggleButton("Start to Tray", _settings.StartToTray);
         startTray.Click += (_, _) =>
@@ -1424,7 +1429,7 @@ public partial class MainWindow : Window
                 ? "Start to Tray enabled. The next launch will start hidden in the tray."
                 : "Start to Tray disabled.");
         };
-        stack.Children.Add(startTray);
+        AddMenuCell(actions, startTray, 1, 0);
 
         var closeToTray = CreateSaveManagerToggleButton("Close to Tray", _settings.CloseToTray);
         closeToTray.Click += (_, _) =>
@@ -1436,18 +1441,10 @@ public partial class MainWindow : Window
                 ? "Close to Tray enabled. The X button will hide the app to the tray."
                 : "Close to Tray disabled. The X button will shut down the app.");
         };
-        stack.Children.Add(closeToTray);
-
-        var startupDelayRow = new Grid
-        {
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(154) });
-        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-        startupDelayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        AddMenuCell(actions, closeToTray, 2, 0);
 
         var startupDelay = CreateSaveManagerToggleButton("Delay Start", _settings.StartupDelayEnabled);
-        startupDelay.Margin = new Thickness(0);
+
         startupDelay.Click += (_, _) =>
         {
             _settings.StartupDelayEnabled = !_settings.StartupDelayEnabled;
@@ -1457,9 +1454,10 @@ public partial class MainWindow : Window
                 ? $"Startup delay enabled ({_settings.StartupDelaySeconds}s, applies next launch)."
                 : "Startup delay disabled.");
         };
-        startupDelayRow.Children.Add(startupDelay);
+        AddMenuCell(actions, startupDelay, 3, 0);
 
         var startupDelaySeconds = CreateSaveManagerTextBox(_settings.StartupDelaySeconds.ToString(CultureInfo.InvariantCulture));
+        startupDelaySeconds.Margin = new Thickness(0, 0, 0, 8);
         startupDelaySeconds.ToolTip = "Startup delay in seconds (0-60). Applies on next launch.";
         startupDelaySeconds.LostFocus += (_, _) => CommitStartupDelaySeconds(startupDelaySeconds);
         startupDelaySeconds.KeyDown += (_, args) =>
@@ -1471,14 +1469,15 @@ public partial class MainWindow : Window
                 args.Handled = true;
             }
         };
-        Grid.SetColumn(startupDelaySeconds, 2);
-        startupDelayRow.Children.Add(startupDelaySeconds);
-        stack.Children.Add(startupDelayRow);
+        AddMenuCell(actions, startupDelaySeconds, 3, 2);
 
         var close = CreateSaveManagerButton("Close");
-        close.Margin = new Thickness(0, 14, 0, 0);
+        close.Width = 172;
+        close.HorizontalAlignment = HorizontalAlignment.Center;
+        close.Margin = new Thickness(0, 6, 0, 0);
         close.Click += (_, _) => window.Close();
         stack.Children.Add(close);
+        stack.Children.Add(CreateUpdateMenuSection(window));
 
         stack.Children.Add(new TextBlock
         {
@@ -1492,6 +1491,11 @@ public partial class MainWindow : Window
     }
 
     private static string CurrentApplicationVersionText()
+    {
+        return $"Version {CurrentApplicationVersion()}";
+    }
+
+    private static string CurrentApplicationVersion()
     {
         string? version = null;
         try
@@ -1517,7 +1521,23 @@ public partial class MainWindow : Window
         }
 
         version ??= typeof(MainWindow).Assembly.GetName().Version?.ToString();
-        return $"Version {version ?? "unknown"}";
+        return version ?? "unknown";
+    }
+
+    private static Grid CreateMenuColumns()
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        return grid;
+    }
+
+    private static void AddMenuCell(Grid grid, UIElement element, int row, int column)
+    {
+        Grid.SetRow(element, row);
+        Grid.SetColumn(element, column);
+        grid.Children.Add(element);
     }
 
     private Button CreateSaveManagerButton(string text)
@@ -13940,6 +13960,8 @@ private void RefreshEndpointButtonSelection()
     protected override void OnClosed(EventArgs e)
     {
         _isShuttingDown = true;
+        _updateLifetime.Cancel();
+        _updateLifetime.Dispose();
         RemoveVoicemeeterCustomButton();
         FlushQueuedChannelChanges();
         _channelApplyTimer.Stop();

@@ -293,13 +293,16 @@ private:
     {
         int pluginBusLineCount = 0;
         int bypassOutputLineCount = 0;
+        int pluginInputLineCount = 0;
         int passthroughLineCount = 0;
         std::array<int, MaxPluginSlots * MaxPluginPins> pluginBusLineIndexes {};
         std::array<int, MaxPluginSlots * MaxPluginPins> bypassOutputLineIndexes {};
+        std::array<std::array<int, MaxChannels>, DelayStreamCount> pluginInputLineIndexes {};
         std::array<int, DelayStreamCount> passthroughRouteCapacities {};
         std::array<int, DelayStreamCount> passthroughRouteStartLines {};
         std::vector<float> pluginBusBuffer;
         std::vector<float> pluginBypassOutputBuffer;
+        std::vector<float> pluginInputSnapshotBuffer;
         std::vector<float> pluginPassthroughScratchBuffer;
     };
 

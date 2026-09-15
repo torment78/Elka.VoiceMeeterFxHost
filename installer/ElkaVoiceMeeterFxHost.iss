@@ -60,6 +60,9 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Name: "{autoprograms}\ElkaSoft\Elka VoiceMeeter FX Host"; Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\Elka VoiceMeeter FX Host"; Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
+[UninstallRun]
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""ElkaVoiceMeeterFxHost"" /f"; Flags: runhidden; RunOnceId: "RemoveElkaVoiceMeeterFxHostAutoStart"
+
 [Run]
 Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{app}\Elka.VoiceMeeterFxHost.App.exe"""; StatusMsg: "Disabling Windows power throttling for Elka VoiceMeeter FX Host..."; Flags: runhidden waituntilterminated logoutput; Check: ShouldDisableFxHostPowerThrottling
 Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{code:GetVoicemeeterExecutablePath|voicemeeter.exe}"""; StatusMsg: "Disabling Windows power throttling for VoiceMeeter Standard (32-bit)..."; Flags: runhidden waituntilterminated logoutput; Check: ShouldDisableVoicemeeterExecutable('voicemeeter.exe')

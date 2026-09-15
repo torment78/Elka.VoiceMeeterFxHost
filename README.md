@@ -97,7 +97,8 @@ The full selection rules and examples are in the
 - Stable VST IDs and VBAN-TEXT commands for VST controls and exposed parameters.
 - Callback mode and a separate VoiceMeeter Insert ASIO Patch mode.
 - Saved layouts, **Save As**, **Load**, missing-plugin placeholders, remembered
-  window size and position, startup delay, Start Tray, and Close to Tray.
+  window size and position, startup delay, Start with Windows, Start to Tray,
+  and Close to Tray.
 - A custom **FX Host** button inside supported VoiceMeeter versions.
 
 ## Documentation

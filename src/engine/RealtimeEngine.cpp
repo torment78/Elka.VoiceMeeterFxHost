@@ -716,6 +716,8 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
 
     next->pluginBusLineIndexes.fill(-1);
     next->bypassOutputLineIndexes.fill(-1);
+    for (auto& indexes : next->pluginInputLineIndexes)
+        indexes.fill(-1);
     next->passthroughRouteCapacities.fill(0);
     next->passthroughRouteStartLines.fill(-1);
 
@@ -733,6 +735,16 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
         next->pluginBusLineIndexes[index] = next->pluginBusLineCount++;
     };
 
+    const auto markPluginInputLine = [&](CallbackStreamKind kind, int channel) noexcept {
+        if (channel < 0 || channel >= MaxChannels)
+            return;
+
+        const int stream = std::clamp(delayStreamIndex(kind), 0, DelayStreamCount - 1);
+        auto& lineIndex = next->pluginInputLineIndexes[static_cast<size_t>(stream)][static_cast<size_t>(channel)];
+        if (lineIndex < 0)
+            lineIndex = next->pluginInputLineCount++;
+    };
+
     for (int slot = 0; slot < MaxPluginSlots; ++slot)
     {
         const auto& pluginSlot = pluginSlots[static_cast<size_t>(slot)];
@@ -742,10 +754,18 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
         if (!active)
             continue;
 
+        const auto slotKind = static_cast<CallbackStreamKind>(pluginSlot.kind.load(std::memory_order_acquire));
         const int inputRouteCount = std::clamp(pluginSlot.inputRouteCount.load(std::memory_order_acquire), 0, MaxPluginRoutes);
         for (int route = 0; route < inputRouteCount; ++route)
         {
             const int sourceKind = pluginSlot.inputSourceKinds[static_cast<size_t>(route)].load(std::memory_order_acquire);
+            if (sourceKind == static_cast<int>(PluginRouteEndpointKind::VoiceMeeterChannel))
+            {
+                const int sourceChannel = pluginSlot.inputSourceChannels[static_cast<size_t>(route)].load(std::memory_order_acquire);
+                markPluginInputLine(slotKind, sourceChannel);
+                continue;
+            }
+
             if (sourceKind != static_cast<int>(PluginRouteEndpointKind::PluginPin))
                 continue;
 
@@ -821,9 +841,11 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
     if (current != nullptr &&
         current->pluginBusLineCount == next->pluginBusLineCount &&
         current->bypassOutputLineCount == next->bypassOutputLineCount &&
+        current->pluginInputLineCount == next->pluginInputLineCount &&
         current->passthroughLineCount == next->passthroughLineCount &&
         current->pluginBusLineIndexes == next->pluginBusLineIndexes &&
         current->bypassOutputLineIndexes == next->bypassOutputLineIndexes &&
+        current->pluginInputLineIndexes == next->pluginInputLineIndexes &&
         current->passthroughRouteCapacities == next->passthroughRouteCapacities &&
         current->passthroughRouteStartLines == next->passthroughRouteStartLines)
     {
@@ -844,6 +866,14 @@ bool RealtimeEngine::rebuildDynamicPluginScratchBuffers() noexcept
         {
             next->pluginBypassOutputBuffer.assign(
                 static_cast<size_t>(next->bypassOutputLineCount) *
+                    static_cast<size_t>(MaxPluginScratchSamples),
+                0.0f);
+        }
+
+        if (next->pluginInputLineCount > 0)
+        {
+            next->pluginInputSnapshotBuffer.assign(
+                static_cast<size_t>(next->pluginInputLineCount) *
                     static_cast<size_t>(MaxPluginScratchSamples),
                 0.0f);
         }
@@ -1476,16 +1506,14 @@ void RealtimeEngine::processInternal(
         }
     }
 
-    const auto pluginNodeOutputWritten = pluginOutputWritten;
-
     applyPluginPassthroughRoutes(buffer, kind, sourceReadOffset, delayStream, suppressInputCallbackChannels, pluginOutputWritten);
     if (!pluginProcessingSkipped)
-        applyPluginGraphGate(buffer, kind, suppressInputCallbackChannels, pluginNodeOutputWritten);
+        applyPluginGraphGate(buffer, kind, suppressInputCallbackChannels, pluginOutputWritten);
 
     applyDirectRoutes(buffer, kind, sourceReadOffset, enableInputOutputRoutes, suppressInputCallbackChannels, pluginOutputWritten);
     applyConfiguredGains(buffer, kind, delayStream, suppressInputCallbackChannels);
     if (!pluginProcessingSkipped)
-        applyPluginGraphGate(buffer, kind, suppressInputCallbackChannels, pluginNodeOutputWritten);
+        applyPluginGraphGate(buffer, kind, suppressInputCallbackChannels, pluginOutputWritten);
     if (RealtimeAudioProbeDiagnosticsEnabled)
         probePassthroughResidual(buffer, kind, readOffset, ResidualProbeFinal);
     if (kind == CallbackStreamKind::OutputInsert)
@@ -2286,6 +2314,36 @@ void RealtimeEngine::applyPlugins(
         return scratchBuffers->pluginBusBuffer.data() + offset;
     };
 
+    std::array<const float*, MaxChannels> pluginInputSources {};
+    if (scratchBuffers != nullptr &&
+        buffer.samplesPerFrame > 0 &&
+        buffer.samplesPerFrame <= MaxPluginScratchSamples &&
+        !scratchBuffers->pluginInputSnapshotBuffer.empty())
+    {
+        const auto& inputLineIndexes = scratchBuffers->pluginInputLineIndexes[static_cast<size_t>(streamIndex)];
+        for (int channel = 0; channel < MaxChannels; ++channel)
+        {
+            const int lineIndex = inputLineIndexes[static_cast<size_t>(channel)];
+            if (lineIndex < 0 || lineIndex >= scratchBuffers->pluginInputLineCount)
+                continue;
+
+            const float* source = currentChannelPointer(buffer, readOffset, channel);
+            if (source == nullptr)
+                continue;
+
+            const auto offset = lineBufferOffset(lineIndex, MaxPluginScratchSamples);
+            if (offset + static_cast<size_t>(MaxPluginScratchSamples) >
+                scratchBuffers->pluginInputSnapshotBuffer.size())
+            {
+                continue;
+            }
+
+            float* snapshot = scratchBuffers->pluginInputSnapshotBuffer.data() + offset;
+            std::copy_n(source, buffer.samplesPerFrame, snapshot);
+            pluginInputSources[static_cast<size_t>(channel)] = snapshot;
+        }
+    }
+
     const auto bypassOutputPointer = [&scratchBuffers](int slot, int pin) noexcept -> float* {
         if (slot < 0 || slot >= MaxPluginSlots || pin < 0 || pin >= MaxPluginPins)
             return nullptr;
@@ -2369,6 +2427,7 @@ void RealtimeEngine::applyPlugins(
         std::array<PluginAudioOutputRoute, MaxPluginRoutes> outputRoutes {};
         int validInputRoutes = 0;
         int validOutputRoutes = 0;
+        std::array<bool, MaxPluginPins> pluginBusOutputAdded {};
 
         for (int route = 0; route < inputRouteCount; ++route)
         {
@@ -2386,9 +2445,9 @@ void RealtimeEngine::applyPlugins(
                     source < MaxChannels &&
                     !isInputCallbackSuppressed(suppressInputCallbackChannels, source))
                 {
-                    sourcePointer = kind == CallbackStreamKind::Main
-                        ? sourceChannelPointer(buffer, readOffset, source)
-                        : currentChannelPointer(buffer, readOffset, source);
+                    sourcePointer = pluginInputSources[static_cast<size_t>(source)];
+                    if (sourcePointer == nullptr)
+                        sourcePointer = sourceChannelPointer(buffer, readOffset, source);
                 }
             }
             else if (sourceKind == static_cast<int>(PluginRouteEndpointKind::PluginPin) &&
@@ -2435,11 +2494,15 @@ void RealtimeEngine::applyPlugins(
                      destinationSlot < MaxPluginSlots &&
                      destinationSlot != slot &&
                      destinationPin >= 0 &&
-                     destinationPin < MaxPluginPins)
+                     destinationPin < MaxPluginPins &&
+                     pin >= 0 &&
+                     pin < MaxPluginPins &&
+                     !pluginBusOutputAdded[static_cast<size_t>(pin)])
             {
                 destinationPointer = pluginBusPointer(slot, pin);
                 resolvedDestinationSlot = slot;
                 resolvedDestinationPin = pin;
+                pluginBusOutputAdded[static_cast<size_t>(pin)] = destinationPointer != nullptr;
             }
 
             if (destinationPointer != nullptr && pin >= 0)
@@ -2449,7 +2512,8 @@ void RealtimeEngine::applyPlugins(
                     pin,
                     resolvedDestinationChannel,
                     resolvedDestinationSlot,
-                    resolvedDestinationPin
+                    resolvedDestinationPin,
+                    resolvedDestinationChannel < 0 || !pluginOutputWritten[static_cast<size_t>(resolvedDestinationChannel)]
                 };
             }
         }
@@ -2476,7 +2540,8 @@ void RealtimeEngine::applyPlugins(
                         outputRoute.pluginPin,
                         -1,
                         -1,
-                        -1
+                        -1,
+                        true
                     };
                 }
 
@@ -2538,7 +2603,7 @@ void RealtimeEngine::applyPlugins(
                     for (int i = 0; i < clearedCount; ++i)
                         alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == destination;
 
-                    if (!alreadyCleared)
+                    if (outputRoute.clearDestination && !alreadyCleared)
                     {
                         for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
                             destination[sample] = 0.0f;

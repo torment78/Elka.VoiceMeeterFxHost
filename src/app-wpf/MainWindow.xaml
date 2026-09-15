@@ -8,7 +8,8 @@
         MinWidth="800"
         MinHeight="600"
         WindowStartupLocation="CenterScreen">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+    <ScrollViewer x:Name="MainPageScrollViewer"
+                  HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto"
                   CanContentScroll="False"
                   PanningMode="VerticalOnly">
@@ -245,8 +246,15 @@
                          Grid.Row="2"
                          SelectionMode="Extended"
                          Height="132"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         MouseDoubleClick="PluginListBox_MouseDoubleClick" />
+                         Loaded="StableScrollHost_Loaded"
+                         ScrollViewer.ScrollChanged="StableScrollHost_ScrollChanged"
+                         MouseDoubleClick="PluginListBox_MouseDoubleClick">
+                                    <ListBox.Resources>
+                                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource StableVerticalScrollBar}" />
+                                    </ListBox.Resources>
+                                </ListBox>
 
                                 <StackPanel x:Name="VstNodesPanel"
                             Grid.Row="3"
@@ -482,6 +490,7 @@
                          Grid.Row="1"
                          Grid.ColumnSpan="2"
                          Margin="0,10,0,8"
+                         Visibility="Collapsed"
                          Style="{StaticResource MutedText}" />
                             <TextBox x:Name="LogTextBox"
                        Grid.Row="2"
@@ -491,13 +500,23 @@
                        FontSize="13"
                        IsReadOnly="True"
                        TextWrapping="Wrap"
-                       VerticalScrollBarVisibility="Auto" />
+                       HorizontalScrollBarVisibility="Disabled"
+                       VerticalScrollBarVisibility="Auto"
+                       Loaded="StableScrollHost_Loaded"
+                       ScrollViewer.ScrollChanged="StableScrollHost_ScrollChanged"
+                       Visibility="Collapsed">
+                                <TextBox.Resources>
+                                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource StableVerticalScrollBar}" />
+                                </TextBox.Resources>
+                            </TextBox>
                         </Grid>
                     </Border>
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Column="2"
+            <Border x:Name="RoutingWorkspaceBorder"
+              Grid.Column="2"
+              Loaded="RoutingWorkspaceBorder_Loaded"
               Style="{StaticResource PanelCard}"
               Padding="0">
                 <Grid>
@@ -549,12 +568,14 @@
                         <Grid>
                             <ScrollViewer x:Name="VstCanvasScrollViewer"
                             HorizontalScrollBarVisibility="Disabled"
-                            VerticalScrollBarVisibility="Auto">
+                            VerticalScrollBarVisibility="Disabled"
+                            PreviewMouseWheel="VstCanvasScrollViewer_PreviewMouseWheel">
                                 <Canvas x:Name="RoutingCanvas"
                         Width="929"
                         Height="737"
                         Focusable="True"
                         Background="{StaticResource FieldBrush}"
+                        RequestBringIntoView="RoutingCanvas_RequestBringIntoView"
                         MouseMove="RoutingCanvas_MouseMove"
                         MouseLeftButtonUp="RoutingCanvas_MouseLeftButtonUp"
                         MouseRightButtonDown="RoutingCanvas_MouseRightButtonDown" />

@@ -240,6 +240,67 @@
     </Setter>
   </Style>
 
+  <Style x:Key="StableVerticalScrollThumb" TargetType="{x:Type Thumb}">
+    <Setter Property="Height" Value="36" />
+    <Setter Property="MinHeight" Value="36" />
+    <Setter Property="MaxHeight" Value="36" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type Thumb}">
+          <Border x:Name="ThumbChrome"
+                  Margin="2"
+                  MinWidth="8"
+                  MinHeight="32"
+                  Background="{StaticResource StrokeBrush}"
+                  CornerRadius="4" />
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="ThumbChrome" Property="Background" Value="{StaticResource AccentBrush}" />
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+              <Setter TargetName="ThumbChrome" Property="Background" Value="{StaticResource AccentWarmBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="StableVerticalScrollBar" TargetType="{x:Type ScrollBar}">
+    <Setter Property="Background" Value="{StaticResource FieldBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource StrokeBrush}" />
+    <Setter Property="Orientation" Value="Vertical" />
+    <Setter Property="Width" Value="12" />
+    <Setter Property="MinWidth" Value="12" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type ScrollBar}">
+          <Grid Width="{TemplateBinding Width}" Background="{TemplateBinding Background}" ClipToBounds="False">
+            <Track x:Name="PART_Track"
+                   Margin="0,2"
+                   Orientation="Vertical"
+                   IsDirectionReversed="True"
+                   Minimum="{TemplateBinding Minimum}"
+                   Maximum="{TemplateBinding Maximum}"
+                   Value="{TemplateBinding Value}"
+                   ViewportSize="NaN"
+                   ClipToBounds="False">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Style="{StaticResource ThemedScrollPageButton}" />
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Style="{StaticResource StableVerticalScrollThumb}" />
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Style="{StaticResource ThemedScrollPageButton}" />
+              </Track.IncreaseRepeatButton>
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style TargetType="{x:Type ScrollBar}">
     <Setter Property="Background" Value="{StaticResource FieldBrush}" />
     <Setter Property="Foreground" Value="{StaticResource StrokeBrush}" />

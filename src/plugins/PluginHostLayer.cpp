@@ -2252,7 +2252,7 @@ public:
             for (int i = 0; i < clearedCount; ++i)
                 alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == destination;
 
-            if (!alreadyCleared)
+            if (outputRoute.clearDestination && !alreadyCleared)
             {
                 std::fill_n(destination, buffer.samplesPerFrame, 0.0f);
                 if (clearedCount < static_cast<int>(clearedDestinations.size()))
@@ -2312,7 +2312,7 @@ private:
             for (int i = 0; i < clearedCount; ++i)
                 alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == destination;
 
-            if (!alreadyCleared)
+            if (outputRoute.clearDestination && !alreadyCleared)
             {
                 std::fill_n(destination, samples, 0.0f);
                 if (clearedCount < static_cast<int>(clearedDestinations.size()))
@@ -2669,7 +2669,7 @@ public:
             for (int i = 0; i < clearedCount; ++i)
                 alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == outputRoute.destination;
 
-            if (!alreadyCleared)
+            if (outputRoute.clearDestination && !alreadyCleared)
             {
                 std::fill_n(outputRoute.destination, buffer.samplesPerFrame, 0.0f);
                 if (clearedCount < static_cast<int>(clearedDestinations.size()))
@@ -3143,7 +3143,7 @@ private:
             for (int i = 0; i < clearedCount; ++i)
                 alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == outputRoute.destination;
 
-            if (!alreadyCleared)
+            if (outputRoute.clearDestination && !alreadyCleared)
             {
                 std::fill_n(outputRoute.destination, buffer.samplesPerFrame, 0.0f);
                 if (clearedCount < static_cast<int>(clearedDestinations.size()))
@@ -3187,7 +3187,7 @@ private:
             for (int i = 0; i < clearedCount; ++i)
                 alreadyCleared = alreadyCleared || clearedDestinations[static_cast<size_t>(i)] == outputRoute.destination;
 
-            if (!alreadyCleared)
+            if (outputRoute.clearDestination && !alreadyCleared)
             {
                 std::fill_n(outputRoute.destination, buffer.samplesPerFrame, 0.0f);
                 if (clearedCount < static_cast<int>(clearedDestinations.size()))

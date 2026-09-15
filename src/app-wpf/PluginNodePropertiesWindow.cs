@@ -42,7 +42,14 @@ internal sealed class PluginNodePropertiesWindow : Window
 
         AddLayoutRow(root, 0, "Input layout", _mainInputLayoutCombo, inputChoices, MainInputLayoutId, MainInputPins);
         AddPinRow(root, 1, "Sidechain input", _sidechainPinsCombo, SidechainInputPins, [0, 2]);
-        AddLayoutRow(root, 2, "Output layout", _outputLayoutCombo, outputChoices, OutputLayoutId, OutputPins);
+        AddLayoutRow(
+            root,
+            2,
+            "Output layout",
+            _outputLayoutCombo,
+            outputChoices,
+            OutputLayoutId,
+            OutputPins);
 
         var buttons = new StackPanel
         {
@@ -74,6 +81,7 @@ internal sealed class PluginNodePropertiesWindow : Window
             OutputLayoutId = outputLayout.Id;
             OutputLayoutName = outputLayout.Name;
             OutputPins = outputLayout.Channels;
+
             DialogResult = true;
         };
 

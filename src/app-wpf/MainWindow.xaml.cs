@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _pendingChannelApplyKeys = [];
     private readonly Dictionary<int, List<FrameworkElement>> _nodeVisualElements = [];
     private readonly Dictionary<string, List<FrameworkElement>> _groupVisualElements = [];
+    private readonly HashSet<DependencyObject> _pendingStableScrollHosts = [];
     private readonly Dictionary<FrameworkElement, Point> _dragElementOrigins = [];
     private readonly Dictionary<string, List<FrameworkElement>> _endpointVisualElements = [];
     private readonly Dictionary<string, Path> _canvasConnectionPaths = [];
@@ -701,7 +703,89 @@ public partial class MainWindow : Window
         var collapse = LogTextBox.Visibility == Visibility.Visible || RouteSummaryTextBlock.Visibility == Visibility.Visible;
         RouteSummaryTextBlock.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
         LogTextBox.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+        if (!collapse)
+        {
+            QueueStableVerticalScrollBarStyle(LogTextBox);
+        }
+
         e.Handled = true;
+    }
+
+    private void StableScrollHost_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is DependencyObject host)
+        {
+            QueueStableVerticalScrollBarStyle(host);
+        }
+    }
+
+    private void StableScrollHost_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        QueueStableVerticalScrollBarStyle(e.OriginalSource as DependencyObject ?? (DependencyObject)sender);
+    }
+
+    private void QueueStableVerticalScrollBarStyle(DependencyObject host)
+    {
+        if (!_pendingStableScrollHosts.Add(host))
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                _pendingStableScrollHosts.Remove(host);
+                ApplyStableVerticalScrollBarStyle(host);
+            }),
+            DispatcherPriority.Render);
+    }
+
+    private void ApplyStableVerticalScrollBarStyle(DependencyObject host)
+    {
+        if (TryFindResource("StableVerticalScrollBar") is not Style stableStyle)
+        {
+            return;
+        }
+
+        foreach (var scrollBar in FindVisualDescendants<ScrollBar>(host))
+        {
+            if (scrollBar.Orientation != Orientation.Vertical)
+            {
+                continue;
+            }
+
+            if (!ReferenceEquals(scrollBar.Style, stableStyle))
+            {
+                scrollBar.Style = stableStyle;
+            }
+
+            scrollBar.ApplyTemplate();
+            if (scrollBar.Template.FindName("PART_Track", scrollBar) is Track track)
+            {
+                track.ViewportSize = double.NaN;
+                track.Thumb.Height = 36;
+                track.Thumb.MinHeight = 36;
+                track.Thumb.MaxHeight = 36;
+            }
+        }
+    }
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static void ToggleCardContent(UIElement content)
@@ -1311,15 +1395,34 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 6, 0, 6)
         });
 
-        var startTray = CreateSaveManagerToggleButton("Start Tray", _settings.StartToTray);
+        var autoStart = CreateSaveManagerToggleButton("Start with Windows", WindowsAutoStart.IsEnabled());
+        autoStart.Click += (_, _) =>
+        {
+            var enable = !WindowsAutoStart.IsEnabled();
+            if (!WindowsAutoStart.TrySetEnabled(enable, out var error))
+            {
+                ApplySaveManagerToggleState(autoStart, WindowsAutoStart.IsEnabled());
+                AppendLog($"Start with Windows update failed: {error}");
+                MessageBox.Show(this, error, "Start with Windows", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            ApplySaveManagerToggleState(autoStart, enable);
+            AppendLog(enable
+                ? "Start with Windows enabled. FX Host will launch when this Windows account signs in."
+                : "Start with Windows disabled.");
+        };
+        stack.Children.Add(autoStart);
+
+        var startTray = CreateSaveManagerToggleButton("Start to Tray", _settings.StartToTray);
         startTray.Click += (_, _) =>
         {
             _settings.StartToTray = !_settings.StartToTray;
             ApplySaveManagerToggleState(startTray, _settings.StartToTray);
             QueueSave();
             AppendLog(_settings.StartToTray
-                ? "Start Tray enabled. The next launch will start hidden in the tray."
-                : "Start Tray disabled.");
+                ? "Start to Tray enabled. The next launch will start hidden in the tray."
+                : "Start to Tray disabled.");
         };
         stack.Children.Add(startTray);
 
@@ -1662,6 +1765,42 @@ public partial class MainWindow : Window
     {
         _lastCanvasClick = e.GetPosition(RoutingCanvas);
         ClearWirePreview();
+    }
+
+    private void RoutingWorkspaceBorder_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Border workspace || !double.IsNaN(workspace.Height) || workspace.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        workspace.Height = workspace.ActualHeight;
+        workspace.VerticalAlignment = VerticalAlignment.Top;
+    }
+
+    private void VstCanvasScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (MainPageScrollViewer.ScrollableHeight <= 0 || e.Delta == 0)
+        {
+            return;
+        }
+
+        const double pixelsPerWheelNotch = 48.0;
+        var requestedOffset = MainPageScrollViewer.VerticalOffset -
+            ((double)e.Delta / Mouse.MouseWheelDeltaForOneLine * pixelsPerWheelNotch);
+        var targetOffset = Math.Clamp(requestedOffset, 0.0, MainPageScrollViewer.ScrollableHeight);
+        if (Math.Abs(targetOffset - MainPageScrollViewer.VerticalOffset) < 0.5)
+        {
+            return;
+        }
+
+        MainPageScrollViewer.ScrollToVerticalOffset(targetOffset);
+        e.Handled = true;
+    }
+
+    private void RoutingCanvas_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
+    {
+        e.Handled = true;
     }
 
     private void RoutingCanvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -6615,6 +6754,8 @@ private void RefreshEndpointButtonSelection()
         {
             PluginListBox.SelectedIndex = 0;
         }
+
+        QueueStableVerticalScrollBarStyle(PluginListBox);
     }
 
     private void RefreshQuickGroupPluginListSelection()
@@ -9481,10 +9622,10 @@ private void RefreshEndpointButtonSelection()
 
         menu.Items.Add(CreateNodeMenuItem("Open Editor", () => OpenPluginEditorWithSavedData(node)));
         menu.Items.Add(CreateNodeMenuItem("Info", () => ShowExposedPluginParameters(node)));
+        menu.Items.Add(CreateNodeMenuItem("Reload", () => ReloadPluginNode(node)));
         menu.Items.Add(CreateNodeMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem("Properties", () => ShowNodeProperties(node)));
-        menu.Items.Add(CreateNodeMenuItem("Add Stereo Sidechain Input", () => AddStereoSidechainInput(node)));
         menu.Items.Add(CreateNodeMenuItem(node.PinsCollapsed ? "Expand Pins" : "Minimize Pins", () => SetNodePinsCollapsed(node, !node.PinsCollapsed)));
         menu.Items.Add(BuildAddToGroupMenuItem(node));
         if (GroupForNode(node.Slot) is { } group)
@@ -9617,14 +9758,16 @@ private void RefreshEndpointButtonSelection()
 
         if (editor.ShowDialog() == true)
         {
-            ReconfigurePluginNode(node, editor.MainInputPins, editor.SidechainInputPins, editor.OutputPins, editor.MainInputLayoutId, editor.OutputLayoutId);
+            ReconfigurePluginNode(
+                node,
+                editor.MainInputPins,
+                editor.SidechainInputPins,
+                editor.OutputPins,
+                editor.MainInputLayoutId,
+                editor.OutputLayoutId);
         }
     }
 
-    private void AddStereoSidechainInput(PluginNodeSnapshot node)
-    {
-        ReconfigurePluginNode(node, node.MainInputPins, 2, node.OutputPins, node.MainInputLayoutId, node.OutputLayoutId);
-    }
 
     private void ShowGroupProperties(PluginGroupSnapshot group)
     {
@@ -10190,6 +10333,8 @@ private void RefreshEndpointButtonSelection()
         var oldMainInputPins = node.MainInputPins;
         var oldSidechainInputPins = node.SidechainInputPins;
         var oldOutputPins = node.OutputPins;
+        var supportedInputLayouts = node.SupportedInputLayouts.ToList();
+        var supportedOutputLayouts = node.SupportedOutputLayouts.ToList();
         var oldConnections = _settings.CanvasConnections
             .Where(connection => connection.FromSlot == oldSlot || connection.ToSlot == oldSlot)
             .Select(CloneConnection)
@@ -10235,8 +10380,14 @@ private void RefreshEndpointButtonSelection()
         node.MainInputLayoutName = replacement.MainInputLayoutName;
         node.OutputLayoutId = replacement.OutputLayoutId;
         node.OutputLayoutName = replacement.OutputLayoutName;
-        node.SupportedInputLayouts = replacement.SupportedInputLayouts.ToList();
-        node.SupportedOutputLayouts = replacement.SupportedOutputLayouts.ToList();
+        node.SupportedInputLayouts = MergePluginLayoutChoices(
+            supportedInputLayouts,
+            replacement.SupportedInputLayouts,
+            new PluginLayoutChoice(node.MainInputLayoutId, node.MainInputLayoutName, node.MainInputPins));
+        node.SupportedOutputLayouts = MergePluginLayoutChoices(
+            supportedOutputLayouts,
+            replacement.SupportedOutputLayouts,
+            new PluginLayoutChoice(node.OutputLayoutId, node.OutputLayoutName, node.OutputPins));
         node.Enabled = wasEnabled;
         node.Bypassed = wasBypassed;
         node.Sandboxed = replacement.Sandboxed;
@@ -10284,6 +10435,22 @@ private void RefreshEndpointButtonSelection()
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         QueueSave();
+    }
+
+    private static List<PluginLayoutChoice> MergePluginLayoutChoices(
+        IEnumerable<PluginLayoutChoice>? previous,
+        IEnumerable<PluginLayoutChoice>? refreshed,
+        PluginLayoutChoice selected)
+    {
+        return (previous ?? [])
+            .Concat(refreshed ?? [])
+            .Append(selected)
+            .Where(choice => choice.Channels > 0)
+            .GroupBy(choice => choice.Id)
+            .Select(group => group.First())
+            .OrderBy(choice => choice.Channels)
+            .ThenBy(choice => choice.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private int RestoreConnectionsForReconfiguredNode(
@@ -13745,6 +13912,10 @@ private void RefreshEndpointButtonSelection()
         RuntimeLog.Write(message);
         LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         LogTextBox.ScrollToEnd();
+        if (LogTextBox.IsVisible)
+        {
+            QueueStableVerticalScrollBarStyle(LogTextBox);
+        }
     }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)

@@ -41,6 +41,7 @@ struct PluginAudioOutputRoute
     int destinationChannel = -1;
     int destinationSlot = -1;
     int destinationPin = -1;
+    bool clearDestination = true;
 };
 
 struct PluginRoutingView

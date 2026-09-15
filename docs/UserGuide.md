@@ -185,7 +185,8 @@ The **Menu** window contains:
 - **Save** for the normal automatic layout file
 - **Save As** for a portable JSON copy
 - **Load** to replace the current layout with a saved JSON file
-- **Start Tray** to begin future launches hidden in the notification area
+- **Start with Windows** to launch FX Host automatically when the current Windows user signs in
+- **Start to Tray** to begin future automatic or manual launches hidden in the notification area
 - **Close to Tray** to make the window X hide the app instead of shutting down
 - **Delay Start** with a `0` to `60` second engine startup delay
 - the installed application version at the bottom
@@ -232,8 +233,10 @@ See [VFX Text Commands](../VFX_COMMANDS.md) for syntax and examples.
 ## Tray And VoiceMeeter Button
 
 When tray behavior is enabled, the notification-area menu provides **Open** and
-**Shutdown**. The saved **Start Tray** option avoids showing the main window at
-startup.
+**Shutdown**. **Start with Windows** registers the current executable for the
+current Windows user. **Start to Tray** avoids showing the main window whenever
+the app is launched, whether Windows starts it automatically or it is opened
+manually.
 
 Supported VoiceMeeter versions can show a custom **FX Host** button. The button
 opens or restores the app and is removed during a normal FX Host shutdown.

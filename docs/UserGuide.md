@@ -167,6 +167,17 @@ Create a group by:
 - using the Ctrl-click workflow
 - dragging compatible VST nodes together
 
+Dragging already-connected VSTs together, or using **Add To Group**, preserves
+their existing cables exactly. External cables move onto the group's ports;
+internal cables keep their original channels and connections. Parallel branches
+stay parallel. Adding an upstream, downstream, or middle VST keeps its place in
+the signal chain. Members are arranged left to right without overlapping.
+
+Grouping and applying group properties do not automatically add a chain. Use
+**Auto-Wire Chain** explicitly, or the Ctrl-click new-chain workflow, when you
+want new connections. Groups support up to eight main ports and two sidechain
+inputs; an operation that needs more is refused without changing the routing.
+
 Right-click a group for **Open Group**, **Properties**, **Port Setup**,
 **Copy Group**, group bypass, pin expansion, **Auto-Wire Chain**, group power,
 and removal.

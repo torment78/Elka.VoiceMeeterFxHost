@@ -327,7 +327,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _canvas.Width = newWidth;
         }
 
-        MinWidth = Math.Max(880.0, requiredWidth + 80.0);
+        // Long chains scroll inside the editor instead of widening the window off-screen.
     }
 
     private double RequiredCanvasWidthForMembers()
@@ -1288,15 +1288,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void EnsureMemberPositions()
     {
-        for (var index = 0; index < _members.Count; index++)
-        {
-            var node = _members[index];
-            if (node.X < 170 || node.X > Math.Max(MinimumCanvasWidth, _canvas.Width) - 250 || node.Y < 44 || node.Y > CanvasHeight - 120)
-            {
-                node.X = 210 + (index * 180);
-                node.Y = 160 + ((index % 2) * 120);
-            }
-        }
+        PluginGroupRouting.EnsureMemberPositions(_members);
     }
 
     private static double NodeHeight(PluginNodeSnapshot node)

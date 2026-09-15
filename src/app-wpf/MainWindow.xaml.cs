@@ -9699,7 +9699,6 @@ private void RefreshEndpointButtonSelection()
                 InputPins = Math.Min(2, Math.Max(1, node.MainInputPins)),
                 OutputPins = Math.Min(2, Math.Max(1, node.OutputPins))
             };
-            _settings.PluginGroups.Add(group);
             AddNodeToGroup(node, group);
         }));
 
@@ -9708,28 +9707,14 @@ private void RefreshEndpointButtonSelection()
 
     private void AddNodeToGroup(PluginNodeSnapshot node, PluginGroupSnapshot group)
     {
-        var previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
-        var previousLastSlot = GroupMembers(group).LastOrDefault()?.Slot;
-        foreach (var existingGroup in _settings.PluginGroups)
+        if (!GroupNodesPreservingConnections(group, [node]))
         {
-            if (existingGroup.Id != group.Id)
-            {
-                existingGroup.MemberSlots.Remove(node.Slot);
-            }
-        }
-
-        group.Mode = node.Mode;
-        if (!group.MemberSlots.Contains(node.Slot))
-        {
-            group.MemberSlots.Add(node.Slot);
+            RebuildRoutingCanvas();
+            return;
         }
 
         _selectedPluginGroupId = group.Id;
         _selectedPluginNodeSlot = null;
-        EnsureGroupInternalConnections(group);
-        RetargetAutoGroupOutputMappings(group, previousLastSlot);
-        EnsureGroupPortMappings(group);
-        ReconcileGroupExternalRoutes(group, previousGroupRoutes);
         AppendLog($"Added {node.Name} to {group.Name}.");
         RefreshEngineCallbackMode();
         RebuildVstNodeList();
@@ -9820,8 +9805,6 @@ private void RefreshEndpointButtonSelection()
                 .Where(slot => _settings.PluginNodes.Any(node => node.Slot == slot))
                 .Distinct()
                 .ToList();
-            EnsureGroupInternalConnections(group);
-            EnsureGroupPortMappings(group);
             RemoveInvalidGroupPinConnections(group.Id);
             ReconcileGroupExternalRoutes(group, previousGroupRoutes);
 
@@ -10131,7 +10114,7 @@ private void RefreshEndpointButtonSelection()
         _settings.PluginGroups.Add(copiedGroup);
         _selectedPluginGroupId = copiedGroup.Id;
         _selectedPluginNodeSlot = null;
-        EnsureGroupInternalConnections(copiedGroup);
+        PluginGroupRouting.EnsureMemberPositions(GroupMembers(copiedGroup).ToList());
         AppendLog($"Copied VST group: {copiedGroup.Name}.");
         RefreshEngineCallbackMode();
         RebuildVstNodeList();
@@ -10181,32 +10164,6 @@ private void RefreshEndpointButtonSelection()
         }
     }
 
-    private void RetargetAutoGroupOutputMappings(PluginGroupSnapshot group, int? previousLastSlot)
-    {
-        if (!previousLastSlot.HasValue)
-        {
-            return;
-        }
-
-        var newLast = GroupMembers(group).LastOrDefault();
-        if (newLast is null || newLast.Slot == previousLastSlot.Value)
-        {
-            return;
-        }
-
-        foreach (var connection in _settings.CanvasConnections.Where(connection =>
-                     connection.Kind == ConnectionNodeToGroupOutput &&
-                     connection.ToGroupId == group.Id &&
-                     connection.FromSlot == previousLastSlot.Value &&
-                     connection.FromPin == connection.ToPin &&
-                     connection.FromPin >= 0 &&
-                     connection.FromPin < newLast.OutputPins))
-        {
-            connection.FromSlot = newLast.Slot;
-            connection.FromMode = newLast.Mode;
-            connection.From = NodeOutputKey(newLast.Slot, connection.FromPin);
-        }
-    }
     private void EnsureGroupPortMappings(PluginGroupSnapshot group)
     {
         var members = GroupMembers(group).ToList();
@@ -13023,34 +12980,25 @@ private void RefreshEndpointButtonSelection()
 
     private void CreatePluginGroupFromNodes(PluginNodeSnapshot firstNode, PluginNodeSnapshot secondNode)
     {
-        var members = new[] { firstNode, secondNode }
-            .OrderBy(static node => node.X)
-            .ThenBy(static node => node.Y)
-            .ToList();
-        var inputNode = members.First();
-        var outputNode = members.Last();
+        var members = new[] { firstNode, secondNode };
         var group = new PluginGroupSnapshot
         {
             Id = Guid.NewGuid().ToString("N"),
-            Name = UniquePluginGroupName($"{PluginDisplayBaseName(inputNode.Name)} Group"),
-            Mode = inputNode.Mode,
+            Name = UniquePluginGroupName($"{PluginDisplayBaseName(firstNode.Name)} Group"),
+            Mode = firstNode.Mode,
             X = Math.Max(300, members.Min(static node => node.X) - 12),
             Y = Math.Max(80, members.Min(static node => node.Y) - 12),
-            InputPins = Math.Min(2, Math.Max(1, inputNode.MainInputPins)),
-            OutputPins = Math.Min(2, Math.Max(1, outputNode.OutputPins)),
-            MemberSlots = members.Select(static node => node.Slot).Distinct().ToList()
+            InputPins = Math.Min(2, Math.Max(1, firstNode.MainInputPins)),
+            OutputPins = Math.Min(2, Math.Max(1, secondNode.OutputPins))
         };
-
-        foreach (var existingGroup in _settings.PluginGroups)
+        if (!GroupNodesPreservingConnections(group, members))
         {
-            existingGroup.MemberSlots.RemoveAll(slot => group.MemberSlots.Contains(slot));
+            RebuildRoutingCanvas();
+            return;
         }
 
-        _settings.PluginGroups.Add(group);
         _selectedPluginGroupId = group.Id;
         _selectedPluginNodeSlot = null;
-        EnsureGroupInternalConnections(group);
-        EnsureGroupPortMappings(group);
         AppendLog($"Created VST group: {group.Name}.");
         RefreshEngineCallbackMode();
         RebuildVstNodeList();
@@ -13251,6 +13199,7 @@ private void RefreshEndpointButtonSelection()
         _selectedPluginNodeSlot = null;
         EnsureGroupInternalConnections(group);
         EnsureGroupPortMappings(group);
+        PluginGroupRouting.ArrangeMembers(members);
         var inputEdges = ConnectQuickGroupSource(group, source);
         var outputEdges = ConnectQuickGroupDestination(group, destination);
         ClearQuickGroupChain(log: false);
@@ -13596,6 +13545,7 @@ private void RefreshEndpointButtonSelection()
         _selectedPluginNodeSlot = null;
         EnsureGroupInternalConnections(group);
         EnsureGroupPortMappings(group);
+        PluginGroupRouting.ArrangeMembers(members);
         ClearQuickGroupChain(log: false);
 
         AppendLog($"Created unattached quick VST group {group.Name}: {members.Count} VST(s).");

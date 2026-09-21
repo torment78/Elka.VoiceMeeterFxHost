@@ -31,6 +31,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot> _showExposedPluginParameters;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeEnabled;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeBypass;
+    private readonly Action<PluginNodeSnapshot> _reloadPluginNode;
+    private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePinsCollapsed;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
     private readonly TextBox _nameTextBox = new();
@@ -67,7 +69,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot> showPluginNodeProperties,
         Action<PluginNodeSnapshot> showExposedPluginParameters,
         Action<PluginNodeSnapshot, bool> setPluginNodeEnabled,
-        Action<PluginNodeSnapshot, bool> setPluginNodeBypass)
+        Action<PluginNodeSnapshot, bool> setPluginNodeBypass,
+        Action<PluginNodeSnapshot> reloadPluginNode,
+        Action<PluginNodeSnapshot, bool> setPluginNodePinsCollapsed)
     {
         _group = group;
         _members = members.ToList();
@@ -79,6 +83,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _showExposedPluginParameters = showExposedPluginParameters;
         _setPluginNodeEnabled = setPluginNodeEnabled;
         _setPluginNodeBypass = setPluginNodeBypass;
+        _reloadPluginNode = reloadPluginNode;
+        _setPluginNodePinsCollapsed = setPluginNodePinsCollapsed;
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
 
@@ -111,6 +117,53 @@ internal sealed class PluginGroupPropertiesWindow : Window
     public int SidechainInputPins { get; private set; }
     public int SidechainOutputPins { get; private set; }
     public List<int> MemberSlots { get; private set; }
+
+    public void OnNodeReconfigured(PluginNodeSnapshot node, int oldSlot, int oldMainInputs, int oldSidechainInputs)
+    {
+        if (!_members.Contains(node))
+            return;
+
+        // Cancel must restore the original wiring against the replacement slot, not the retired one.
+        if (_originalNodePositions.Remove(oldSlot, out var position))
+            _originalNodePositions[node.Slot] = position;
+
+        foreach (var connection in _originalConnections.ToList())
+        {
+            if (connection.FromKind == PinNodeOutput && connection.FromSlot == oldSlot)
+            {
+                if (connection.FromPin >= node.OutputPins)
+                {
+                    _originalConnections.Remove(connection);
+                    continue;
+                }
+
+                connection.FromSlot = node.Slot;
+                connection.From = NodeOutputKey(node.Slot, connection.FromPin);
+            }
+
+            if (connection.ToKind == PinNodeInput && connection.ToSlot == oldSlot)
+            {
+                var pin = PluginNodePins.RemapInput(connection.ToPin, oldMainInputs, oldSidechainInputs,
+                    node.MainInputPins, node.SidechainInputPins);
+                if (pin < 0)
+                {
+                    _originalConnections.Remove(connection);
+                    continue;
+                }
+
+                connection.ToSlot = node.Slot;
+                connection.ToPin = pin;
+                connection.To = NodeInputKey(node.Slot, pin);
+            }
+        }
+
+        MemberSlots = _members.Select(member => member.Slot).ToList();
+        if (_selectedNodeSlot == oldSlot)
+            _selectedNodeSlot = node.Slot;
+        _selectedConnectionKey = null;
+        _wireStart = null;
+        RebuildCanvas();
+    }
 
     private Grid BuildLayout()
     {
@@ -444,15 +497,19 @@ internal sealed class PluginGroupPropertiesWindow : Window
             }
         };
 
-        for (var pin = 0; pin < NodeInputVisualPinCount(node); pin++)
+        var inputPins = PluginNodePins.VisibleInputs(node);
+        var outputPins = PluginNodePins.VisibleOutputs(node);
+        for (var row = 0; row < inputPins.Count; row++)
         {
-            DrawNodePin(node, pin, input: true, elements);
+            DrawNodePin(node, inputPins[row], row, input: true, elements);
         }
 
-        for (var pin = 0; pin < node.OutputPins; pin++)
+        for (var row = 0; row < outputPins.Count; row++)
         {
-            DrawNodePin(node, pin, input: false, elements);
+            DrawNodePin(node, outputPins[row], row, input: false, elements);
         }
+
+        UpdateNodePinPositionCache(node);
 
         _nodeVisualElements[node.Slot] = elements;
     }
@@ -465,7 +522,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });
             menu.Items.Add(new Separator());
-            var missingDelete = CreateMenuItem("Delete VST", () => DeleteNode(node));
+            var missingDelete = CreateMenuItem("Remove", () => DeleteNode(node));
             missingDelete.Foreground = BrushFrom("#E15F5F");
             menu.Items.Add(missingDelete);
             return menu;
@@ -473,17 +530,27 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         menu.Items.Add(CreateMenuItem("Open Editor", () => _openPluginEditor(node)));
         menu.Items.Add(CreateMenuItem("Info", () => _showExposedPluginParameters(node)));
-        menu.Items.Add(CreateMenuItem("Port Setup", () =>
+        menu.Items.Add(CreateMenuItem("Reload", () =>
         {
-            _showPluginNodeProperties(node);
+            _reloadPluginNode(node);
             RebuildCanvas();
         }));
         menu.Items.Add(CreateMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
         menu.Items.Add(new Separator());
+        menu.Items.Add(CreateMenuItem("Properties", () =>
+        {
+            _showPluginNodeProperties(node);
+            RebuildCanvas();
+        }));
+        menu.Items.Add(CreateMenuItem(node.PinsCollapsed ? "Expand Pins" : "Minimize Pins", () =>
+        {
+            _setPluginNodePinsCollapsed(node, !node.PinsCollapsed);
+            RebuildCanvas();
+        }));
         menu.Items.Add(CreateMenuItem("Remove From Group", () => RemoveNodeFromGroup(node)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem(node.Enabled ? "Turn Off" : "Turn On", () => SetNodeEnabled(node, !node.Enabled)));
-        var delete = CreateMenuItem("Delete VST", () => DeleteNode(node));
+        var delete = CreateMenuItem("Remove", () => DeleteNode(node));
         delete.Foreground = BrushFrom("#E15F5F");
         menu.Items.Add(delete);
         return menu;
@@ -568,10 +635,10 @@ internal sealed class PluginGroupPropertiesWindow : Window
         node.Y = Math.Max(80, _group.Y + 24);
     }
 
-    private void DrawNodePin(PluginNodeSnapshot node, int pinIndex, bool input, List<FrameworkElement> elements)
+    private void DrawNodePin(PluginNodeSnapshot node, int pinIndex, int row, bool input, List<FrameworkElement> elements)
     {
         var x = input ? node.X : node.X + NodeWidth;
-        var y = node.Y + 48 + (pinIndex * 18);
+        var y = node.Y + 48 + (row * 18);
         var pin = new CanvasPin(input ? PinNodeInput : PinNodeOutput, node, pinIndex, input);
         var key = PinKey(pin);
         _pinPositions[key] = new Point(x, y);
@@ -882,18 +949,25 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void UpdateNodePinPositionCache(PluginNodeSnapshot node)
     {
-        for (var pin = 0; pin < NodeInputVisualPinCount(node); pin++)
-        {
-            _pinPositions[NodeInputKey(node.Slot, pin)] = new Point(
-                node.X,
-                node.Y + 48 + (pin * 18));
-        }
+        UpdateSidePinPositions(node, PluginNodePins.VisibleInputs(node), input: true);
+        UpdateSidePinPositions(node, PluginNodePins.VisibleOutputs(node), input: false);
+    }
 
-        for (var pin = 0; pin < node.OutputPins; pin++)
+    private void UpdateSidePinPositions(PluginNodeSnapshot node, List<int> visiblePins, bool input)
+    {
+        if (visiblePins.Count == 0)
+            return;
+
+        var count = input ? NodeInputVisualPinCount(node) : node.OutputPins;
+        for (var pin = 0; pin < count; pin++)
         {
-            _pinPositions[NodeOutputKey(node.Slot, pin)] = new Point(
-                node.X + NodeWidth,
-                node.Y + 48 + (pin * 18));
+            var row = visiblePins.IndexOf(pin);
+            // Keep cables on hidden pins attached, matching the main canvas's collapsed anchors.
+            if (row < 0)
+                row = pin % visiblePins.Count;
+            var key = input ? NodeInputKey(node.Slot, pin) : NodeOutputKey(node.Slot, pin);
+            _pinPositions[key] = new Point(input ? node.X : node.X + NodeWidth,
+                node.Y + 48 + (row * 18));
         }
     }
 
@@ -1293,7 +1367,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private static double NodeHeight(PluginNodeSnapshot node)
     {
-        return Math.Max(92.0, 68.0 + (Math.Max(NodeInputVisualPinCount(node), node.OutputPins) * 18.0));
+        return Math.Max(92.0, 68.0 + (Math.Max(PluginNodePins.VisibleInputs(node).Count, PluginNodePins.VisibleOutputs(node).Count) * 18.0));
     }
 
     private static int NodeInputVisualPinCount(PluginNodeSnapshot node)

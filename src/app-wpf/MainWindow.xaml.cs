@@ -9044,6 +9044,9 @@ private void RefreshEndpointButtonSelection()
         menu.Items.Add(CreateNodeMenuItem("Copy Group", () => CopyPluginGroup(group)));
 
         var members = GroupMembers(group).ToList();
+        var reload = CreateNodeMenuItem("Reload", () => ReloadPluginGroup(group));
+        reload.IsEnabled = members.Any(node => !node.MissingPlugin && node.PluginIndex >= 0);
+        menu.Items.Add(reload);
         var groupBypassed = GroupIsBypassed(members);
         var bypass = CreateNodeMenuItem(groupBypassed ? "Disable Group Bypass" : "Bypass Group", () => SetGroupBypass(group, !groupBypassed));
         if (members.Count == 0)
@@ -9788,11 +9791,21 @@ private void RefreshEndpointButtonSelection()
             ShowNodeProperties,
             ShowExposedPluginParameters,
             SetNodeEnabled,
-            SetNodeBypass)
+            SetNodeBypass,
+            ReloadPluginNode,
+            SetNodePinsCollapsed)
         {
             Owner = this
         };
 
+        void OnNodeReconfigured(PluginNodeSnapshot node, int oldSlot, int oldMainInputs, int oldSidechainInputs)
+        {
+            editor.OnNodeReconfigured(node, oldSlot, oldMainInputs, oldSidechainInputs);
+            previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
+        }
+
+        PluginNodeReconfigured += OnNodeReconfigured;
+        editor.Closed += (_, _) => PluginNodeReconfigured -= OnNodeReconfigured;
         editor.Applied += (_, _) =>
         {
             group.Name = string.IsNullOrWhiteSpace(editor.GroupName) ? "VST Group" : editor.GroupName.Trim();
@@ -9807,6 +9820,7 @@ private void RefreshEndpointButtonSelection()
                 .ToList();
             RemoveInvalidGroupPinConnections(group.Id);
             ReconcileGroupExternalRoutes(group, previousGroupRoutes);
+            previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
 
             RefreshEngineCallbackMode();
             RebuildVstNodeList();
@@ -10258,6 +10272,24 @@ private void RefreshEndpointButtonSelection()
             : $"{node.InputPins} in\n{node.OutputPins} out";
     }
 
+    private event Action<PluginNodeSnapshot, int, int, int>? PluginNodeReconfigured;
+
+    private void ReloadPluginGroup(PluginGroupSnapshot group)
+    {
+        var members = GroupMembers(group).ToList();
+        AppendLog($"{group.Name}: reloading {members.Count} VST node(s).");
+        foreach (var node in members)
+        {
+            if (node.MissingPlugin || node.PluginIndex < 0)
+            {
+                AppendLog($"{node.Name}: reload skipped because the plugin is unavailable.");
+                continue;
+            }
+
+            ReloadPluginNode(node);
+        }
+    }
+
     private void ReloadPluginNode(PluginNodeSnapshot node)
     {
         ReconfigurePluginNode(
@@ -10405,6 +10437,7 @@ private void RefreshEndpointButtonSelection()
             oldOutputPins,
             oldConnections);
         ApplyAllGroupExternalRoutes(active: true);
+        PluginNodeReconfigured?.Invoke(node, oldSlot, oldMainInputPins, oldSidechainInputPins);
         AppendLog(isReload
             ? $"{node.Name}: reloaded. Restored {restored} cable(s)."
             : $"{node.Name}: pin layout set to {NodePinSummary(node)}. Restored {restored} cable(s).");
@@ -10635,27 +10668,8 @@ private void RefreshEndpointButtonSelection()
         int newMainInputPins,
         int newSidechainInputPins)
     {
-        if (oldVisualPin < 0)
-        {
-            return -1;
-        }
-
-        if (oldSidechainInputPins <= 0)
-        {
-            return oldVisualPin < Math.Min(oldMainInputPins, newMainInputPins)
-                ? newSidechainInputPins + oldVisualPin
-                : -1;
-        }
-
-        if (oldVisualPin < oldSidechainInputPins)
-        {
-            return oldVisualPin < newSidechainInputPins ? oldVisualPin : -1;
-        }
-
-        var mainPin = oldVisualPin - oldSidechainInputPins;
-        return mainPin < Math.Min(oldMainInputPins, newMainInputPins)
-            ? newSidechainInputPins + mainPin
-            : -1;
+        return PluginNodePins.RemapInput(oldVisualPin, oldMainInputPins, oldSidechainInputPins,
+            newMainInputPins, newSidechainInputPins);
     }
 
     private bool NodeBelongsToCurrentCanvas(PluginNodeSnapshot node)
@@ -10670,32 +10684,12 @@ private void RefreshEndpointButtonSelection()
 
     private static IEnumerable<int> VisibleNodeInputPinIds(PluginNodeSnapshot node)
     {
-        var allPins = Enumerable.Range(0, NodeInputVisualPinCount(node)).ToList();
-        if (!node.PinsCollapsed)
-        {
-            return allPins;
-        }
-
-        var visible = new List<int>();
-        if (node.SidechainInputPins > 0)
-        {
-            visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, node.SidechainInputPins)));
-        }
-
-        visible.AddRange(Enumerable.Range(0, Math.Min(CollapsedVisiblePinCount, node.MainInputPins))
-            .Select(pin => node.SidechainInputPins + pin));
-        return visible.Where(allPins.Contains).Distinct().ToList();
+        return PluginNodePins.VisibleInputs(node);
     }
 
     private static IEnumerable<int> VisibleNodeOutputPinIds(PluginNodeSnapshot node)
     {
-        var allPins = Enumerable.Range(0, Math.Max(1, node.OutputPins)).ToList();
-        if (!node.PinsCollapsed)
-        {
-            return allPins;
-        }
-
-        return allPins.Take(Math.Min(CollapsedVisiblePinCount, allPins.Count)).ToList();
+        return PluginNodePins.VisibleOutputs(node);
     }
 
     private void DrawNodePin(PluginNodeSnapshot node, int pinIndex, double x, double y, bool input)

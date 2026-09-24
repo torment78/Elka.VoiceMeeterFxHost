@@ -1,6 +1,6 @@
 # Elka VoiceMeeter FX Host
 
-![Elka VoiceMeeter FX Host social preview](src/app-wpf/Assets/ElkaVoiceMeeterFxHostSocialPreview.png)
+![Elka VoiceMeeter FX Host - VST hosting, routing, delay, volume, and VBAN control](docs/images/fx-host-social-preview.jpg)
 
 Elka VoiceMeeter FX Host is a Windows control surface and VST host for
 VoiceMeeter. It adds delay, volume, direct routing, VST processing, VST groups,

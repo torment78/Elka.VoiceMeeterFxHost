@@ -1471,12 +1471,17 @@ public partial class MainWindow : Window
         };
         AddMenuCell(actions, startupDelaySeconds, 3, 2);
 
+        var modeActions = CreateMenuColumns();
+        modeActions.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        modeActions.Margin = new Thickness(0, 6, 0, 0);
+        var advanced = CreateSaveManagerToggleButton("Advanced", _advancedModeActive);
+        advanced.ToolTip = "Show In -> Out and Channels. Saves the session and restarts FX Host.";
+        advanced.Click += (_, _) => RestartWithAdvancedMode(window, advanced);
+        AddMenuCell(modeActions, advanced, 0, 0);
         var close = CreateSaveManagerButton("Close");
-        close.Width = 172;
-        close.HorizontalAlignment = HorizontalAlignment.Center;
-        close.Margin = new Thickness(0, 6, 0, 0);
         close.Click += (_, _) => window.Close();
-        stack.Children.Add(close);
+        AddMenuCell(modeActions, close, 0, 2);
+        stack.Children.Add(modeActions);
         stack.Children.Add(CreateUpdateMenuSection(window));
 
         stack.Children.Add(new TextBlock
@@ -1916,12 +1921,18 @@ public partial class MainWindow : Window
         _kind = _voicemeeterKindDetectedFromApi ? runningKind : savedKind;
         _restoredSavedEditionWorkspace = ActivateVoicemeeterEditionWorkspace(_settings, savedKind, _kind);
         _settings.Kind = _kind;
+        _advancedModeActive = _settings.AdvancedModeEnabled;
+        AdvancedModeState.PrepareWorkspace(_settings);
+        _engine.AdvancedModeEnabled = _advancedModeActive;
+        ApplyAdvancedModeVisibility();
 
         _settingsByEndpoint.Clear();
         NormalizePluginScanFolders();
         NormalizePluginInstanceIds();
         NormalizePluginGroups();
-        _selectedMode = _settings.SelectedMode == CallbackMode.None ? CallbackMode.Input : _settings.SelectedMode;
+        _selectedMode = _settings.SelectedMode == CallbackMode.None ||
+            (!_advancedModeActive && _settings.SelectedMode == CallbackMode.Main)
+            ? CallbackMode.Input : _settings.SelectedMode;
         if (!string.IsNullOrWhiteSpace(_settings.SelectedEndpointName))
         {
             if (_selectedMode == CallbackMode.Output)
@@ -2034,6 +2045,7 @@ public partial class MainWindow : Window
             SelectedOutputEndpointName = settings.SelectedOutputEndpointName,
             InsertAsioAutoStart = settings.InsertAsioAutoStart,
             InsertAsioEndpointKeys = settings.InsertAsioEndpointKeys,
+            InactiveAdvancedGraph = settings.InactiveAdvancedGraph,
             Endpoints = settings.Endpoints,
             PluginNodes = settings.PluginNodes,
             PluginGroups = settings.PluginGroups,
@@ -2053,6 +2065,7 @@ public partial class MainWindow : Window
         settings.SelectedOutputEndpointName = workspace.SelectedOutputEndpointName;
         settings.InsertAsioAutoStart = workspace.InsertAsioAutoStart;
         settings.InsertAsioEndpointKeys = workspace.InsertAsioEndpointKeys ?? [];
+        settings.InactiveAdvancedGraph = workspace.InactiveAdvancedGraph;
         settings.Endpoints = workspace.Endpoints ?? [];
         settings.PluginNodes = workspace.PluginNodes ?? [];
         settings.PluginGroups = workspace.PluginGroups ?? [];
@@ -2094,7 +2107,7 @@ public partial class MainWindow : Window
     private void NormalizePluginInstanceIds()
     {
         var assigned = new HashSet<int>();
-        foreach (var node in _settings.PluginNodes)
+        foreach (var node in AdvancedModeState.AllNodes(_settings))
         {
             if (node.InstanceId >= 0 &&
                 node.InstanceId < MaxPluginInstanceIds &&
@@ -2117,7 +2130,7 @@ public partial class MainWindow : Window
 
     private int NextAvailablePluginInstanceId()
     {
-        var assigned = _settings.PluginNodes
+        var assigned = AdvancedModeState.AllNodes(_settings)
             .Where(static node => node.InstanceId >= 0 && node.InstanceId < MaxPluginInstanceIds)
             .Select(static node => node.InstanceId)
             .ToHashSet();
@@ -2135,6 +2148,8 @@ public partial class MainWindow : Window
 
     private void ApplyImportedSave(FxHostSettings imported)
     {
+        // A save file must not change the process's startup mode without a restart.
+        imported.AdvancedModeEnabled = _advancedModeActive;
         _loading = true;
         try
         {
@@ -2697,6 +2712,9 @@ public partial class MainWindow : Window
 
     private bool ApplyVfxTextCommand(VfxTextCommand command)
     {
+        if (!_advancedModeActive && command.TargetKind != VfxTextCommandTargetKind.Vst)
+            throw new InvalidOperationException("Channel commands require Advanced mode. VST commands remain available.");
+
         if (command.TargetKind == VfxTextCommandTargetKind.Vst)
         {
             ApplyVfxTextCommandToPlugin(command);
@@ -3093,7 +3111,7 @@ public partial class MainWindow : Window
 
     private void QueueChannelApply(EndpointChannelSettings settings)
     {
-        if (_loading)
+        if (_loading || !_advancedModeActive)
         {
             return;
         }
@@ -3148,6 +3166,8 @@ public partial class MainWindow : Window
 
     private void SelectMode(CallbackMode mode)
     {
+        if (!_advancedModeActive && mode == CallbackMode.Main)
+            mode = CallbackMode.Input;
         if (IsInsertAsioPatchExclusiveActive() && mode != CallbackMode.Input)
         {
             AppendLog($"{(mode == CallbackMode.Output ? "Output" : "Main")} side is unavailable while ASIO Patch is running.");
@@ -3862,6 +3882,8 @@ public partial class MainWindow : Window
 
     private void SelectWorkspaceView(WorkspaceView view)
     {
+        if (!_advancedModeActive && view == WorkspaceView.Channels)
+            view = WorkspaceView.Vst;
         _workspaceView = view;
         ChannelsWorkspaceView.Visibility = view == WorkspaceView.Channels ? Visibility.Visible : Visibility.Collapsed;
         VstWorkspaceView.Visibility = view == WorkspaceView.Vst ? Visibility.Visible : Visibility.Collapsed;
@@ -3884,6 +3906,8 @@ public partial class MainWindow : Window
 
     private void SelectVstInputCanvasRouteView(VstInputCanvasRouteView view)
     {
+        if (!_advancedModeActive && view == VstInputCanvasRouteView.DirectOutput)
+            return;
         if (view == VstInputCanvasRouteView.DirectOutput && IsInsertAsioPatchExclusiveActive())
         {
             AppendLog("In -> Out is unavailable while ASIO Patch is running.");
@@ -3951,7 +3975,7 @@ public partial class MainWindow : Window
         SetWorkspaceButtonTone(VstOutputReturnButton, _vstCanvasMode == CallbackMode.Output);
 
         VstInputReturnButton.IsEnabled = showRouteView;
-        VstInputDirectButton.IsEnabled = showRouteView && !insertAsioRouteLock;
+        VstInputDirectButton.IsEnabled = _advancedModeActive && showRouteView && !insertAsioRouteLock;
         VstOutputReturnButton.IsEnabled = showRouteView && !insertAsioRouteLock;
         VstInputDirectButton.Opacity = VstInputDirectButton.IsEnabled ? 1.0 : 0.45;
         VstOutputReturnButton.Opacity = VstOutputReturnButton.IsEnabled ? 1.0 : 0.45;
@@ -3993,7 +4017,7 @@ public partial class MainWindow : Window
         InputModeButton.IsEnabled = true;
         InputModeButton.Opacity = 1.0;
         OutputModeButton.IsEnabled = !insertAsioLocked;
-        MainModeButton.IsEnabled = !insertAsioLocked;
+        MainModeButton.IsEnabled = _advancedModeActive && !insertAsioLocked;
         OutputModeButton.Opacity = insertAsioLocked ? 0.45 : 1.0;
         MainModeButton.Opacity = insertAsioLocked ? 0.45 : 1.0;
         OutputModeButton.ToolTip = insertAsioLocked ? lockedTip : null;
@@ -4101,7 +4125,7 @@ public partial class MainWindow : Window
 
         foreach (var settings in _settingsByEndpoint.Values)
         {
-            if (settings.HasActiveChannels && !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
+            if (_advancedModeActive && settings.HasActiveChannels && !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
             {
                 active |= settings.Mode;
             }
@@ -4134,7 +4158,7 @@ public partial class MainWindow : Window
             active |= mode;
         }
 
-        return active;
+        return active & _engine.AllowedCallbackModes;
     }
 
     private bool PluginNodeHasCallbackWork(PluginNodeSnapshot node) =>
@@ -4736,6 +4760,8 @@ private void RefreshEndpointButtonSelection()
     private void BuildChannelStrips()
     {
         ChannelStripPanel.Children.Clear();
+        if (!_advancedModeActive)
+            return;
         if (_selectedChannelSettings is null)
         {
             ChannelStripTitleTextBlock.Text = "Channels";
@@ -11451,7 +11477,7 @@ private void RefreshEndpointButtonSelection()
     private void ToggleEndpointToEndpointConnection(CanvasPinInfo source, CanvasPinInfo target)
     {
         var routeMode = EndpointToEndpointRouteMode(source.Mode, target.Mode);
-        if (routeMode == CallbackMode.None)
+        if (routeMode == CallbackMode.None || (!_advancedModeActive && routeMode == CallbackMode.Main))
         {
             AppendLog("Direct VST canvas passthrough must stay inside one section, or use Main input-to-output routing.");
             return;
@@ -12552,6 +12578,8 @@ private void RefreshEndpointButtonSelection()
 
     private IEnumerable<DirectRouteSummary> AllDirectRoutes()
     {
+        if (!_advancedModeActive)
+            return [];
         return _settingsByEndpoint.Values
             .Where(settings => !IsInputPatchBypassEndpoint(settings.Mode, settings.Endpoint, out _))
             .SelectMany(settings => settings.ToDirectRoutes(_kind));

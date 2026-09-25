@@ -14,6 +14,10 @@
   #define OutputBaseFilename "ElkaVoiceMeeterFxHostSetup"
 #endif
 
+#if Ver < EncodeVer(6, 6, 0)
+  #error Inno Setup 6.6 or later is required for the dark installer
+#endif
+
 [Setup]
 AppId={{35D7677D-46D7-46E7-A5B4-C54D3E442F55}
 AppName=Elka VoiceMeeter FX Host
@@ -31,7 +35,11 @@ SetupIconFile={#RepoRoot}\src\app-wpf\Assets\VoicemeeterDelay.ico
 UninstallDisplayIcon={app}\Elka.VoiceMeeterFxHost.App.exe
 Compression=lzma2/ultra64
 SolidCompression=yes
-WizardStyle=modern dark
+WizardStyle=modern dark polar includetitlebar
+WizardSizePercent=120,120
+DisableWelcomePage=no
+WizardImageFile={#RepoRoot}\docs\images\fx-host-vertical.png
+WizardSmallImageFile={#RepoRoot}\src\app-wpf\Assets\VoicemeeterDelayIconPreview.png
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
@@ -54,6 +62,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+Source: "{#RepoRoot}\installer\Assets\ElkaSoft.png"; Flags: dontcopy
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -82,6 +91,7 @@ var
   CachedVoicemeeterType: Integer;
   VoicemeeterApiQueried: Boolean;
   PerformanceOptionsPage: TInputOptionWizardPage;
+  WelcomeLogo, FinishedLogo: TBitmapImage;
 
 function ExecutableDirectoryFromCommand(const CommandLine: string): string;
 var
@@ -272,11 +282,37 @@ begin
   end;
 end;
 
+procedure AddBrandLogo(var Logo: TBitmapImage; ParentPage: TNewNotebookPage; LeftEdge: Integer);
+begin
+  Logo := TBitmapImage.Create(WizardForm);
+  Logo.Parent := ParentPage;
+  Logo.SetBounds(LeftEdge, ParentPage.Height - ScaleY(120), ScaleX(108), ScaleY(108));
+  Logo.Stretch := True;
+  Logo.PngImage.LoadFromFile(ExpandConstant('{tmp}\ElkaSoft.png'));
+end;
+
+procedure InitializeBranding;
+begin
+  ExtractTemporaryFile('ElkaSoft.png');
+  WizardForm.WelcomeLabel1.Caption := 'Elka VoiceMeeter' + #13#10 + 'FX Host';
+  WizardForm.WelcomeLabel1.Height := ScaleY(58);
+  WizardForm.WelcomeLabel2.Top := WizardForm.WelcomeLabel1.Top + WizardForm.WelcomeLabel1.Height + ScaleY(12);
+  WizardForm.WelcomeLabel2.Caption :=
+    'VST hosting, routing, delay and volume control for VoiceMeeter.' + #13#10#13#10 +
+    'Version {#AppVersion}  /  Windows x64' + #13#10#13#10 +
+    'Setup will install Elka VoiceMeeter FX Host on your computer.' + #13#10#13#10 +
+    'Close FX Host before continuing.';
+  WizardForm.WelcomeLabel2.Height := ScaleY(156);
+  AddBrandLogo(WelcomeLogo, WizardForm.WelcomePage, WizardForm.WelcomeLabel2.Left);
+  AddBrandLogo(FinishedLogo, WizardForm.FinishedPage, WizardForm.FinishedLabel.Left);
+end;
+
 procedure InitializeWizard;
 var
   RunningVoicemeeterType: Integer;
   RunningVoicemeeterName: string;
 begin
+  InitializeBranding;
   RunningVoicemeeterType := GetRunningVoicemeeterType;
   RunningVoicemeeterName := VoicemeeterTypeName(RunningVoicemeeterType);
 
@@ -300,6 +336,21 @@ begin
     PerformanceOptionsPage.Add('VoiceMeeter (Remote API found, but no running edition was detected)');
     PerformanceOptionsPage.Values[1] := False;
     PerformanceOptionsPage.CheckListBox.ItemEnabled[1] := False;
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := 'FX Host is ready';
+    WizardForm.FinishedLabel.Caption :=
+      'Elka VoiceMeeter FX Host has been installed.' + #13#10#13#10 +
+      'Version {#AppVersion}  /  Windows x64' + #13#10#13#10 +
+      'Click Finish to close Setup.';
+    WizardForm.FinishedLabel.Height := ScaleY(110);
+    WizardForm.RunList.Top := WizardForm.FinishedLabel.Top + ScaleY(122);
+    WizardForm.RunList.Height := ScaleY(40);
   end;
 end;
 

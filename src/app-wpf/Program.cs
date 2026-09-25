@@ -18,6 +18,9 @@ internal static class Program
                 return PluginProbeCli.Run(args);
             }
 
+            if (!ApplicationRestart.WaitForPreviousProcess(args))
+                return -1;
+
             using var singleInstance = SingleInstanceCoordinator.Acquire();
             if (!singleInstance.IsPrimary)
             {

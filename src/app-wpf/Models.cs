@@ -525,6 +525,13 @@ internal sealed class CanvasConnectionSnapshot
     public int ToPin { get; set; } = -1;
 }
 
+internal sealed class AdvancedRoutingSnapshot
+{
+    public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];
+    public List<PluginGroupSnapshot> PluginGroups { get; set; } = [];
+    public List<CanvasConnectionSnapshot> CanvasConnections { get; set; } = [];
+}
+
 internal sealed class VoicemeeterEditionWorkspace
 {
     public CallbackMode SelectedMode { get; set; } = CallbackMode.Input;
@@ -533,6 +540,7 @@ internal sealed class VoicemeeterEditionWorkspace
     public string? SelectedOutputEndpointName { get; set; }
     public bool InsertAsioAutoStart { get; set; }
     public List<string> InsertAsioEndpointKeys { get; set; } = [];
+    public AdvancedRoutingSnapshot? InactiveAdvancedGraph { get; set; }
     public List<ChannelSettingsSnapshot> Endpoints { get; set; } = [];
     public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];
     public List<PluginGroupSnapshot> PluginGroups { get; set; } = [];
@@ -558,6 +566,7 @@ internal sealed class FxHostSettings
     public bool InsertAsioAutoStart { get; set; }
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
+    public bool AdvancedModeEnabled { get; set; } = true;
     public bool CheckStableUpdatesAutomatically { get; set; }
     public bool CheckBetaUpdatesAutomatically { get; set; }
     public bool StartupDelayEnabled { get; set; }
@@ -568,6 +577,7 @@ internal sealed class FxHostSettings
     public double? MainWindowHeight { get; set; }
     public bool MainWindowMaximized { get; set; }
     public List<string> InsertAsioEndpointKeys { get; set; } = [];
+    public AdvancedRoutingSnapshot? InactiveAdvancedGraph { get; set; }
     public List<ChannelSettingsSnapshot> Endpoints { get; set; } = [];
     public List<PluginNodeSnapshot> PluginNodes { get; set; } = [];
     public List<PluginGroupSnapshot> PluginGroups { get; set; } = [];
@@ -725,6 +735,12 @@ internal sealed class NativeEngineClient : IDisposable
     }
 
     public bool IsAttached => _attached;
+
+    public bool AdvancedModeEnabled { get; set; } = true;
+
+    public CallbackMode AllowedCallbackModes => AdvancedModeEnabled
+        ? CallbackMode.Input | CallbackMode.Output | CallbackMode.Main
+        : CallbackMode.Input | CallbackMode.Output;
 
     public string LastStatus => _lastStatus;
 
@@ -1069,7 +1085,7 @@ internal sealed class NativeEngineClient : IDisposable
 
     public void SetRequestedMode(CallbackMode mode)
     {
-        _requestedMode = mode;
+        _requestedMode = mode & AllowedCallbackModes;
         SetMode(_requestedMode);
     }
 
@@ -1365,6 +1381,12 @@ internal sealed class NativeEngineClient : IDisposable
 
     public void ApplyChannelSettings(EndpointChannelSettings settings)
     {
+        if (!AdvancedModeEnabled)
+        {
+            ClearChannelSettings(settings.Mode, settings.Endpoint);
+            return;
+        }
+
         if (!_attached)
         {
             return;
@@ -1422,7 +1444,8 @@ internal sealed class NativeEngineClient : IDisposable
             return;
         }
 
-        var routeList = routes.ToList();
+        var routeList = routes.Where(route => (route.Mode & AllowedCallbackModes) == route.Mode).ToList();
+        if (!AdvancedModeEnabled) routeList.Clear();
         var routeSignature = DirectRouteSignature(routeList);
         if (!string.Equals(routeSignature, _lastDirectRouteSignature, StringComparison.Ordinal))
         {
@@ -1472,7 +1495,7 @@ internal sealed class NativeEngineClient : IDisposable
             return;
         }
 
-        var routeList = routes.ToList();
+        var routeList = routes.Where(route => (route.Mode & AllowedCallbackModes) == route.Mode).ToList();
         var routeSignature = PluginPassthroughRouteSignature(routeList);
         if (!string.Equals(routeSignature, _lastPluginPassthroughRouteSignature, StringComparison.Ordinal))
         {
@@ -1562,6 +1585,12 @@ internal sealed class NativeEngineClient : IDisposable
         int? mainInputLayoutId = null,
         int? outputLayoutId = null)
     {
+        if ((mode & AllowedCallbackModes) != mode)
+        {
+            _lastStatus = "In -> Out VSTs require Advanced mode.";
+            return null;
+        }
+
         if (!_attached)
         {
             return null;
@@ -2075,6 +2104,7 @@ internal sealed class NativeEngineClient : IDisposable
 
     private void SetMode(CallbackMode mode, bool force = false)
     {
+        mode &= AllowedCallbackModes;
         if (!_attached)
         {
             return;

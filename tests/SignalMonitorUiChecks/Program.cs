@@ -13,6 +13,7 @@ internal static class Program
         Directory.CreateDirectory(output);
         int timingChecks = args.Contains("--render-only", StringComparer.Ordinal) ? 0 : TimingChecks.Run();
         int historyChecks = HistoryChecks.Run();
+        int occlusionChecks = HistoryOcclusionChecks.Run();
         int windowChecks = WindowChecks.Run(output);
         int checks = 0;
         foreach (int channels in new[] { 2, 8 })
@@ -61,6 +62,6 @@ internal static class Program
             checks++;
         }
         Console.WriteLine($"{checks} stereo/eight-channel resize renders passed. No audio engine was started. Images: {output}");
-        Console.WriteLine($"Total: {checks + timingChecks + historyChecks + windowChecks} UI checks passed.");
+        Console.WriteLine($"Total: {checks + timingChecks + historyChecks + occlusionChecks + windowChecks} UI checks passed.");
     }
 }

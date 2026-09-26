@@ -20,6 +20,7 @@ internal sealed class SignalMonitorHistoryRenderer
     private static readonly Typeface Typeface = new("Segoe UI");
     private WriteableBitmap? _bitmap;
     private int[] _pixels = [];
+    private float[] _depths = [];
     private int _width, _height;
     private Rect _area;
     private double _scale, _centerX, _centerY, _rasterScaleX, _rasterScaleY, _dpi;
@@ -57,6 +58,7 @@ internal sealed class SignalMonitorHistoryRenderer
         if (area.Width < 80 || area.Height < 80) return;
         Prepare(area, dpi);
         Array.Fill(_pixels, unchecked((int)0xff121817));
+        Array.Fill(_depths, float.NegativeInfinity);
         Quad(World(-HalfSpan, 0, 0), World(HalfSpan, 0, 0), World(HalfSpan, 0, -16),
             World(-HalfSpan, 0, -16), unchecked((int)0xff1a2922));
         for (int lane = 0; lane <= _channels; lane++)
@@ -84,7 +86,9 @@ internal sealed class SignalMonitorHistoryRenderer
             if (age < 0 || age >= seconds) continue;
             double nextFar = SignalMonitorHistoryScale.Position(age, seconds);
             double nextNear = SignalMonitorHistoryScale.Position(Math.Max(0, age - 1.0 / SignalMonitorHistory.SamplesPerSecond), seconds);
-            if (pending && (lastBucket + 1 != bucket ||
+            // Keep color transitions at their own timestamp, even below one pixel.
+            // Merging unlike bands lets a taller slice recolor its neighbors as groups shift.
+            if (pending && (lastBucket + 1 != bucket || !SameBands(history.Peaks.AsSpan(index * 8, _channels)) ||
                 (Project(0, 0, -near).Y - Project(0, 0, -far).Y) * _scale * _rasterScaleY >= 1))
             {
                 Column(far, near, ageForColor, seconds, parity);
@@ -141,6 +145,7 @@ internal sealed class SignalMonitorHistoryRenderer
         {
             _width = width; _height = height;
             _pixels = new int[width * height];
+            _depths = new float[width * height];
             _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Pbgra32, null);
         }
         if (_dpi != dpi) { _labels.Clear(); _dpi = dpi; }
@@ -175,12 +180,25 @@ internal sealed class SignalMonitorHistoryRenderer
         Point p = Project(x, y, z);
         return new Point(_centerX + p.X * _scale, _centerY + p.Y * _scale);
     }
-    private Point World(double x, double y, double z)
+    private readonly record struct RasterVertex(double X, double Y, double InverseDepth);
+
+    private RasterVertex World(double x, double y, double z)
     {
         Point p = WorldLogical(x, y, z);
-        return new Point((p.X - _area.Left) * _rasterScaleX, (p.Y - _area.Top) * _rasterScaleY);
+        return new RasterVertex((p.X - _area.Left) * _rasterScaleX, (p.Y - _area.Top) * _rasterScaleY,
+            1 / (1 - z * 0.015));
     }
     private static int ColorIndex(int band, int face, int age, int parity) => ((band * 3 + face) * 8 + age) * 2 + parity;
+
+    private static int Band(double level) => level <= 0 ? -1 : level >= 0.9 ? 2 : level >= 2.0 / 3 ? 1 : 0;
+
+    private bool SameBands(ReadOnlySpan<float> peaks)
+    {
+        for (int c = 0; c < _channels; c++)
+            if (Band(SignalMonitorHistoryScale.Level(peaks[c])) != Band(SignalMonitorHistoryScale.Level(_columnPeaks[c])))
+                return false;
+        return true;
+    }
 
     private void Column(double far, double near, double age, int seconds, int parity)
     {
@@ -194,7 +212,7 @@ internal sealed class SignalMonitorHistoryRenderer
             double h = level * 2.8;
             double middle = (c - (_channels - 1) / 2.0) * LaneWidth;
             double left = middle - LaneWidth * 0.325, right = middle + LaneWidth * 0.325;
-            int band = level >= 0.9 ? 2 : level >= 2.0 / 3 ? 1 : 0;
+            int band = Band(level);
             var a = World(left, h, front); var b = World(right, h, front);
             var d = World(left, h, back); var e = World(right, h, back);
             Quad(a, b, World(right, 0, front), World(left, 0, front), _colors[ColorIndex(band, 0, depth, parity)]);
@@ -203,31 +221,49 @@ internal sealed class SignalMonitorHistoryRenderer
         }
     }
 
-    private void Quad(Point a, Point b, Point c, Point d, int color)
+    private void Quad(RasterVertex a, RasterVertex b, RasterVertex c, RasterVertex d, int color)
     {
-        Span<Point> points = stackalloc Point[4] { a, b, c, d };
+        Span<RasterVertex> points = stackalloc RasterVertex[4] { a, b, c, d };
         int first = Math.Max(0, (int)Math.Ceiling(Math.Min(Math.Min(a.Y, b.Y), Math.Min(c.Y, d.Y)) - 0.5));
         int last = Math.Min(_height - 1, (int)Math.Floor(Math.Max(Math.Max(a.Y, b.Y), Math.Max(c.Y, d.Y)) - 0.5));
         for (int y = first; y <= last; y++)
         {
             double scan = y + 0.5, left = double.PositiveInfinity, right = double.NegativeInfinity;
+            double leftDepth = 0, rightDepth = 0;
             for (int edge = 0; edge < 4; edge++)
             {
-                Point p = points[edge], q = points[(edge + 1) % 4];
+                var p = points[edge]; var q = points[(edge + 1) % 4];
                 if ((p.Y <= scan && q.Y > scan) || (q.Y <= scan && p.Y > scan))
                 {
-                    double x = p.X + (scan - p.Y) * (q.X - p.X) / (q.Y - p.Y);
-                    left = Math.Min(left, x); right = Math.Max(right, x);
+                    double t = (scan - p.Y) / (q.Y - p.Y);
+                    double x = p.X + t * (q.X - p.X);
+                    double depth = p.InverseDepth + t * (q.InverseDepth - p.InverseDepth);
+                    if (x < left) { left = x; leftDepth = depth; }
+                    if (x > right) { right = x; rightDepth = depth; }
                 }
             }
             if (!double.IsFinite(left)) continue;
             int start = Math.Clamp((int)Math.Ceiling(left - 0.5), 0, _width);
             int end = Math.Clamp((int)Math.Ceiling(right - 0.5), 0, _width);
-            if (end > start) _pixels.AsSpan(y * _width + start, end - start).Fill(color);
+            if (end <= start) continue;
+            // Inverse projection depth is affine in screen space. Only the nearest
+            // surface owns each pixel, regardless of channel or slice draw order.
+            double step = (rightDepth - leftDepth) / (right - left);
+            double depthAtPixel = leftDepth + (start + 0.5 - left) * step;
+            int offset = y * _width + start;
+            for (int x = start; x < end; x++, offset++, depthAtPixel += step)
+            {
+                float depth = (float)depthAtPixel;
+                if (depth >= _depths[offset])
+                {
+                    _depths[offset] = depth;
+                    _pixels[offset] = color;
+                }
+            }
         }
     }
 
-    private void Line(Point a, Point b, int color)
+    private void Line(RasterVertex a, RasterVertex b, int color)
     {
         int steps = Math.Max(1, (int)Math.Ceiling(Math.Max(Math.Abs(b.X - a.X), Math.Abs(b.Y - a.Y))));
         for (int step = 0; step <= steps; step++)
@@ -253,6 +289,7 @@ internal sealed class SignalMonitorHistoryRenderer
     internal void Clear()
     {
         _pixels = [];
+        _depths = [];
         _bitmap = null;
         _labels.Clear();
     }

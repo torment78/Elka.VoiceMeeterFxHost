@@ -3,6 +3,9 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using System.Windows.Automation;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -18,6 +21,7 @@ internal sealed class SignalMonitorWindow : Window
     private readonly Border _outline;
     private readonly Task _reader;
     private readonly SignalMonitorFrame _displayFrame = new();
+    private readonly SignalMonitorHistorySnapshot _displayHistory = new();
     private int _drawQueued;
     private long _lastDrawBucket;
     private volatile bool _stopped;
@@ -30,15 +34,19 @@ internal sealed class SignalMonitorWindow : Window
         // Do not inherit the main dispatcher's implicit Window style/resources.
         Style = new Style(typeof(Window));
         Title = $"{endpoint} - {side} - Signal Monitor";
-        Width = channelCount > 2 ? 700 : 620;
-        Height = 350;
+        Width = channelCount > 2 ? 760 : 660;
+        Height = 510;
         MinWidth = 340;
-        MinHeight = 290;
+        MinHeight = 350;
+        ResizeMode = ResizeMode.CanResizeWithGrip;
         Background = new SolidColorBrush(Color.FromRgb(17, 20, 23));
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Icon = new BitmapImage(new Uri("pack://application:,,,/Assets/VoicemeeterDelay.ico"));
         _view = new SignalMonitorView(endpoint, side, channelCount, hue);
-        _outline = new Border { BorderThickness = new Thickness(1), Child = _view, Padding = new Thickness(1) };
+        var surface = new Grid();
+        surface.Children.Add(_view);
+        surface.Children.Add(CreateViewControls());
+        _outline = new Border { BorderThickness = new Thickness(1), Child = surface, Padding = new Thickness(1) };
         Content = _outline;
         UpdateHue(hue);
         _mailbox.Updated = RequestDraw;
@@ -63,12 +71,130 @@ internal sealed class SignalMonitorWindow : Window
             _lifetime.Dispose();
             throw;
         }
-        SizeChanged += (_, _) => MinHeight = ActualWidth < (channelCount > 2 ? 525 : 375) ? 500 : 290;
         SourceInitialized += (_, _) =>
         {
             int enabled = 1;
             DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref enabled, sizeof(int));
         };
+    }
+
+    private Grid CreateViewControls()
+    {
+        var bar = new Grid { Margin = new Thickness(12, 66, 12, 0), VerticalAlignment = VerticalAlignment.Top };
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var modes = new StackPanel { Orientation = Orientation.Horizontal };
+        var history = MonitorButton("History");
+        var spectrum = MonitorButton("Spectrum");
+        modes.Children.Add(history); modes.Children.Add(spectrum);
+        bar.Children.Add(modes);
+        var options = new StackPanel { Orientation = Orientation.Horizontal };
+        options.Children.Add(new TextBlock { Text = "History", Foreground = Brushes.LightGray, FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 5, 0) });
+        var duration = new ComboBox { Width = 57, Height = 30, FontSize = 12, VerticalContentAlignment = VerticalAlignment.Center,
+            ItemsSource = new[] { "10 s", "15 s", "30 s" }, SelectedIndex = 0, ToolTip = "History duration", Style = new Style(typeof(ComboBox)) };
+        StyleDurationSelector(duration);
+        AutomationProperties.SetName(duration, "History duration");
+        duration.SelectionChanged += (_, _) => _view.HistorySeconds = new[] { 10, 15, 30 }[Math.Max(0, duration.SelectedIndex)];
+        options.Children.Add(duration);
+        var pause = MonitorButton(new TextBlock { Text = "\uE769", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13 });
+        pause.Width = 30;
+        pause.Margin = new Thickness(6, 0, 0, 0);
+        pause.ToolTip = "Pause history";
+        AutomationProperties.SetName(pause, "Pause history");
+        pause.Click += (_, _) =>
+        {
+            _view.HistoryPaused = !_view.HistoryPaused;
+            ((TextBlock)pause.Content).Text = _view.HistoryPaused ? "\uE768" : "\uE769";
+            pause.ToolTip = _view.HistoryPaused ? "Resume history" : "Pause history";
+            AutomationProperties.SetName(pause, (string)pause.ToolTip);
+        };
+        options.Children.Add(pause);
+        Grid.SetColumn(options, 2); bar.Children.Add(options);
+        void Select(bool showHistory)
+        {
+            _view.ShowHistory = showHistory;
+            history.Background = new SolidColorBrush(Color.FromRgb(showHistory ? (byte)54 : (byte)35, showHistory ? (byte)91 : (byte)44, showHistory ? (byte)70 : (byte)39));
+            spectrum.Background = new SolidColorBrush(Color.FromRgb(showHistory ? (byte)35 : (byte)54, showHistory ? (byte)44 : (byte)91, showHistory ? (byte)39 : (byte)70));
+            options.Visibility = showHistory ? Visibility.Visible : Visibility.Collapsed;
+        }
+        history.Click += (_, _) => Select(true);
+        spectrum.Click += (_, _) => Select(false);
+        Select(true);
+        return bar;
+    }
+
+    private static Button MonitorButton(object content)
+    {
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        border.AppendChild(presenter);
+        return new Button { Content = content, Height = 30, MinWidth = content is string ? 62 : 30, FontSize = 12,
+            Margin = new Thickness(0, 0, 4, 0), Foreground = Brushes.WhiteSmoke,
+            Background = new SolidColorBrush(Color.FromRgb(35, 44, 39)), BorderBrush = new SolidColorBrush(Color.FromRgb(70, 85, 75)),
+            Style = new Style(typeof(Button)), Template = new ControlTemplate(typeof(Button)) { VisualTree = border } };
+    }
+
+    private static void StyleDurationSelector(ComboBox selector)
+    {
+        var field = new SolidColorBrush(Color.FromRgb(35, 44, 39));
+        var stroke = new SolidColorBrush(Color.FromRgb(70, 85, 75));
+        var selected = new SolidColorBrush(Color.FromRgb(54, 91, 70));
+        selector.Foreground = Brushes.WhiteSmoke;
+        var itemStyle = new Style(typeof(ComboBoxItem));
+        itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.WhiteSmoke));
+        itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, field));
+        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
+        var highlight = new Trigger { Property = ComboBoxItem.IsHighlightedProperty, Value = true };
+        highlight.Setters.Add(new Setter(Control.BackgroundProperty, selected));
+        itemStyle.Triggers.Add(highlight);
+        selector.ItemContainerStyle = itemStyle;
+        var root = new FrameworkElementFactory(typeof(Grid));
+        var toggle = new FrameworkElementFactory(typeof(ToggleButton));
+        toggle.SetValue(UIElement.FocusableProperty, false);
+        toggle.SetBinding(ToggleButton.IsCheckedProperty, new Binding(nameof(ComboBox.IsDropDownOpen))
+            { RelativeSource = RelativeSource.TemplatedParent, Mode = BindingMode.TwoWay });
+        var toggleBorder = new FrameworkElementFactory(typeof(Border));
+        toggleBorder.SetValue(Border.BackgroundProperty, field);
+        toggleBorder.SetValue(Border.BorderBrushProperty, stroke);
+        toggleBorder.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        toggleBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+        toggle.SetValue(Control.TemplateProperty, new ControlTemplate(typeof(ToggleButton)) { VisualTree = toggleBorder });
+        root.AppendChild(toggle);
+        var label = new FrameworkElementFactory(typeof(ContentPresenter));
+        label.SetValue(UIElement.IsHitTestVisibleProperty, false);
+        label.SetValue(FrameworkElement.MarginProperty, new Thickness(7, 0, 17, 0));
+        label.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        label.SetBinding(ContentPresenter.ContentProperty, new Binding(nameof(ComboBox.SelectionBoxItem)) { RelativeSource = RelativeSource.TemplatedParent });
+        root.AppendChild(label);
+        var arrow = new FrameworkElementFactory(typeof(TextBlock));
+        arrow.SetValue(TextBlock.TextProperty, "\uE70D");
+        arrow.SetValue(TextBlock.FontFamilyProperty, new FontFamily("Segoe MDL2 Assets"));
+        arrow.SetValue(TextBlock.FontSizeProperty, 9.0);
+        arrow.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Right);
+        arrow.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        arrow.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 5, 0));
+        arrow.SetValue(UIElement.IsHitTestVisibleProperty, false);
+        root.AppendChild(arrow);
+        var popup = new FrameworkElementFactory(typeof(Popup), "PART_Popup");
+        popup.SetValue(Popup.PlacementProperty, PlacementMode.Bottom);
+        popup.SetValue(Popup.AllowsTransparencyProperty, true);
+        popup.SetValue(FrameworkElement.MinWidthProperty, selector.Width);
+        popup.SetBinding(Popup.IsOpenProperty, new Binding(nameof(ComboBox.IsDropDownOpen)) { RelativeSource = RelativeSource.TemplatedParent });
+        var popupBorder = new FrameworkElementFactory(typeof(Border));
+        popupBorder.SetValue(Border.BackgroundProperty, field);
+        popupBorder.SetValue(Border.BorderBrushProperty, stroke);
+        popupBorder.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        popupBorder.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
+        popup.AppendChild(popupBorder); root.AppendChild(popup);
+        selector.Template = new ControlTemplate(typeof(ComboBox)) { VisualTree = root };
     }
 
     internal void UpdateHue(Color hue)
@@ -109,8 +235,11 @@ internal sealed class SignalMonitorWindow : Window
         {
             Interlocked.Exchange(ref _drawQueued, 0);
             if (_stopped) return;
-            bool fresh = _mailbox.Take(_displayFrame);
-            if (WindowState != WindowState.Minimized) _view.Advance(fresh ? _displayFrame : null);
+            if (WindowState != WindowState.Minimized)
+            {
+                bool fresh = _mailbox.Take(_displayFrame, _displayHistory);
+                _view.Advance(fresh ? _displayFrame : null, _displayHistory);
+            }
         }, DispatcherPriority.Render);
     }
 
@@ -129,6 +258,7 @@ internal sealed class SignalMonitorWindow : Window
         _reader.GetAwaiter().GetResult();
         _mailbox.Updated = null;
         _lifetime.Dispose();
+        _view.ReleaseHistory();
         Content = null;
     }
 
@@ -170,6 +300,25 @@ internal sealed class SignalMonitorView : FrameworkElement
     private readonly string _side;
     private readonly int _channels;
     private readonly SignalMonitorBallistics _ballistics = new();
+    private readonly SignalMonitorHistory _localHistory = new();
+    private readonly SignalMonitorHistorySnapshot _history = new();
+    private readonly SignalMonitorHistoryRenderer _historyRenderer;
+    private double _historyTime = SignalMonitorBallistics.Now;
+    private bool _showHistory = true, _historyPaused;
+    private int _historySeconds = 10;
+    internal bool ShowHistory { get => _showHistory; set { _showHistory = value; InvalidateVisual(); } }
+    internal bool HistoryPaused { get => _historyPaused; set { _historyPaused = value; InvalidateVisual(); } }
+    internal int HistorySeconds
+    {
+        get => _historySeconds;
+        set
+        {
+            if (!SignalMonitorHistoryScale.IsDuration(value)) throw new ArgumentOutOfRangeException(nameof(value));
+            _historySeconds = value;
+            InvalidateVisual();
+        }
+    }
+    internal SignalMonitorHistoryRenderer HistoryRenderer => _historyRenderer;
     private readonly Dictionary<(string, double, Brush, double, bool, double), FormattedText> _textCache = [];
     private readonly Geometry?[] _meterSegments = new Geometry?[8];
     private Rect _meterBounds = Rect.Empty;
@@ -185,7 +334,9 @@ internal sealed class SignalMonitorView : FrameworkElement
         _endpoint = endpoint;
         _side = side;
         _channels = channels;
+        _historyRenderer = new SignalMonitorHistoryRenderer(channels);
         SnapsToDevicePixels = true;
+        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.HighQuality);
         SetHue(hue);
     }
 
@@ -213,11 +364,23 @@ internal sealed class SignalMonitorView : FrameworkElement
         InvalidateVisual();
     }
 
-    internal void Advance(SignalMonitorFrame? frame)
+    internal void Advance(SignalMonitorFrame? frame, SignalMonitorHistorySnapshot? history = null)
     {
         _ballistics.Advance(frame, SignalMonitorBallistics.Now);
+        if (!_historyPaused)
+        {
+            _historyTime = SignalMonitorBallistics.Now;
+            if (history is not null) history.CopyTo(_history);
+            else
+            {
+                if (frame is not null) _localHistory.Append(frame);
+                _localHistory.CopyTo(_history);
+            }
+        }
         InvalidateVisual();
     }
+
+    internal void ReleaseHistory() => _historyRenderer.Clear();
 
     protected override void OnRender(DrawingContext dc)
     {
@@ -231,19 +394,27 @@ internal sealed class SignalMonitorView : FrameworkElement
         bool live = SignalMonitorBallistics.Now - _ballistics.LastSignal < 0.4;
         string status = live ? $"{_ballistics.SampleRate:N0} Hz" : "Waiting for audio stream";
         Text(dc, status, 16, height - 23, 10, MutedBrush, width - 32);
+        if (_showHistory)
+        {
+            _historyRenderer.Draw(dc, new Rect(0, 109, width, Math.Max(80, height - 138)), _history, _historyTime,
+                _historySeconds, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            string state = _historyPaused ? "History paused" : $"{_historySeconds} s history";
+            Text(dc, state, width - 16, height - 23, 10, MutedBrush, 110, rightAligned: true);
+            return;
+        }
         double meterWidth = _channels == 2 ? 95 : 245;
         bool stacked = width < meterWidth + 260;
-        double contentHeight = height - 108;
+        double contentHeight = Math.Max(70, height - 148);
         if (stacked)
         {
             double meterHeight = Math.Max(80, contentHeight * 0.57);
-            Meters(dc, new Rect((width - meterWidth) / 2, 75, meterWidth, meterHeight));
-            Spectrum(dc, new Rect(16, 75 + meterHeight + 16, width - 32, Math.Max(30, contentHeight - meterHeight - 16)));
+            Meters(dc, new Rect((width - meterWidth) / 2, 115, meterWidth, meterHeight));
+            Spectrum(dc, new Rect(16, 115 + meterHeight + 16, width - 32, Math.Max(30, contentHeight - meterHeight - 16)));
         }
         else
         {
-            Meters(dc, new Rect(16, 77, meterWidth, contentHeight));
-            Spectrum(dc, new Rect(32 + meterWidth, 77, width - meterWidth - 48, contentHeight));
+            Meters(dc, new Rect(16, 117, meterWidth, contentHeight));
+            Spectrum(dc, new Rect(32 + meterWidth, 117, width - meterWidth - 48, contentHeight));
         }
     }
 
@@ -323,7 +494,7 @@ internal sealed class SignalMonitorView : FrameworkElement
     }
 
     private void Text(DrawingContext dc, string value, double x, double y, double size, Brush brush,
-        double maxWidth = double.PositiveInfinity, bool bold = false, bool centered = false)
+        double maxWidth = double.PositiveInfinity, bool bold = false, bool centered = false, bool rightAligned = false)
     {
         var key = (value, size, brush, maxWidth, bold, VisualTreeHelper.GetDpi(this).PixelsPerDip);
         if (!_textCache.TryGetValue(key, out var text))
@@ -334,6 +505,6 @@ internal sealed class SignalMonitorView : FrameworkElement
             if (double.IsFinite(maxWidth)) { text.MaxTextWidth = Math.Max(1, maxWidth); text.MaxLineCount = 1; text.Trimming = TextTrimming.CharacterEllipsis; }
             _textCache.Add(key, text);
         }
-        dc.DrawText(text, new Point(centered ? x - text.Width / 2 : x, y));
+        dc.DrawText(text, new Point(rightAligned ? x - text.Width : centered ? x - text.Width / 2 : x, y));
     }
 }

@@ -566,7 +566,7 @@ internal sealed class FxHostSettings
     public bool InsertAsioAutoStart { get; set; }
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
-    public bool AdvancedModeEnabled { get; set; } = true;
+    public bool AdvancedModeEnabled { get; set; }
     public bool CheckStableUpdatesAutomatically { get; set; }
     public bool CheckBetaUpdatesAutomatically { get; set; }
     public bool StartupDelayEnabled { get; set; }
@@ -604,8 +604,7 @@ internal static class FxHostSettingsStore
                 return new FxHostSettings();
             }
 
-            var settings = JsonSerializer.Deserialize<FxHostSettings>(File.ReadAllText(path), JsonOptions)
-                ?? new FxHostSettings();
+            var settings = DeserializeSaved(File.ReadAllText(path));
 
             if (!string.Equals(path, SettingsPath, StringComparison.OrdinalIgnoreCase))
             {
@@ -635,6 +634,17 @@ internal static class FxHostSettingsStore
         }
     }
 
+    internal static FxHostSettings DeserializeSaved(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var settings = document.RootElement.Deserialize<FxHostSettings>(JsonOptions) ?? new FxHostSettings();
+        // Saves predating the mode selector used all three workspaces. Do not disable their Main graph on upgrade.
+        if (document.RootElement.ValueKind == JsonValueKind.Object &&
+            !document.RootElement.TryGetProperty(nameof(FxHostSettings.AdvancedModeEnabled), out _))
+            settings.AdvancedModeEnabled = true;
+        return settings;
+    }
+
     public static bool Export(FxHostSettings settings, string path, out string error)
     {
         error = string.Empty;
@@ -662,8 +672,7 @@ internal static class FxHostSettingsStore
         error = string.Empty;
         try
         {
-            settings = JsonSerializer.Deserialize<FxHostSettings>(File.ReadAllText(path), JsonOptions)
-                ?? new FxHostSettings();
+            settings = DeserializeSaved(File.ReadAllText(path));
             return true;
         }
         catch (Exception ex)

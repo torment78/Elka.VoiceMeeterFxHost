@@ -9,8 +9,13 @@ internal static class Program
 
     private static void Main()
     {
-        Check(JsonSerializer.Deserialize<FxHostSettings>("{}")!.AdvancedModeEnabled,
+        Check(!new FxHostSettings().AdvancedModeEnabled, "fresh installs start in Simple mode");
+        Check(FxHostSettingsStore.DeserializeSaved("{}").AdvancedModeEnabled,
             "old saves retain Advanced behavior");
+        Check(FxHostSettingsStore.DeserializeSaved("{\"AdvancedModeEnabled\":true}").AdvancedModeEnabled,
+            "explicit Advanced choice survives restart");
+        Check(!FxHostSettingsStore.DeserializeSaved("{\"AdvancedModeEnabled\":false}").AdvancedModeEnabled,
+            "explicit Simple choice survives restart");
         CheckGraphPersistence();
         CheckCallbackPolicy();
         CheckRestart();

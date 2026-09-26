@@ -9,6 +9,7 @@ internal sealed class SignalMonitorMailbox
 {
     private readonly object _gate = new();
     private readonly SignalMonitorFrame _pending = new();
+    private readonly SignalMonitorHistory _history = new();
     private bool _available;
     private double _firstPendingTime;
     internal Action? Updated;
@@ -17,6 +18,7 @@ internal sealed class SignalMonitorMailbox
     {
         lock (_gate)
         {
+            _history.Append(frame);
             if (_available && frame.Timestamp - _firstPendingTime > 0.1) _available = false;
             if (!_available) _firstPendingTime = frame.Timestamp;
             for (int i = 0; i < _pending.Peaks.Length; ++i)
@@ -29,10 +31,11 @@ internal sealed class SignalMonitorMailbox
         Updated?.Invoke();
     }
 
-    internal bool Take(SignalMonitorFrame frame)
+    internal bool Take(SignalMonitorFrame frame, SignalMonitorHistorySnapshot? history = null)
     {
         lock (_gate)
         {
+            if (history is not null) _history.CopyTo(history);
             if (!_available) return false;
             _pending.Peaks.CopyTo(frame.Peaks, 0);
             _pending.Spectrum.CopyTo(frame.Spectrum, 0);

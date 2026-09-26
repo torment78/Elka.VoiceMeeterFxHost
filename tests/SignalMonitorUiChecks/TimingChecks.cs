@@ -100,6 +100,14 @@ internal static class TimingChecks
                             {
                                 using var cadence = new SignalMonitorCadence(cancel);
                                 var sample = new SignalMonitorFrame { SampleRate = 48000 };
+                                double seedTime = SignalMonitorBallistics.Now;
+                                for (int slice = 0; slice < 30 * SignalMonitorHistory.SamplesPerSecond; slice++)
+                                {
+                                    sample.Timestamp = seedTime - 30 + slice / (double)SignalMonitorHistory.SamplesPerSecond;
+                                    for (int c = 0; c < sample.Peaks.Length; c++)
+                                        sample.Peaks[c] = (float)Math.Pow(10, (-24 + 20 * Math.Sin(slice * 0.1 + c)) / 20);
+                                    box.Publish(sample);
+                                }
                                 while (!cancel.IsCancellationRequested)
                                 {
                                     sample.Timestamp = SignalMonitorBallistics.Now;

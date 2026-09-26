@@ -152,6 +152,7 @@ public partial class MainWindow : Window
     private const double VstCanvasMinWidth = 900.0;
     private const double VstCanvasMinHeight = 920.0;
     private const double VstCanvasWallMargin = 24.0;
+    private const double VstEndpointStackTop = 57.0;
     private const double VstEndpointCardWidth = 124.0;
     private const double VstNodeWidth = 138.0;
     private const double VstGroupWidth = VstNodeWidth;
@@ -1474,8 +1475,13 @@ public partial class MainWindow : Window
         var modeActions = CreateMenuColumns();
         modeActions.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         modeActions.Margin = new Thickness(0, 6, 0, 0);
-        var advanced = CreateSaveManagerToggleButton("Advanced", _advancedModeActive);
-        advanced.ToolTip = "Show In -> Out and Channels. Saves the session and restarts FX Host.";
+        var advanced = CreateSaveManagerButton(_advancedModeActive ? "Go Simple" : "Go Advanced");
+        advanced.Background = ThemeBrushOr(_advancedModeActive ? "RouteActiveBrush" : "VstActiveBrush", _advancedModeActive ? "#14392F" : "#3A2115");
+        advanced.BorderBrush = ThemeBrushOr(_advancedModeActive ? "RouteAccentBrush" : "VstAccentBrush", _advancedModeActive ? "#55C27A" : "#F08A3E");
+        advanced.BorderThickness = new Thickness(1.5);
+        advanced.ToolTip = _advancedModeActive
+            ? "Switch to Simple mode. Saves the session and restarts FX Host."
+            : "Show In -> Out and Channels in Advanced mode. Saves the session and restarts FX Host.";
         advanced.Click += (_, _) => RestartWithAdvancedMode(window, advanced);
         AddMenuCell(modeActions, advanced, 0, 0);
         var close = CreateSaveManagerButton("Close");
@@ -1980,7 +1986,7 @@ public partial class MainWindow : Window
         foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output })
         {
             var endpoints = VoicemeeterIoLayout.GetEndpoints(mode, _kind);
-            var baseY = 42.0;
+            var baseY = VstEndpointStackTop;
             var previousBottom = double.NegativeInfinity;
             var overlaps = false;
             foreach (var endpoint in endpoints)
@@ -2539,6 +2545,14 @@ public partial class MainWindow : Window
     {
         if (Keyboard.FocusedElement is TextBox)
         {
+            return;
+        }
+
+        if (e.Key == Key.Delete && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            // Never fall through to node deletion, even with an incomplete selection or no cables.
+            e.Handled = true;
+            DisconnectQuickSelectedItems();
             return;
         }
 
@@ -6253,6 +6267,22 @@ private void RefreshEndpointButtonSelection()
 
     private bool RemoveSharedDirectChannelRoute(DirectChannelRouteInfo route)
     {
+        if (!RemoveSharedDirectChannelRouteCore(route))
+        {
+            return false;
+        }
+
+        AppendLog($"Disconnected shared direct route {route.Label}.");
+        ApplyEngineState();
+        RefreshEndpointButtonSelection();
+        BuildChannelStrips();
+        RebuildRoutingCanvas();
+        QueueSave();
+        return true;
+    }
+
+    private bool RemoveSharedDirectChannelRouteCore(DirectChannelRouteInfo route)
+    {
         if (!TryResolveDirectChannelRoute(route.SourceChannel, route.DestinationChannel, out var settings, out var sourceOffset, out var busIndex, out var destinationOffset))
         {
             _selectedDirectChannelRouteKey = null;
@@ -6272,12 +6302,6 @@ private void RefreshEndpointButtonSelection()
         destinations.Remove(existing);
         settings.RouteEnabled[sourceOffset] = destinations.Count > 0;
         _selectedDirectChannelRouteKey = null;
-        AppendLog($"Disconnected shared direct route {route.Label}.");
-        ApplyEngineState();
-        RefreshEndpointButtonSelection();
-        BuildChannelStrips();
-        RebuildRoutingCanvas();
-        QueueSave();
         return true;
     }
 
@@ -8347,7 +8371,7 @@ private void RefreshEndpointButtonSelection()
         var leftEndpoints = VoicemeeterIoLayout.GetEndpoints(leftMode, _kind);
         var rightEndpoints = VoicemeeterIoLayout.GetEndpoints(rightMode, _kind);
         var rightX = Math.Max(560.0, RoutingCanvas.Width - VstEndpointCardWidth - VstCanvasWallMargin);
-        var y = 42.0;
+        var y = VstEndpointStackTop;
         foreach (var endpoint in leftEndpoints)
         {
             var pinCount = CanvasPinCount(leftMode, endpoint, outputSide: false);
@@ -8355,7 +8379,7 @@ private void RefreshEndpointButtonSelection()
             y += VstEndpointCardSpacing(pinCount);
         }
 
-        y = 42.0;
+        y = VstEndpointStackTop;
         foreach (var endpoint in rightEndpoints)
         {
             var pinCount = CanvasPinCount(rightMode, endpoint, outputSide: true);
@@ -8402,7 +8426,7 @@ private void RefreshEndpointButtonSelection()
 
     private double VstEndpointStackBottom(CallbackMode mode, bool outputSide)
     {
-        var y = 42.0;
+        var y = VstEndpointStackTop;
         var bottom = y;
         foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(mode, _kind))
         {
@@ -12398,6 +12422,65 @@ private void RefreshEndpointButtonSelection()
         return false;
     }
 
+    private void DisconnectQuickSelectedItems()
+    {
+        if (_workspaceView != WorkspaceView.Vst)
+        {
+            return;
+        }
+
+        if (PluginBrowserBusy)
+        {
+            AppendLog(BusyPluginBrowserMessage());
+            return;
+        }
+
+        var selection = new QuickDisconnectSelection();
+        foreach (var source in _quickConnectSourceEndpoints)
+            selection.AddEndpoint(source.Mode, source.Endpoint.Range, outputSide: false);
+        foreach (var destination in _quickConnectDestinationEndpoints)
+            selection.AddEndpoint(destination.Mode, destination.Endpoint.Range, outputSide: true);
+        foreach (var node in _settings.PluginNodes.Where(node => _quickGroupNodeSlots.Contains(node.Slot) &&
+                     NodeBelongsToCurrentCanvas(node) && GroupForNode(node.Slot) is null))
+            selection.AddNode(node.Slot);
+        foreach (var group in _settings.PluginGroups.Where(group => _quickGroupIds.Contains(group.Id) && GroupBelongsToCurrentCanvas(group)))
+            selection.AddGroup(group.Id);
+
+        var cables = _settings.CanvasConnections
+            .Where(CanvasConnectionBelongsToCurrentView)
+            .Where(selection.Matches)
+            .ToList();
+        var sharedRoutes = IsInputDirectOutputVstView()
+            ? AllDirectRoutes().Where(route => selection.MatchesEndpoints(CallbackMode.Input, route.SourceChannel,
+                CallbackMode.Output, route.DestinationChannel)).ToList()
+            : [];
+        if (cables.Count == 0 && sharedRoutes.Count == 0)
+        {
+            AppendLog("No cables between the Ctrl-selected items on this canvas.");
+            return;
+        }
+
+        foreach (var cable in cables)
+            DisconnectCanvasConnectionCore(cable);
+
+        var sharedCount = 0;
+        foreach (var route in sharedRoutes)
+            if (RemoveSharedDirectChannelRouteCore(new DirectChannelRouteInfo(route.SourceChannel, route.DestinationChannel, route.Name)))
+                sharedCount++;
+
+        if (sharedCount > 0)
+        {
+            ApplyEngineState();
+            RefreshEndpointButtonSelection();
+            BuildChannelStrips();
+        }
+
+        RefreshEngineCallbackMode();
+        ClearQuickGroupChain(log: false);
+        QueueSave();
+        AppendLog($"Quick-disconnected {cables.Count + sharedCount} cable(s). VSTs and endpoints kept.");
+    }
+
     private void DisconnectCanvasConnection(CanvasConnectionSnapshot connection)
     {
         DisconnectCanvasConnectionCore(connection);
@@ -13013,6 +13096,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        RoutingCanvas.Focus();
         var endpoint = new QuickGroupEndpoint(info.Mode, info.Endpoint, info.OutputSide);
         if (info.OutputSide)
         {
@@ -13037,6 +13121,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        RoutingCanvas.Focus();
         _quickGroupNodeSlots.Remove(node.Slot);
         _quickGroupNodeSlots.Add(node.Slot);
         SelectPluginNode(node.Slot, rebuildCanvas: false);
@@ -13052,6 +13137,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        RoutingCanvas.Focus();
         _quickGroupIds.Remove(group.Id);
         _quickGroupIds.Add(group.Id);
         SelectPluginGroup(group.Id, rebuildCanvas: false);

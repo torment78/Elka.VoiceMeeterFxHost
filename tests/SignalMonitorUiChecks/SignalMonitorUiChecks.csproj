@@ -9,6 +9,8 @@
   <ItemGroup>
     <Compile Include="../../src/app-wpf/SignalMonitorWindow.cs" Link="SignalMonitorWindow.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorTiming.cs" Link="SignalMonitorTiming.cs" />
+    <Compile Include="../../src/app-wpf/SignalMonitorHistory.cs" Link="SignalMonitorHistory.cs" />
+    <Compile Include="../../src/app-wpf/SignalMonitorHistoryRenderer.cs" Link="SignalMonitorHistoryRenderer.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorController.cs" Link="SignalMonitorController.cs" />
     <Resource Include="../../src/app-wpf/Assets/VoicemeeterDelay.ico" Link="Assets/VoicemeeterDelay.ico" />
   </ItemGroup>

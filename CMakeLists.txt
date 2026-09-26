@@ -122,6 +122,7 @@ if (ELKA_ENABLE_JUCE_PLUGIN_HOST)
         target_link_libraries(${target} PRIVATE
             juce::juce_audio_devices
             juce::juce_audio_processors
+            juce::juce_dsp
         )
     endforeach()
 else()
@@ -142,3 +143,9 @@ if (MSVC)
     endforeach()
 endif()
 
+
+# Offline monitor checks are opt-in and never connect to VoiceMeeter.
+add_executable(SignalMonitorChecks EXCLUDE_FROM_ALL tests/SignalMonitorChecks/main.cpp)
+target_include_directories(SignalMonitorChecks PRIVATE src)
+target_compile_definitions(SignalMonitorChecks PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 NOMINMAX)
+target_link_libraries(SignalMonitorChecks PRIVATE juce::juce_dsp)

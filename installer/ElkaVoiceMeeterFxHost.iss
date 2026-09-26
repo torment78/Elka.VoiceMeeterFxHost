@@ -65,6 +65,28 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#RepoRoot}\installer\Assets\ElkaSoft.png"; Flags: dontcopy
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Older multi-file installs can shadow the DLLs embedded in the current EXE.
+; Remove only obsolete first-party files, and only when not supplied by this package.
+#if !FileExists(SourceDir + "\Elka.VoiceMeeterFxHost.App.dll")
+Type: files; Name: "{app}\Elka.VoiceMeeterFxHost.App.dll"
+Type: files; Name: "{app}\Elka.VoiceMeeterFxHost.App.deps.json"
+Type: files; Name: "{app}\Elka.VoiceMeeterFxHost.App.runtimeconfig.json"
+#if !FileExists(SourceDir + "\ElkaVoiceMeeterFxHost.Native.dll")
+Type: files; Name: "{app}\ElkaVoiceMeeterFxHost.Native.dll"
+#endif
+#if !FileExists(SourceDir + "\ElkaVoiceMeeterFxHost.RealtimeCore.dll")
+Type: files; Name: "{app}\ElkaVoiceMeeterFxHost.RealtimeCore.dll"
+#endif
+#if !FileExists(SourceDir + "\Elka.PluginWorker.exe")
+Type: files; Name: "{app}\Elka.PluginWorker.exe"
+Type: files; Name: "{app}\Elka.PluginWorker.dll"
+Type: files; Name: "{app}\Elka.PluginWorker.deps.json"
+Type: files; Name: "{app}\Elka.PluginWorker.runtimeconfig.json"
+Type: files; Name: "{app}\Elka.PluginWorker.pdb"
+#endif
+#endif
+
 [Icons]
 Name: "{autoprograms}\ElkaSoft\Elka VoiceMeeter FX Host"; Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\Elka VoiceMeeter FX Host"; Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; WorkingDir: "{app}"; Tasks: desktopicon

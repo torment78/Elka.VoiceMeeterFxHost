@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.8.1.5</Version>
-    <InformationalVersion>0.8.1.5</InformationalVersion>
+    <Version>0.8.1.6</Version>
+    <InformationalVersion>0.8.1.6</InformationalVersion>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>

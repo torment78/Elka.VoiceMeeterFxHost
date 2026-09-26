@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/app-wpf/SignalMonitorWindow.cs" Link="SignalMonitorWindow.cs" />
+    <Compile Include="../../src/app-wpf/SignalMonitorTiming.cs" Link="SignalMonitorTiming.cs" />
+    <Compile Include="../../src/app-wpf/SignalMonitorController.cs" Link="SignalMonitorController.cs" />
+    <Resource Include="../../src/app-wpf/Assets/VoicemeeterDelay.ico" Link="Assets/VoicemeeterDelay.ico" />
+  </ItemGroup>
+</Project>

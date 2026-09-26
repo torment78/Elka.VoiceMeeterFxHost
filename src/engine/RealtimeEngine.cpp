@@ -1323,12 +1323,16 @@ void RealtimeEngine::recordCallbackArrivalJitter(AudioBufferView buffer, int str
 }
 void RealtimeEngine::process(AudioBufferView buffer, CallbackStreamKind kind) noexcept
 {
+    signalMonitors.capture(static_cast<int>(kind), false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
     processInternal(buffer, kind, true, delayStreamIndex(kind));
+    signalMonitors.capture(static_cast<int>(kind), true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
 }
 
 void RealtimeEngine::processInsertAsio(AudioBufferView buffer) noexcept
 {
+    signalMonitors.capture(0, false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
     processInternal(buffer, CallbackStreamKind::InputInsert, false, 3);
+    signalMonitors.capture(0, true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
 }
 
 void RealtimeEngine::processInternal(

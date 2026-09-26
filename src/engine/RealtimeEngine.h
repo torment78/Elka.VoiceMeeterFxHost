@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/AudioBufferView.h"
+#include "engine/SignalMonitor.h"
 #include "plugins/RealtimePluginProcessor.h"
 
 #include <array>
@@ -133,6 +134,7 @@ struct SinglePingResult
 class RealtimeEngine
 {
 public:
+    SignalMonitorHub signalMonitors;
     static constexpr int MaxDelayMilliseconds = 10000;
     static constexpr int MaxPluginSlots = 16;
     static constexpr int MaxPluginRoutes = 64;

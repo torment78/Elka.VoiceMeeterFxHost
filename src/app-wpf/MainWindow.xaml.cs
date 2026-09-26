@@ -4336,9 +4336,10 @@ private void RefreshEndpointButtonSelection()
         }
     }
 
-    private ContextMenu BuildEndpointContextMenu(CallbackMode mode, IoEndpoint endpoint)
+    private ContextMenu BuildEndpointContextMenu(CallbackMode mode, IoEndpoint endpoint, bool outputSide = false)
     {
         var menu = new ContextMenu();
+        menu.Items.Add(CreateNodeMenuItem("Signal Monitor", () => OpenSignalMonitor(mode, endpoint, outputSide)));
         menu.Items.Add(CreateNodeMenuItem("Select Section", () => SelectCanvasEndpoint(mode, endpoint)));
         menu.Items.Add(new Separator());
         var patchBypassed = IsInputPatchBypassEndpoint(mode, endpoint, out var patchExplanation);
@@ -8302,6 +8303,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RebuildRoutingCanvas()
     {
+        RefreshSignalMonitors();
         if (_workspaceView == WorkspaceView.Channels)
         {
             RebuildCrossRouteCanvas();
@@ -8575,10 +8577,11 @@ private void RefreshEndpointButtonSelection()
     {
         var patchBypassed = IsInputPatchBypassEndpoint(mode, endpoint, out var patchExplanation);
         var height = VstEndpointCardHeight(mode, endpoint, pinCount);
-        var endpointMenu = BuildEndpointContextMenu(mode, endpoint);
+        var endpointMenu = BuildEndpointContextMenu(mode, endpoint, outputSide);
         var endpointKey = endpoint.Key(mode);
-        var hueStroke = EndpointHueStrokeBrush(endpointKey);
-        var hueFill = EndpointHueFillBrush(endpointKey);
+        var displayHue = EndpointDisplayHue(mode, endpoint, outputSide);
+        var hueStroke = HueStrokeBrush(displayHue);
+        var hueFill = HueFillBrush(displayHue);
         var quickGroupEndpointSelected = IsQuickEndpointSelected(mode, endpoint, outputSide);
         y += EndpointCanvasYOffset(endpointKey);
         if (!_endpointVisualElements.TryGetValue(endpointKey, out var endpointElements))
@@ -8685,7 +8688,7 @@ private void RefreshEndpointButtonSelection()
                 StrokeThickness = 1.5,
                 Cursor = Cursors.Hand,
                 Tag = pinInfo,
-                ContextMenu = BuildCanvasPinContextMenu(pinInfo, BuildEndpointContextMenu(mode, endpoint))
+                ContextMenu = BuildCanvasPinContextMenu(pinInfo, BuildEndpointContextMenu(mode, endpoint, outputSide))
             };
             AttachPinHandlers(pin);
             Canvas.SetLeft(pin, pinX - 5);
@@ -8698,7 +8701,7 @@ private void RefreshEndpointButtonSelection()
                 Text = EndpointPinLabel(pinCount, offset),
                 FontSize = 11,
                 Foreground = hueStroke ?? (Brush)FindResource("MutedTextBrush"),
-                ContextMenu = BuildCanvasPinContextMenu(pinInfo, BuildEndpointContextMenu(mode, endpoint))
+                ContextMenu = BuildCanvasPinContextMenu(pinInfo, BuildEndpointContextMenu(mode, endpoint, outputSide))
             };
             Canvas.SetLeft(label, outputSide ? x + VstCardPinInset + 16 : x + VstEndpointCardWidth - VstCardPinInset - 26);
             Canvas.SetTop(label, pinY - 8);
@@ -8854,14 +8857,15 @@ private void RefreshEndpointButtonSelection()
         var outputPins = VisibleGroupOutputPinIds(group).ToList();
         var pinRows = Math.Max(inputPins.Count, outputPins.Count);
         var height = VstGroupHeight(pinRows);
+        var groupHue = GroupDisplayHue(group);
         var border = new Border
         {
             Width = VstGroupWidth,
             Height = height,
-            Background = GroupBackgroundBrush(members),
+            Background = GroupBackgroundBrush(members, HueFillBrush(groupHue)),
             BorderBrush = selected
                 ? (Brush)FindResource("VolumeAccentBrush")
-                : (Brush)FindResource("RouteAccentBrush"),
+                : HueStrokeBrush(groupHue) ?? (Brush)FindResource("RouteAccentBrush"),
             BorderThickness = selected ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8, 10, 8),
@@ -9101,9 +9105,9 @@ private void RefreshEndpointButtonSelection()
         return menu;
     }
 
-    private Brush GroupBackgroundBrush(IReadOnlyCollection<PluginNodeSnapshot> members)
+    private Brush GroupBackgroundBrush(IReadOnlyCollection<PluginNodeSnapshot> members, Brush? routeBackground = null)
     {
-        var background = ThemeBrushOr("PanelBrush", "#1A2025");
+        var background = routeBackground ?? ThemeBrushOr("PanelBrush", "#1A2025");
         if (GroupIsBypassed(members))
         {
             return StateStripeBrush(background, Color.FromArgb(170, 240, 138, 62));
@@ -11744,63 +11748,9 @@ private void RefreshEndpointButtonSelection()
         return destinationEndpoint is not null;
     }
 
-    private string? SourceHueKeyForNode(int slot, HashSet<int> visitedSlots)
+    private string? SourceHueKeyForNode(int slot, HashSet<string> visitedSlots)
     {
-        if (!visitedSlots.Add(slot))
-        {
-            return null;
-        }
-
-        var targetNode = _settings.PluginNodes.FirstOrDefault(node => node.Slot == slot);
-        foreach (var connection in _settings.CanvasConnections)
-        {
-            if (connection.Kind == ConnectionEndpointToNode && connection.ToSlot == slot)
-            {
-                if (IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _))
-                {
-                    continue;
-                }
-
-                if (targetNode is not null && IsSidechainVisualInputPin(targetNode, connection.ToPin))
-                {
-                    continue;
-                }
-
-                var hueKey = EndpointRouteHueKey(connection.FromMode, connection.FromChannel);
-                if (!string.IsNullOrEmpty(hueKey))
-                {
-                    return hueKey;
-                }
-            }
-            else if (connection.Kind == ConnectionNodeToNode && connection.ToSlot == slot)
-            {
-                if (targetNode is not null && IsSidechainVisualInputPin(targetNode, connection.ToPin))
-                {
-                    continue;
-                }
-
-                var hueKey = SourceHueKeyForNode(connection.FromSlot, visitedSlots);
-                if (!string.IsNullOrEmpty(hueKey))
-                {
-                    return hueKey;
-                }
-            }
-            else if (connection.Kind == ConnectionGroupOutputToNode && connection.ToSlot == slot)
-            {
-                if (targetNode is not null && IsSidechainVisualInputPin(targetNode, connection.ToPin))
-                {
-                    continue;
-                }
-
-                var hueKey = GroupOutputHueKey(connection.FromGroupId, connection.FromPin);
-                if (!string.IsNullOrEmpty(hueKey))
-                {
-                    return hueKey;
-                }
-            }
-        }
-
-        return null;
+        return FindNodeRouteHue(slot, visitedSlots);
     }
 
     private HashSet<string> SourceEndpointKeysForNode(int slot, HashSet<int> visitedSlots)
@@ -13945,6 +13895,7 @@ private void RefreshEndpointButtonSelection()
         _vbanTextListener?.Dispose();
         _vfxCommandsWindow?.Close();
         DisposeTrayIcon();
+        CloseSignalMonitors();
         _engine.Dispose();
         base.OnClosed(e);
     }

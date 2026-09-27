@@ -149,3 +149,9 @@ add_executable(SignalMonitorChecks EXCLUDE_FROM_ALL tests/SignalMonitorChecks/ma
 target_include_directories(SignalMonitorChecks PRIVATE src)
 target_compile_definitions(SignalMonitorChecks PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 NOMINMAX)
 target_link_libraries(SignalMonitorChecks PRIVATE juce::juce_dsp)
+
+# Editor lifecycle checks use a synthetic plugin, with no audio device or remote API.
+add_executable(PluginEditorChecks EXCLUDE_FROM_ALL tests/PluginEditorChecks/main.cpp)
+target_include_directories(PluginEditorChecks PRIVATE src)
+target_compile_definitions(PluginEditorChecks PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 NOMINMAX)
+target_link_libraries(PluginEditorChecks PRIVATE juce::juce_audio_processors)

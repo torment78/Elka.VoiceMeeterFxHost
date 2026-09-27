@@ -22,6 +22,7 @@
 
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "plugins/PluginEditorWindow.h"
 #endif
 
 namespace elka
@@ -3248,50 +3249,6 @@ private:
     bool ready = false;
 };
 
-class PluginEditorWindow final : public juce::DocumentWindow
-{
-public:
-    PluginEditorWindow(juce::AudioPluginInstance& plugin, const juce::String& title)
-        : juce::DocumentWindow(
-              title,
-              juce::Colours::black,
-              juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton,
-              true)
-    {
-        auto* editor = plugin.createEditorAndMakeActive();
-        if (editor == nullptr)
-            throw std::runtime_error("The loaded plugin did not provide an editor window.");
-
-        setUsingNativeTitleBar(true);
-        setResizable(true, false);
-        setContentOwned(editor, true);
-
-        const int width = std::max(420, editor->getWidth());
-        const int height = std::max(280, editor->getHeight());
-        centreWithSize(width, height);
-        setVisible(true);
-        bringToFront();
-    }
-
-    void closeButtonPressed() override
-    {
-        setVisible(false);
-    }
-
-    void bringToFront()
-    {
-        toFront(true);
-       #if JUCE_WINDOWS
-        if (auto* hwnd = static_cast<HWND>(getWindowHandle()))
-        {
-            ShowWindow(hwnd, SW_SHOWNORMAL);
-            BringWindowToTop(hwnd);
-            SetForegroundWindow(hwnd);
-        }
-       #endif
-    }
-};
-
 struct WorkerPluginSession
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
@@ -3467,7 +3424,8 @@ bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::str
                     *plugin,
                     windowTitle.empty()
                         ? (juce::String(plugin->getName()).isNotEmpty() ? plugin->getName() : "Sandboxed VST")
-                        : juce::String::fromUTF8(windowTitle.c_str()));
+                        : juce::String::fromUTF8(windowTitle.c_str()),
+                    [session] { session->editorWindow.reset(); });
             }
             else
             {
@@ -4813,7 +4771,8 @@ bool PluginHostLayer::openPluginEditor(int slot, const std::string& windowTitle)
                     *processor->pluginInstance(),
                     windowTitle.empty()
                         ? juce::String::fromUTF8(impl->nodeSummaries[index].name.c_str())
-                        : juce::String::fromUTF8(windowTitle.c_str()));
+                        : juce::String::fromUTF8(windowTitle.c_str()),
+                    [this, index] { impl->nodeEditors[index].reset(); });
             }
             else
             {

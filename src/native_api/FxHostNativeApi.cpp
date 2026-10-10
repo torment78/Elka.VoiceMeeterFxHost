@@ -2270,6 +2270,24 @@ __declspec(dllexport) int __cdecl ElkaFx_RefreshVoicemeeterParameters()
     }
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_IsVoicemeeterRemoteReady()
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        // Query the existing Remote session only. Do not start or re-arm audio here.
+        if (!g_host || !g_host->client.refreshParameters())
+            return 0;
+
+        int type = 0;
+        return g_host->client.getVoicemeeterType(type) ? 1 : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_SetVoicemeeterCustomButton(
     int buttonIndex,
     int buttonType,

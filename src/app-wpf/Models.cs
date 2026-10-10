@@ -1165,6 +1165,23 @@ internal sealed class NativeEngineClient : IDisposable
         }
     }
 
+    public bool IsVoicemeeterRemoteReady()
+    {
+        if (!_attached)
+        {
+            return false;
+        }
+
+        try
+        {
+            return ElkaFx_IsVoicemeeterRemoteReady() == 1;
+        }
+        catch (SEHException)
+        {
+            return false;
+        }
+    }
+
     public int SetVoicemeeterCustomButton(
         int buttonIndex,
         int buttonType,
@@ -2333,6 +2350,9 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_RefreshVoicemeeterParameters();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_IsVoicemeeterRemoteReady();
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_SetVoicemeeterCustomButton(

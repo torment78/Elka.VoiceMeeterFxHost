@@ -113,10 +113,9 @@ public partial class MainWindow : Window
     private bool _trayCloseHintShown;
     private HwndSource? _windowMessageSource;
     private IntPtr _voicemeeterCommandWindow;
-    private bool _voicemeeterCustomButtonRegistered;
+    private readonly VoicemeeterButtonRegistration _voicemeeterButtonRegistration = new();
     private bool _voicemeeterCustomButtonRemovalStarted;
     private bool _voicemeeterCustomButtonUnavailable;
-    private DateTimeOffset _lastVoicemeeterCustomButtonAttemptAt;
     private string _lastVoicemeeterCustomButtonFailure = string.Empty;
 
     private const double MinimumVisibleWindowWidth = 160.0;
@@ -169,7 +168,6 @@ public partial class MainWindow : Window
     private static readonly TimeSpan RealtimeCallbackRecoverySlowCooldown = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan VoicemeeterParameterRefreshInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan InsertAsioPatchStateSyncInterval = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan VoicemeeterCustomButtonRetryInterval = TimeSpan.FromSeconds(2);
     private static readonly RouteHueChoice[] RouteHueChoices =
     [
         new("Blue", "blue", "#4AA3FF", "#10243A"),
@@ -3341,21 +3339,24 @@ public partial class MainWindow : Window
     private void TryRegisterVoicemeeterCustomButton(bool force = false)
     {
         if (_isShuttingDown ||
-            _voicemeeterCustomButtonRegistered ||
+            _voicemeeterCustomButtonRemovalStarted ||
             _voicemeeterCustomButtonUnavailable ||
             _voicemeeterCommandWindow == IntPtr.Zero)
         {
             return;
         }
 
-        var now = DateTimeOffset.Now;
-        if (!force &&
-            now - _lastVoicemeeterCustomButtonAttemptAt < VoicemeeterCustomButtonRetryInterval)
+        var now = Environment.TickCount64;
+        if (!_voicemeeterButtonRegistration.ShouldPoll(now, force))
         {
             return;
         }
 
-        _lastVoicemeeterCustomButtonAttemptAt = now;
+        if (!_voicemeeterButtonRegistration.ShouldRegister(now, _engine.IsVoicemeeterRemoteReady()))
+        {
+            return;
+        }
+
         var result = _engine.SetVoicemeeterCustomButton(
             VoicemeeterCustomButtonIndex,
             VoicemeeterCustomButtonPushType,
@@ -3365,9 +3366,9 @@ public partial class MainWindow : Window
             VoicemeeterFxHostCommandId,
             out var status);
 
+        _voicemeeterButtonRegistration.RecordResult(now, result == 0);
         if (result == 0)
         {
-            _voicemeeterCustomButtonRegistered = true;
             _lastVoicemeeterCustomButtonFailure = string.Empty;
             AppendLog("VoiceMeeter custom button registered: FX Host.");
             return;
@@ -3398,6 +3399,7 @@ public partial class MainWindow : Window
         }
 
         _voicemeeterCustomButtonRemovalStarted = true;
+        _voicemeeterButtonRegistration.Stop();
         if (_voicemeeterCommandWindow != IntPtr.Zero && _engine.IsAttached)
         {
             var result = _engine.SetVoicemeeterCustomButton(
@@ -3421,7 +3423,6 @@ public partial class MainWindow : Window
             }
         }
 
-        _voicemeeterCustomButtonRegistered = false;
         _windowMessageSource?.RemoveHook(WindowMessageHook);
         _windowMessageSource = null;
         _voicemeeterCommandWindow = IntPtr.Zero;

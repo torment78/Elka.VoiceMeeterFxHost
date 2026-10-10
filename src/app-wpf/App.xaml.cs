@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 
 namespace Elka.VoiceMeeterFxHost.App;
@@ -13,6 +14,8 @@ public partial class App : Application
 
         var window = new MainWindow();
         MainWindow = window;
+        // Tray-only startup still needs an HWND for VoiceMeeter's WM_COMMAND messages.
+        new WindowInteropHelper(window).EnsureHandle();
         if (!window.ShouldStartHiddenToTray)
         {
             window.Show();

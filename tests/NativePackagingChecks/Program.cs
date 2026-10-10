@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 // Do not initialize the host, register callbacks, or connect to VoiceMeeter.
 try
 {
+    if (Native.IsRemoteReady() != 0) throw new Exception("Remote readiness unexpectedly initialized the host.");
     if (Native.Open(0, 0, 0, 2) != 0) throw new Exception("Host unexpectedly initialized.");
     Native.Close(0);
     if (Native.Read(0, new float[8], 8, new float[120], 120, out _, out _) != -1)
@@ -16,7 +17,7 @@ try
     string hash = Convert.ToHexString(SHA256.HashData(file));
     if (args.Length != 1 || !hash.Equals(args[0], StringComparison.OrdinalIgnoreCase))
         throw new Exception($"Wrong native DLL: {module.FileName}, SHA256 {hash}");
-    Console.WriteLine($"PASS: all three monitor exports resolve from the expected DLL: {module.FileName}");
+    Console.WriteLine($"PASS: monitor and Remote readiness exports resolve from the expected DLL: {module.FileName}");
     Console.WriteLine("No audio engine or VoiceMeeter connection was started.");
     return 0;
 }
@@ -29,6 +30,8 @@ catch (Exception ex)
 internal static class Native
 {
     private const string Dll = "ElkaVoiceMeeterFxHost.Native.dll";
+    [DllImport(Dll, EntryPoint = "ElkaFx_IsVoicemeeterRemoteReady", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int IsRemoteReady();
     [DllImport(Dll, EntryPoint = "ElkaFx_OpenSignalMonitor", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int Open(int stream, int outputSide, int first, int channels);
     [DllImport(Dll, EntryPoint = "ElkaFx_CloseSignalMonitor", CallingConvention = CallingConvention.Cdecl)]

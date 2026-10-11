@@ -70,6 +70,34 @@ stored in the public repository. It must:
 Passwords and one-time codes must never be stored in scripts, logs, environment
 configuration, or the repository.
 
+### Bulk Signing Order
+
+FX Host embeds executable payloads, so the local-only launcher uses three
+dependent batches, with one local OTP approval per batch:
+
+1. Sign the worker EXE/DLL, native bridge, realtime core, and prepared Inno
+   uninstaller after malware-scanning each file.
+2. Rebuild the managed host with `UsePrebuiltSignedPayloads=true`, preserving
+   those exact signed payloads. Sign the folder application's EXE and DLL.
+3. Bundle the signed managed DLL without recompiling, build the installer with
+   `SignedUninstallerOutputDir`, then sign the standalone EXE and final installer.
+
+`UsePrebuiltSignedPayloads` is a packaging-only switch. Normal builds still build
+the worker and native libraries. Release assemblies do not embed worker PDBs.
+Verify the extracted embedded resources, standalone payloads, portable ZIP, and
+installer payloads, not just the outer EXE signatures. Check the publisher,
+trusted timestamps and unchanged executable content, then regenerate checksums.
+
+### Stable Publication
+
+Use a new version tag and publish the verified assets as a normal GitHub release,
+not a prerelease, marked Latest. Development releases remain separate.
+The ElkaSoft website determines Stable/Dev from GitHub's release channel and
+signing from the publisher's release notes. Include an explicit statement such
+as **Windows x64 - digitally signed** only after verification succeeds. Do not
+assume the Stable flag implies a signature. Confirm the website's download link,
+version, and Signed label after its release information refreshes.
+
 ## Manual Framework-Dependent Publish
 
 ```powershell

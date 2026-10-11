@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.8.1.10</Version>
-    <InformationalVersion>0.8.1.10</InformationalVersion>
+    <Version>0.8.2.0</Version>
+    <InformationalVersion>0.8.2.0</InformationalVersion>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
@@ -79,7 +79,7 @@
     <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.runtimeconfig.json">
       <LogicalName>ElkaPluginWorker/Elka.PluginWorker.runtimeconfig.json</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.pdb" Condition="Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.pdb')">
+    <EmbeddedResource Include="$(PluginWorkerOutputDir)Elka.PluginWorker.pdb" Condition="'$(Configuration)' == 'Debug' and Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.pdb')">
       <LogicalName>ElkaPluginWorker/Elka.PluginWorker.pdb</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="$(NativeBridgePath)">
@@ -92,7 +92,7 @@
     <Error Condition="!Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffect.h') or !Exists('$(Vst2SdkPath)\pluginterfaces\vst2.x\aeffectx.h')"
            Text="VST2 hosting is required, but Vst2SdkPath='$(Vst2SdkPath)' does not contain pluginterfaces\vst2.x\aeffect.h and aeffectx.h." />
   </Target>
-  <Target Name="BuildNativeBridge" BeforeTargets="PrepareResources" DependsOnTargets="ValidateVst2SdkPath">
+  <Target Name="BuildNativeBridge" BeforeTargets="PrepareResources" DependsOnTargets="ValidateVst2SdkPath" Condition="'$(UsePrebuiltSignedPayloads)' != 'true'">
     <Message Importance="high" Text="Configuring native VoiceMeeter bridge: $(NativeVst2ConfigureArg)" />
     <Exec Command="&quot;$(CMakeExe)&quot; --preset $(NativeCMakePreset) $(NativeVst2ConfigureArg)"
           WorkingDirectory="$(RepoRoot)" />
@@ -113,7 +113,7 @@
   </Target>
   <Target Name="BuildPluginWorker"
           BeforeTargets="PrepareResources"
-          Condition="'$(SkipPluginWorkerBuild)' != 'true' and Exists('$(PluginWorkerProject)')">
+          Condition="'$(SkipPluginWorkerBuild)' != 'true' and '$(UsePrebuiltSignedPayloads)' != 'true' and Exists('$(PluginWorkerProject)')">
     <Message Importance="high" Text="Building Elka plugin worker" />
     <MSBuild Projects="$(PluginWorkerProject)"
              Targets="Restore;Build"
@@ -125,6 +125,10 @@
     <Copy SourceFiles="@(PluginWorkerBuildOutput)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="ValidatePrebuiltSignedPayloads" BeforeTargets="PrepareResources;ComputeFilesToPublish" Condition="'$(UsePrebuiltSignedPayloads)' == 'true'">
+    <Error Condition="!Exists('$(NativeBridgePath)') or !Exists('$(RealtimeCoreBridgePath)') or !Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.exe') or !Exists('$(PluginWorkerOutputDir)Elka.PluginWorker.dll')"
+           Text="Signed-payload packaging requires the prebuilt native libraries and plugin worker. Build and verify them before packaging." />
   </Target>
   <Target Name="AddNativeBridgeToPublish" BeforeTargets="ComputeFilesToPublish;_ComputeFilesToBundle" DependsOnTargets="BuildNativeBridge">
     <ItemGroup>

@@ -45,14 +45,17 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 CloseApplications=yes
 RestartApplications=no
+#ifdef SignedUninstallerOutputDir
+; Bulk signing prepares this exact uninstaller before packaging the final setup.
+SignedUninstaller=yes
+SignedUninstallerDir={#SignedUninstallerOutputDir}
+#else
 #ifdef SignInstaller
 SignTool=ElkaVoiceMeeterFxHost
 SignedUninstaller=yes
-#ifdef SignedUninstallerOutputDir
-SignedUninstallerDir={#SignedUninstallerOutputDir}
-#endif
 #else
 SignedUninstaller=no
+#endif
 #endif
 
 [Languages]

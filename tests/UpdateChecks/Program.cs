@@ -52,6 +52,20 @@ Check(result.Beta?.Version.ToString() == "0.8.1.1.10", "beta channel chooses hig
 result = SelectUpdates([Release("0.8.1.1.0", true), Release("0.8.1.0")], Version("0.8.1.1.0"));
 Check(result.Stable is null && result.Beta is null, "installed and older releases never offered as updates");
 
+var stableMirror = Release("0.8.3.0", true);
+stableMirror.Tag = "v0.8.3.0+dev";
+stableMirror.Assets![0].Url = $"https://github.com/{Repository}/releases/download/v0.8.3.0%2Bdev/ElkaVoiceMeeterFxHostSetup-v0.8.3.0.exe";
+result = SelectUpdates([Release("0.8.3.0"), stableMirror, Release("0.8.1.10", true)], Version("0.8.1.10"));
+Check(result.Stable?.Version.ToString() == "0.8.3.0" && result.Beta?.Version.ToString() == "0.8.3.0",
+    "signed stable mirror reaches older users on both update channels");
+Check(result.Beta?.AssetName == "ElkaVoiceMeeterFxHostSetup-v0.8.3.0.exe" &&
+    result.Beta.DownloadUri.AbsolutePath.Contains("v0.8.3.0%2Bdev/", StringComparison.Ordinal),
+    "dev mirror accepts unchanged installer name and encoded metadata tag");
+result = SelectUpdates([Release("0.8.3.0"), stableMirror], Version("0.8.3.0"));
+Check(result.Stable is null && result.Beta is null, "installing the stable mirror never causes a repeat update");
+result = SelectUpdates([stableMirror, Release("0.8.3.1", true)], Version("0.8.3.0"));
+Check(result.Beta?.Version.ToString() == "0.8.3.1", "later development build supersedes the signed stable mirror");
+
 using var pagedClient = new HttpClient(new FakeHandler(request =>
 {
     var first = request.RequestUri!.Query.EndsWith("&page=1", StringComparison.Ordinal);
@@ -90,11 +104,22 @@ catch (OperationCanceledException) { Check(true, "download respects cancellation
 Check(Directory.GetFiles(root, "*.download", SearchOption.AllDirectories).Length == 0, "failed and canceled downloads leave no partial files");
 Check(Directory.GetFiles(root, "*.exe", SearchOption.AllDirectories).Length == 1, "only verified successful download becomes an executable");
 
-if (args.Contains("--live"))
+if (args.Contains("--live") || args.Contains("--live-stable-mirror"))
 {
     var live = new ApplicationUpdates();
     var available = await live.CheckAsync("0.8.0.0", CancellationToken.None);
     Check(available.Stable is not null && available.Beta is not null, "live GitHub stable and beta installers found");
+    if (args.Contains("--live-stable-mirror"))
+    {
+        Check(available.Stable!.Version.CompareTo(available.Beta!.Version) == 0 &&
+            available.Stable.AssetName == available.Beta.AssetName &&
+            available.Stable.Size == available.Beta.Size &&
+            available.Stable.Digest is not null && available.Stable.Digest == available.Beta.Digest,
+            "live stable and beta mirror offer the same version and installer bytes");
+        var installed = await live.CheckAsync(available.Stable.Version.ToString(), CancellationToken.None);
+        Check(installed.Stable is null && installed.Beta is null,
+            "live mirror is not offered again after installing that version");
+    }
     foreach (var candidate in new[] { available.Stable!, available.Beta! })
     {
         var path = await live.DownloadAsync(candidate, root, null, CancellationToken.None);

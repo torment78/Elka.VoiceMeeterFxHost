@@ -91,12 +91,39 @@ trusted timestamps and unchanged executable content, then regenerate checksums.
 ### Stable Publication
 
 Use a new version tag and publish the verified assets as a normal GitHub release,
-not a prerelease, marked Latest. Development releases remain separate.
+not a prerelease, marked Latest. Keep this stable entry intact when updating the
+development channel.
 The ElkaSoft website determines Stable/Dev from GitHub's release channel and
 signing from the publisher's release notes. Include an explicit statement such
 as **Windows x64 - digitally signed** only after verification succeeds. Do not
 assume the Stable flag implies a signature. Confirm the website's download link,
 version, and Signed label after its release information refreshes.
+
+### Keep The Dev Channel Current
+
+Whenever a published, signed stable version is newer than the latest development
+version, also publish those **exact same assets** to the dev channel. Beta-only
+users must not be left on an older build just because a stable release is newer.
+
+- Use a separate prerelease tag with `+dev` metadata, for example
+  `v0.8.3.0+dev`, pointing to the **same source commit** as `v0.8.3.0`.
+- Name the release **0.8.3.0 - Signed Stable (Dev Channel)** and explain that it
+  mirrors stable, with no experimental changes. Mark it prerelease, never Latest.
+- Copy the verified EXE, ZIP, installer, and checksum file byte-for-byte. Keep
+  their filenames, internal version, signatures, and timestamps unchanged. Do
+  not rebuild, re-sign, rename the installer, or replace older release assets.
+- Compare versions numerically before mirroring. Do not replace a newer dev
+  release with an older stable build. A later, higher-numbered dev release can
+  supersede the mirror normally.
+- Verify downloaded mirror assets against stable SHA-256 hashes and sizes.
+  Test the installed updater's Beta selection and download using the real
+  release metadata, without launching the installer.
+- Confirm the ElkaSoft website shows the same signed build in both Stable and
+  Dev after its catalog refreshes.
+
+The updater ignores `+dev` when comparing versions, but uses the exact encoded
+tag in download URLs. Consequently, installing this mirror reports the normal
+stable version and does not repeatedly offer itself as a new update.
 
 ## Manual Framework-Dependent Publish
 

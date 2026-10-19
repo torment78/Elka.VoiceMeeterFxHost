@@ -511,6 +511,15 @@
                             </TextBox>
                         </Grid>
                     </Border>
+                    <Button x:Name="DonateButton"
+                            Content="Donate"
+                            Width="104"
+                            MinHeight="34"
+                            Margin="0,12,0,0"
+                            HorizontalAlignment="Left"
+                            Style="{StaticResource VstButton}"
+                            ToolTip="Open the ElkaSoft Ko-fi page in your browser."
+                            Click="DonateButton_Click" />
                 </StackPanel>
             </Grid>
 

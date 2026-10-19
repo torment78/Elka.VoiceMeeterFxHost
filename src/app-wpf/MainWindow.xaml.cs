@@ -15,6 +15,7 @@ namespace Elka.VoiceMeeterFxHost.App;
 
 public partial class MainWindow : Window
 {
+    private const string DonationUrl = "https://ko-fi.com/msffixit";
     private readonly Dictionary<string, EndpointChannelSettings> _settingsByEndpoint = [];
     private readonly NativeEngineClient _engine = new();
     private readonly DispatcherTimer _saveTimer;
@@ -1342,6 +1343,24 @@ public partial class MainWindow : Window
         ShowSaveManagerWindow();
     }
 
+    private void DonateButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            using var browser = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(DonationUrl)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not open the donation page: {ex.Message}");
+            var owner = sender is DependencyObject source ? Window.GetWindow(source) ?? this : this;
+            MessageBox.Show(owner, $"Could not open your browser. You can visit {DonationUrl} directly.",
+                "Donate", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private void ShowSaveManagerWindow()
     {
         var window = new Window
@@ -1488,14 +1507,24 @@ public partial class MainWindow : Window
         stack.Children.Add(modeActions);
         stack.Children.Add(CreateUpdateMenuSection(window));
 
-        stack.Children.Add(new TextBlock
+        var footer = CreateMenuColumns();
+        footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        AddMenuCell(footer, new TextBlock
         {
             Text = CurrentApplicationVersionText(),
             Style = (Style)FindResource("MutedText"),
             FontSize = 11,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 2, 0, 0)
-        });
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        }, 0, 0);
+        var donate = CreateSaveManagerButton("Donate");
+        donate.Style = (Style)FindResource("VstButton");
+        donate.Margin = new Thickness(0);
+        donate.ToolTip = "Open the ElkaSoft Ko-fi page in your browser.";
+        donate.Click += DonateButton_Click;
+        AddMenuCell(footer, donate, 0, 2);
+        stack.Children.Add(footer);
         window.ShowDialog();
     }
 

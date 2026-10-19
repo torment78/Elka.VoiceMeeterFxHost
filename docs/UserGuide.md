@@ -202,7 +202,11 @@ The **Menu** window contains:
 - **Delay Start** with a `0` to `60` second engine startup delay
 - independent automatic stable and beta update checks
 - **Stable** and **Beta** buttons for manual checks and installer downloads
-- the installed application version at the bottom
+- the installed application version at the bottom left
+- **Donate** at the bottom right, opening the [ElkaSoft Ko-fi page](https://ko-fi.com/msffixit) in your browser
+
+The same **Donate** button is available at the bottom of the main window's left
+sidebar, below **Log**. Donations are optional and do not change app functionality.
 
 Imported saves keep missing VSTs as red striped placeholders with their cables
 visible. Reinstall and rescan the plugin to restore that part of the layout.

@@ -21,12 +21,12 @@ right. This prevents an incomplete processing chain from leaking dry audio.
 
 [Download the latest release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/latest)
 
-**0.8.2.0 is the signed stable Windows release.** It brings the tested development
-updates together: signal/history monitors, Simple and Advanced modes, improved
-group routing and reload controls, quick cable disconnection, in-app updates,
-and reliable tray startup. The installer, application, embedded worker and native
-libraries are digitally signed and timestamped. Portable downloads contain the
-same signed binaries; SHA-256 checksums accompany the release.
+**0.8.3.0 is the signed stable Windows release.** It adds **Donate** buttons in
+the menu and at the bottom of the left sidebar, opening the
+[ElkaSoft Ko-fi page](https://ko-fi.com/msffixit). Audio processing and routing
+are unchanged. The installer, application, embedded worker and native libraries
+are digitally signed and timestamped. Portable downloads contain the same
+signed binaries; SHA-256 checksums accompany the release.
 
 ## Requirements
 

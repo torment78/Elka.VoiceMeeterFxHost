@@ -1941,6 +1941,7 @@ public partial class MainWindow : Window
         _settings.PluginScanFolders ??= [];
         _settings.EndpointCanvasYOffsets ??= [];
         _settings.EndpointRouteHues ??= [];
+        _settings.CustomRouteColors = RouteHueColor.NormalizePalette(_settings.CustomRouteColors);
         _settings.EditionWorkspaces ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
@@ -6616,7 +6617,7 @@ private void RefreshEndpointButtonSelection()
         var currentHue = EndpointRouteHueKey(endpoint.Key(mode));
         var initialColor = TryParseCustomRouteHue(currentHue, out var customColor)
             ? customColor
-            : Color.FromRgb(0x55, 0xC2, 0x7A);
+            : (HueStrokeBrush(currentHue) as SolidColorBrush)?.Color ?? Color.FromRgb(0x55, 0xC2, 0x7A);
 
         var selectedColor = PromptForRouteHueColor(endpoint.DisplayName, initialColor);
         if (selectedColor is null)
@@ -6629,158 +6630,18 @@ private void RefreshEndpointButtonSelection()
 
     private Color? PromptForRouteHueColor(string endpointName, Color initialColor)
     {
-        var windowBrush = ThemeBrushOr("WindowBrush", "#071114");
-        var textBrush = ThemeBrushOr("TextBrush", "#E7EEF0");
-        var mutedTextBrush = ThemeBrushOr("MutedTextBrush", "#8AA0A6");
-        var fieldBrush = ThemeBrushOr("FieldBrush", "#0E1B1F");
-        var routeAccentBrush = ThemeBrushOr("RouteAccentBrush", "#55C27A");
-        var dialog = new Window
+        var dialog = new RouteHuePickerWindow(endpointName, initialColor, _settings.CustomRouteColors)
         {
-            Title = $"{endpointName} Route Hue",
-            Owner = this,
-            Width = 380,
-            Height = 285,
-            ResizeMode = ResizeMode.NoResize,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = windowBrush,
-            Foreground = textBrush
+            Owner = this
         };
-
-        var root = new Grid { Margin = new Thickness(14) };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        var header = new StackPanel
+        var applied = dialog.ShowDialog() == true;
+        // Saving a swatch is independent of applying a hue to this endpoint.
+        if (!_settings.CustomRouteColors.SequenceEqual(dialog.SavedColors))
         {
-            Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        var preview = new Border
-        {
-            Width = 58,
-            Height = 34,
-            Background = new SolidColorBrush(initialColor),
-            BorderBrush = routeAccentBrush,
-            BorderThickness = new Thickness(1),
-            Margin = new Thickness(0, 0, 12, 0)
-        };
-        var hexText = new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = textBrush,
-            FontWeight = FontWeights.SemiBold
-        };
-        header.Children.Add(preview);
-        header.Children.Add(hexText);
-        root.Children.Add(header);
-
-        var sliders = new StackPanel();
-        Grid.SetRow(sliders, 1);
-        root.Children.Add(sliders);
-
-        var redSlider = CreateHueSlider("R", initialColor.R, mutedTextBrush, fieldBrush, routeAccentBrush);
-        var greenSlider = CreateHueSlider("G", initialColor.G, mutedTextBrush, fieldBrush, routeAccentBrush);
-        var blueSlider = CreateHueSlider("B", initialColor.B, mutedTextBrush, fieldBrush, routeAccentBrush);
-        sliders.Children.Add(redSlider.Row);
-        sliders.Children.Add(greenSlider.Row);
-        sliders.Children.Add(blueSlider.Row);
-
-        void UpdatePreview()
-        {
-            var color = Color.FromRgb(
-                (byte)Math.Clamp(Math.Round(redSlider.Slider.Value), 0, 255),
-                (byte)Math.Clamp(Math.Round(greenSlider.Slider.Value), 0, 255),
-                (byte)Math.Clamp(Math.Round(blueSlider.Slider.Value), 0, 255));
-            preview.Background = new SolidColorBrush(color);
-            hexText.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
-            dialog.Tag = color;
+            _settings.CustomRouteColors = dialog.SavedColors.ToList();
+            QueueSave();
         }
-
-        redSlider.Slider.ValueChanged += (_, _) => UpdatePreview();
-        greenSlider.Slider.ValueChanged += (_, _) => UpdatePreview();
-        blueSlider.Slider.ValueChanged += (_, _) => UpdatePreview();
-        UpdatePreview();
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 16, 0, 0)
-        };
-        var cancel = new Button
-        {
-            Content = "Cancel",
-            MinWidth = 84,
-            Margin = new Thickness(0, 0, 8, 0)
-        };
-        cancel.Click += (_, _) => dialog.DialogResult = false;
-        var ok = new Button
-        {
-            Content = "Apply",
-            MinWidth = 84,
-            IsDefault = true
-        };
-        ok.Click += (_, _) => dialog.DialogResult = true;
-        buttons.Children.Add(cancel);
-        buttons.Children.Add(ok);
-        Grid.SetRow(buttons, 3);
-        root.Children.Add(buttons);
-
-        dialog.Content = root;
-        return dialog.ShowDialog() == true && dialog.Tag is Color color ? color : null;
-    }
-
-    private static (Grid Row, Slider Slider) CreateHueSlider(
-        string label,
-        byte value,
-        Brush labelBrush,
-        Brush fieldBrush,
-        Brush accentBrush)
-    {
-        var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) });
-
-        row.Children.Add(new TextBlock
-        {
-            Text = label,
-            Foreground = labelBrush,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        var slider = new Slider
-        {
-            Minimum = 0,
-            Maximum = 255,
-            Value = value,
-            IsSnapToTickEnabled = true,
-            TickFrequency = 1,
-            Background = fieldBrush,
-            Foreground = accentBrush,
-            Margin = new Thickness(8, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(slider, 1);
-        row.Children.Add(slider);
-
-        var number = new TextBlock
-        {
-            Text = value.ToString(CultureInfo.InvariantCulture),
-            Foreground = labelBrush,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Right
-        };
-        slider.ValueChanged += (_, _) =>
-        {
-            number.Text = Math.Round(slider.Value).ToString(CultureInfo.InvariantCulture);
-        };
-        Grid.SetColumn(number, 2);
-        row.Children.Add(number);
-
-        return (row, slider);
+        return applied ? dialog.SelectedColor : null;
     }
 
     private static string RouteHueDisplayName(string hueKey)

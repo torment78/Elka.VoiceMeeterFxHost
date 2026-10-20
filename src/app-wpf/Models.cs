@@ -585,6 +585,7 @@ internal sealed class FxHostSettings
     public Dictionary<string, double> EndpointCanvasYOffsets { get; set; } = [];
     public Dictionary<string, string> EndpointRouteHues { get; set; } = [];
     public Dictionary<string, VoicemeeterEditionWorkspace> EditionWorkspaces { get; set; } = [];
+    public List<string> CustomRouteColors { get; set; } = [];
 }
 
 internal static class FxHostSettingsStore

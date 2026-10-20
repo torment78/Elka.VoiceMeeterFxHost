@@ -1,0 +1,146 @@
+<Window x:Class="Elka.VoiceMeeterFxHost.App.RouteHuePickerWindow"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Custom Route Hue" Width="440" Height="760" MinWidth="410" MinHeight="690"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource WindowBackgroundBrush}" Foreground="{DynamicResource TextBrush}">
+  <Window.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/ElkaTheme.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <LinearGradientBrush x:Key="HueSpectrum" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FF0000" Offset="0" />
+        <GradientStop Color="#FFFF00" Offset="0.166667" />
+        <GradientStop Color="#00FF00" Offset="0.333333" />
+        <GradientStop Color="#00FFFF" Offset="0.5" />
+        <GradientStop Color="#0000FF" Offset="0.666667" />
+        <GradientStop Color="#FF00FF" Offset="0.833333" />
+        <GradientStop Color="#FF0000" Offset="1" />
+      </LinearGradientBrush>
+      <Style x:Key="ColorSwatch" TargetType="Button">
+        <Setter Property="Height" Value="30" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Chrome" CornerRadius="4" Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Chrome" Property="BorderBrush" Value="White" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Chrome" Property="BorderBrush" Value="White" />
+                  <Setter TargetName="Chrome" Property="BorderThickness" Value="2" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
+  </Window.Resources>
+  <Grid x:Name="PickerRoot" Margin="20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" MinHeight="240" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <StackPanel>
+      <TextBlock Text="Custom Route Hue" FontSize="19" FontWeight="SemiBold" />
+      <TextBlock x:Name="EndpointLabel" Margin="0,3,0,8" Foreground="{StaticResource MutedTextBrush}" />
+    </StackPanel>
+    <Decorator x:Name="SquareHost" Grid.Row="1" />
+    <StackPanel Grid.Row="2" Margin="0,8,0,12">
+      <TextBlock Text="Hue" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,4" />
+      <Slider x:Name="HueSlider" Minimum="0" Maximum="360" SmallChange="1" LargeChange="15"
+              IsMoveToPointEnabled="True" Height="28" ValueChanged="HueSlider_ValueChanged"
+              AutomationProperties.Name="Hue" ToolTip="Hue">
+        <Slider.Template>
+          <ControlTemplate TargetType="Slider">
+            <Grid Background="Transparent">
+              <Border Margin="12,0" Height="14" CornerRadius="7" VerticalAlignment="Center"
+                      Background="{StaticResource HueSpectrum}" />
+              <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
+                     Value="{TemplateBinding Value}" Orientation="Horizontal">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Style="{StaticResource ThemedScrollPageButton}" />
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="24" Height="24" Cursor="Hand">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Grid>
+                          <Ellipse Fill="{StaticResource FieldBrush}" Stroke="White" StrokeThickness="2" />
+                          <Ellipse Margin="6" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Slider}}" />
+                        </Grid>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Style="{StaticResource ThemedScrollPageButton}" />
+                </Track.IncreaseRepeatButton>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Slider.Template>
+      </Slider>
+    </StackPanel>
+    <Grid Grid.Row="3">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <StackPanel Margin="0,0,12,0">
+        <TextBlock Text="Original" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,5" />
+        <Button x:Name="OriginalSwatch" Style="{StaticResource ColorSwatch}" Width="62"
+                HorizontalAlignment="Left" Click="OriginalSwatch_Click" ToolTip="Restore original color"
+                AutomationProperties.Name="Restore original color" />
+      </StackPanel>
+      <StackPanel Grid.Column="1">
+        <TextBlock Text="New" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,5" />
+        <Border x:Name="ColorPreview" Width="62" Height="30" CornerRadius="4"
+                BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1" />
+      </StackPanel>
+      <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+        <TextBlock Text="Hex" FontSize="12" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,5" />
+        <TextBox x:Name="HexBox" Width="122" Height="30" MinHeight="0" MaxLength="7"
+                 VerticalContentAlignment="Center" FontFamily="Consolas" Padding="8,0"
+                 TextChanged="HexBox_TextChanged" LostFocus="HexBox_LostFocus"
+                 AutomationProperties.Name="Hex color" />
+      </StackPanel>
+    </Grid>
+    <TextBlock x:Name="HexError" Grid.Row="4" Text="Enter a six-digit hex color." Height="22"
+               FontSize="12" Margin="0,3,0,0" Foreground="{StaticResource DangerBrush}" Visibility="Hidden" />
+    <StackPanel Grid.Row="5">
+      <DockPanel Margin="0,0,0,8">
+        <TextBlock Text="Custom colors" VerticalAlignment="Center" />
+        <TextBlock x:Name="PaletteCount" Foreground="{StaticResource MutedTextBrush}"
+                   HorizontalAlignment="Right" FontSize="12" VerticalAlignment="Center" />
+      </DockPanel>
+      <UniformGrid x:Name="Swatches" Rows="1" Columns="10" Height="34" />
+      <Button x:Name="SaveColorButton" Content="Save color" HorizontalAlignment="Left" Margin="0,10,0,0"
+              Click="SaveColorButton_Click" ToolTipService.ShowOnDisabled="True" />
+    </StackPanel>
+    <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+      <Button Content="Cancel" MinWidth="82" Margin="0,0,8,0" IsCancel="True" />
+      <Button x:Name="ApplyButton" Content="Apply" MinWidth="82" IsDefault="True"
+              Style="{StaticResource RouteButton}" Click="ApplyButton_Click" />
+    </StackPanel>
+  </Grid>
+</Window>

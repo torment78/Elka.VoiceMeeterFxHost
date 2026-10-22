@@ -10,6 +10,7 @@ public partial class DspDiagnosticsPanel : UserControl
     internal event Action? ExpansionChanged;
     internal event Action? ClearLogRequested;
     private DspDashboard _snapshot = DspDashboard.Empty;
+    private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Empty;
     private IReadOnlyList<DspOverrunEntry> _shownEntries = [];
     private readonly ObservableCollection<DspDisplayRow<DspPluginUsage>> _pluginRows = [];
     private readonly ObservableCollection<DspDisplayRow<DspCycleUsage>> _callbackRows = [];
@@ -20,7 +21,6 @@ public partial class DspDiagnosticsPanel : UserControl
         InitializeComponent();
         PluginRows.ItemsSource = _pluginRows;
         CallbackRows.ItemsSource = _callbackRows;
-        CycleTotalsList.ItemsSource = _callbackRows;
     }
 
     internal void Update(DspDashboard snapshot)
@@ -28,6 +28,7 @@ public partial class DspDiagnosticsPanel : UserControl
         _snapshot = snapshot;
         if (PerformanceContent.Visibility == Visibility.Visible)
         {
+            HostUsageContent.DataContext = _hostStatus;
             var selected = StreamPicker.SelectedIndex - 1;
             if (selected >= 0 && snapshot.Cycles.Count > 0 && !snapshot.Cycles.Any(cycle => cycle.Stream == selected))
             {
@@ -38,12 +39,16 @@ public partial class DspDiagnosticsPanel : UserControl
             var cycle = (all ? snapshot.Cycles.OrderByDescending(item => item.Percent).FirstOrDefault() :
                 snapshot.Cycles.FirstOrDefault(item => item.Stream == selected)) ?? DspCycleUsage.Empty(Math.Max(0, selected));
             CycleContent.DataContext = cycle;
-            var plugins = all ? snapshot.Plugins : cycle.Plugins;
-            SyncRows(_pluginRows, plugins, item => (item.Token, item.Stream));
-            PerformanceEmpty.Visibility = plugins.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (IndividualContent.Visibility == Visibility.Visible)
+            {
+                var plugins = all ? snapshot.Plugins : cycle.Plugins;
+                var ordered = SortPicker.SelectedIndex == 1
+                    ? plugins.OrderByDescending(item => item.Percent).ThenBy(item => item.Id < 0 ? int.MaxValue : item.Id)
+                    : plugins.OrderBy(item => item.Id < 0 ? int.MaxValue : item.Id).ThenBy(item => item.Stream);
+                SyncRows(_pluginRows, ordered.ThenBy(item => item.Token).ToArray(), item => (item.Token, item.Stream));
+                PerformanceEmpty.Visibility = plugins.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
             SyncRows(_callbackRows, all && snapshot.Cycles.Count > 0 ? snapshot.Cycles : new[] { cycle }, item => item.Stream);
-            SingleCycleTotal.Visibility = all ? Visibility.Collapsed : Visibility.Visible;
-            AllCycleTotals.Visibility = all ? Visibility.Visible : Visibility.Collapsed;
         }
         if (OverrunContent.Visibility == Visibility.Visible &&
             (_shownEntries.Count != snapshot.Overruns.Count || _shownEntries.FirstOrDefault() != snapshot.Overruns.FirstOrDefault()))
@@ -54,6 +59,13 @@ public partial class DspDiagnosticsPanel : UserControl
         }
         HealthText.Text = snapshot.Health;
         HealthText.Visibility = snapshot.Health.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    internal void UpdateHostStatus(HostStatusSnapshot status)
+    {
+        _hostStatus = status;
+        if (PerformanceContent.Visibility == Visibility.Visible)
+            HostUsageContent.DataContext = status;
     }
 
     // Keep item containers alive so a display refresh does not dismiss hover details
@@ -90,10 +102,21 @@ public partial class DspDiagnosticsPanel : UserControl
         ExpansionChanged?.Invoke();
     }
 
+    private void IndividualToggle_Click(object sender, RoutedEventArgs e)
+    {
+        IndividualContent.Visibility = IndividualContent.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        Update(_snapshot);
+    }
+
     private void ClearLog_Click(object sender, RoutedEventArgs e) => ClearLogRequested?.Invoke();
     private void StreamPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (CycleContent != null) Update(_snapshot);
+        if (IsInitialized) Update(_snapshot);
+    }
+
+    private void SortPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IsInitialized) Update(_snapshot);
     }
 }
 

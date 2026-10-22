@@ -772,6 +772,19 @@ internal sealed class NativeEngineClient : IDisposable
 
     public bool HasAudioClock => _attached && GetStats().SampleRate > 0;
 
+    public HostStatusSnapshot ReadHostStatus(double? enginePeakMicroseconds)
+    {
+        var resources = ReadProcessResources();
+        if (!_attached)
+            return new(false, 0, 0, resources.CpuPercent, resources.PrivateWorkingSetBytes, null, _lastStatus);
+
+        var stats = GetStats();
+        var running = stats.ConnectionState == NativeConnectionRunning || IsInsertAsioRunning;
+        // Use the resettable DSP peak supplied by the display, not the legacy lifetime counter.
+        return new(running, stats.SampleRate, stats.BlockSize, resources.CpuPercent,
+            resources.PrivateWorkingSetBytes, enginePeakMicroseconds, _lastStatus);
+    }
+
     public string StatusText
     {
         get

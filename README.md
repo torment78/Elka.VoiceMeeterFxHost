@@ -28,13 +28,18 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.3 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.3).**
-**DSP Performance** now shows average and held-peak processing in milliseconds
-and audio-budget percentage for each callback and VST. Hover for full details,
-or scroll beyond the five visible rows to inspect all processing VSTs. Diagnostics
-update at up to 60 Hz, with a 30 Hz display. **DSP Overrun Log** detection continues
-when the sections are collapsed or the app is in the tray. See
-[DSP diagnostics](docs/DspDiagnostics.md) for what the figures mean.
+**[0.8.3.4 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.4).**
+The top bar shows **Running/Stop**, sample rate, buffer size and cycle time.
+CPU, RAM and the resettable engine peak are now in **DSP Performance**, alongside
+callback usage bars. Expand **Individual** for VST averages, with stable ID order
+or highest-average sorting and full hover details. Peaks reset every 10 seconds;
+overrun history is preserved. Diagnostics keep their 60 Hz measurement-snapshot
+and 30 Hz display targets, with background overrun detection. See
+[DSP diagnostics](docs/DspDiagnostics.md) for details and measurement limits.
+
+**Known issue under investigation:** intermittent clicks have been reported in
+normal callback mode without recorded DSP overruns. This development release
+does not claim to fix them; their cause is not yet confirmed.
 
 ## Requirements
 

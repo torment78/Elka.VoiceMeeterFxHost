@@ -8,6 +8,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/app-wpf/DspPerformanceModels.cs" Link="DspPerformanceModels.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
+    <Compile Include="../../src/app-wpf/EngineStatusView.xaml.cs" Link="EngineStatusView.xaml.cs" />
+    <Page Include="../../src/app-wpf/EngineStatusView.xaml" Link="EngineStatusView.xaml" />
     <Compile Include="../../src/app-wpf/DspDiagnosticsPanel.xaml.cs" Link="DspDiagnosticsPanel.xaml.cs" />
     <Page Include="../../src/app-wpf/DspDiagnosticsPanel.xaml" Link="DspDiagnosticsPanel.xaml" />
     <Page Include="../../src/app-wpf/Themes/ElkaTheme.xaml" Link="Themes/ElkaTheme.xaml" />

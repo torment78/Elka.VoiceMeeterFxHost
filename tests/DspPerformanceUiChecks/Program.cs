@@ -21,6 +21,8 @@ internal static class Program
         Check(Marshal.SizeOf<DspNativeTiming>() == 88, "native timing ABI");
         Check(Marshal.SizeOf<DspNativeOverrun>() == 56, "native event ABI");
         var dashboard = HistoryChecks();
+        EnginePeakChecks();
+        HostStatusChecks();
         ProcessingDisplayChecks();
         ViewChecks(dashboard);
         Console.WriteLine($"DSP performance UI: {_checks} checks passed. No audio device or live host opened.");
@@ -106,6 +108,122 @@ internal static class Program
         return new(first.Cycles, [entry, entry with { Callback = true, Count = 1, ProcessingMilliseconds = 7.1 }], 0, 0);
     }
 
+    private static void HostStatusChecks()
+    {
+        var status = new HostStatusSnapshot(true, 48000, 240, 3.4, 207L * 1024 * 1024, 395, "Callback running");
+        Check(status.StateText == "Running" && status.StateColor == "#55C27A", "running header uses green text");
+        Check(status.SampleRateText == "48 kHz" && status.BufferText == "240 samples" && status.CycleText == "5.000 ms",
+            "header format uses kilohertz, buffer samples and block time");
+        Check((status with { SampleRate = 44100, BlockSize = 128 }).CycleText == "2.902 ms", "fractional block budget");
+        Check((status with { SampleRate = 192000, BlockSize = 256 }).CycleText == "1.333 ms", "high-rate block budget");
+        Check((status with { Running = false }).StateText == "Stop" && (status with { Running = false }).StateColor == "#E15F5F",
+            "stopped header uses red Stop text");
+        Check(HostStatusSnapshot.Empty.SampleRateText == "--" && HostStatusSnapshot.Empty.BufferText == "--" &&
+            HostStatusSnapshot.Empty.CycleText == "--", "unavailable format does not show a made-up budget");
+        Check(HostStatusSnapshot.Empty.CpuText == "--" && HostStatusSnapshot.Empty.RamText == "--" &&
+            HostStatusSnapshot.Empty.EnginePeakText == "--", "unavailable resource values are explicit");
+        Check(status.CpuText == "3.4%" && status.RamText == "207 MB" && status.EnginePeakText == "395 us",
+            "application resources retain their existing units");
+        var savedCulture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
+        Check((status with { SampleRate = 176400 }).SampleRateText == "176.4 kHz" && status.CycleText == "5.000 ms",
+            "header formatting is consistent across locales");
+        CultureInfo.CurrentCulture = savedCulture;
+
+        var header = new EngineStatusView { FontFamily = new FontFamily("Segoe UI"), FontSize = 14 };
+        foreach (var width in new[] { 592, 792 })
+            foreach (var rate in new[] { 44100, 48000, 96000, 176400, 192000 })
+            {
+                header.Update(status with { SampleRate = rate, BlockSize = 2048 });
+                header.Measure(new Size(width, double.PositiveInfinity));
+                header.Arrange(new Rect(0, 0, width, header.DesiredSize.Height));
+                header.UpdateLayout();
+                Check(header.ActualHeight <= 30, "normal status strip stays compact");
+                foreach (var name in new[] { "StateText", "SampleRateText", "BufferText", "CycleText" })
+                {
+                    var text = (TextBlock)header.FindName(name);
+                    var bounds = text.TransformToAncestor(header).TransformBounds(new Rect(text.RenderSize));
+                    Check(bounds.Left >= 0 && bounds.Right <= width + .1, "header text fits inside strip");
+                    var textWidth = text.Inlines.OfType<System.Windows.Documents.Run>().Sum(run =>
+                        new FormattedText(run.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                            new Typeface(run.FontFamily, run.FontStyle, run.FontWeight, run.FontStretch), run.FontSize, Brushes.White, 1)
+                        .WidthIncludingTrailingWhitespace);
+                    Check(textWidth <= text.ActualWidth + .5, "header text is not truncated");
+                }
+                Check(!Descendants(header).OfType<TextBlock>().Any(text => text.Text.Contains("CPU") || text.Text.Contains("RAM") || text.Text.Contains("peak")),
+                    "process metrics are removed from the top strip");
+            }
+        var output = Path.GetFullPath("artifacts/dsp-performance-checks");
+        Directory.CreateDirectory(output);
+        foreach (var running in new[] { true, false })
+        {
+            header.Update(status with { Running = running });
+            var frame = new Border { Child = header, Background = (Brush)Application.Current.FindResource("StatusIdleBrush"),
+                Padding = new Thickness(14, 8, 14, 8), CornerRadius = new CornerRadius(6) };
+            frame.Measure(new Size(620, double.PositiveInfinity));
+            frame.Arrange(new Rect(0, 0, 620, frame.DesiredSize.Height));
+            frame.UpdateLayout();
+            var bitmap = new RenderTargetBitmap(620, (int)Math.Ceiling(frame.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(frame);
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var file = File.Create(Path.Combine(output, running ? "host-running.png" : "host-stopped.png"))) encoder.Save(file);
+            frame.Child = null;
+        }
+        header.Update(status, "Loading VST: Test plugin");
+        Check(((TextBlock)header.FindName("ActivityText")).Visibility == Visibility.Visible &&
+            ((TextBlock)header.FindName("StateText")).Text == "Running", "activity preserves live engine state");
+        header.Update(status);
+        Check(((TextBlock)header.FindName("ActivityText")).Visibility == Visibility.Collapsed, "finished activity does not remain on header");
+
+        var panel = new DspDiagnosticsPanel();
+        var resources = (StackPanel)panel.FindName("HostUsageContent");
+        panel.UpdateHostStatus(status);
+        Check(resources.DataContext == null, "collapsed DSP panel does not render resource updates");
+        Click(panel, "PerformanceToggle");
+        Check(Equals(resources.DataContext, status), "application usage is available even without active callback rows");
+        panel.UpdateHostStatus(status with { CpuPercent = 5.1 });
+        Check((resources.DataContext as HostStatusSnapshot)?.CpuText == "5.1%", "application resource readings update while visible");
+        Check(Descendants(resources).OfType<StackPanel>().Any(item => item.ToolTip is string tip && tip.Contains("not a callback budget")),
+            "CPU tooltip distinguishes process usage from callback budget usage");
+        Check(Descendants(resources).OfType<StackPanel>().Any(item => item.ToolTip is string tip && tip.Contains("resets every 10 seconds")),
+            "engine peak tooltip describes the automatic reset");
+        Click(panel, "PerformanceToggle");
+        panel.UpdateHostStatus(status with { CpuPercent = 8.2 });
+        Check((resources.DataContext as HostStatusSnapshot)?.CpuText == "5.1%", "collapsed resource UI retains its last rendered snapshot");
+        Click(panel, "PerformanceToggle");
+        Check((resources.DataContext as HostStatusSnapshot)?.CpuText == "8.2%", "reopened DSP panel shows current application usage");
+    }
+
+    private static void EnginePeakChecks()
+    {
+        var cycles = Enumerable.Range(0, 4).Select(stream => DspCycleUsage.Empty(stream) with
+            { Active = true, PeakMilliseconds = stream + 1 }).ToArray();
+        var dashboard = new DspDashboard(cycles, [], 0, 0);
+        Check(dashboard.EnginePeakMicroseconds == 4000, "engine peak is the largest stream peak in microseconds, not a sum");
+        Check((dashboard with { Cycles = [cycles[0]] }).EnginePeakMicroseconds == 1000, "input-only engine peak");
+        Check((dashboard with { Cycles = [cycles[1]] }).EnginePeakMicroseconds == 2000, "output-only engine peak");
+        Check((dashboard with { Cycles = [cycles[2]] }).EnginePeakMicroseconds == 3000, "main-only engine peak");
+        Check((dashboard with { Cycles = [cycles[3]] }).EnginePeakMicroseconds == 4000, "ASIO-only engine peak");
+        Check((dashboard with { Cycles = [cycles[0], cycles[3] with { Active = false }] }).EnginePeakMicroseconds == 1000,
+            "inactive streams cannot retain an engine peak");
+        var reset = dashboard with { Cycles = cycles.Select(cycle => cycle with { PeakMilliseconds = .32, Overruns = 7 }).ToArray() };
+        Check(reset.EnginePeakMicroseconds == 320 && reset.Cycles.All(cycle => cycle.Overruns == 7),
+            "engine summary drops after peak resets without discarding overrun counters");
+        Check((dashboard with { Error = "Diagnostics unavailable" }).EnginePeakMicroseconds == null,
+            "diagnostic failure cannot present a stale engine peak as live");
+        Check(DspDashboard.Empty.EnginePeakMicroseconds == null &&
+            (dashboard with { Cycles = [DspCycleUsage.Empty(0)] }).EnginePeakMicroseconds == null,
+            "no active stream means no measured peak");
+
+        var panel = new DspDiagnosticsPanel();
+        Click(panel, "PerformanceToggle");
+        panel.UpdateHostStatus(new(true, 48000, 240, 1, 207L * 1024 * 1024, dashboard.EnginePeakMicroseconds, "Running"));
+        var resources = (StackPanel)panel.FindName("HostUsageContent");
+        Check((resources.DataContext as HostStatusSnapshot)?.EnginePeakText == "4000 us", "engine peak initially shows the larger block");
+        panel.UpdateHostStatus(new(true, 48000, 240, 1, 207L * 1024 * 1024, reset.EnginePeakMicroseconds, "Running"));
+        Check((resources.DataContext as HostStatusSnapshot)?.EnginePeakText == "320 us", "resource display accepts a lower peak after reset");
+    }
+
     private static void ProcessingDisplayChecks()
     {
         const ulong frequency = 1000000;
@@ -132,23 +250,48 @@ internal static class Program
             "VST exposes both measured values");
         Check(mixed.PeakColor == "#EF7779" && mixed.Plugins[0].PeakColor == "#EF7779" &&
             mixed.Plugins[0].PeakBarValue == 100, "overrun peak is red and its bar alone is capped");
+        Check(Math.Abs(mixed.BarValue - 24.9) < .001 && mixed.BarColor == "#59CED8",
+            "callback bar follows average usage rather than its peak or lifetime overruns");
+        foreach (var stream in Enumerable.Range(0, 4))
+        {
+            var cycle = mixed with { Stream = stream, Percent = 79.9 };
+            Check(cycle.BarColor == "#59CED8", "callback bar is cyan below warning level");
+            Check((cycle with { Percent = 80 }).BarColor == "#F0AF55", "callback bar is amber at eighty percent");
+            Check((cycle with { Percent = 99.9 }).BarColor == "#F0AF55", "callback warning lasts until full budget");
+            Check((cycle with { Percent = 100 }).BarColor == "#EF7779", "callback bar turns red at full budget");
+            Check((cycle with { Percent = 270 }).BarValue == 100 && (cycle with { Percent = 270 }).BarColor == "#EF7779",
+                "callback overrun bar is red and capped at full width");
+            Check((cycle with { Percent = -1 }).BarValue == 0, "callback bar cannot have negative width");
+            Check((cycle with { Active = false, Percent = 270 }).BarValue == 0 &&
+                (cycle with { Active = false, Percent = 270 }).BarColor == "#59CED8", "inactive callback bar is empty and neutral");
+        }
 
         // Low subsequent blocks cannot erase the peak before the UI reads a later snapshot.
-        var quietTime = now + frequency * 10;
+        var quietTime = now + frequency * 9;
         var quiet = history.Update([Row(-1, 40, 19680, 7200, 1, quietTime), Row(0, 40, 19680, 7200, 1, quietTime)],
-            [], frequency, quietTime, wallTime.AddSeconds(10), 0, 0).Cycles.Single();
+            [], frequency, quietTime, wallTime.AddSeconds(9), 0, 0).Cycles.Single();
         Check(quiet.ProcessingText == "0.320 ms" && quiet.PeakText == "7.200 ms" &&
             quiet.Plugins[0].PeakText == "7.200 ms / 270.0%", "peaks held across refresh gaps and quiet blocks");
 
+        var windowTime = now + frequency * 10;
+        var nextWindow = history.Update([Row(-1, 60, 26080, 320, 1, windowTime), Row(0, 60, 26080, 320, 1, windowTime)],
+            [], frequency, windowTime, wallTime.AddSeconds(10), 0, 0).Cycles.Single();
+        Check(nextWindow.ProcessingText == "0.320 ms" && nextWindow.PeakText == "0.320 ms" &&
+            nextWindow.Plugins[0].PeakText == "0.320 ms / 12.0%", "new native peak window does not restore an old maximum");
+        Check(nextWindow.Overruns == 1 && nextWindow.Plugins[0].Overruns == 1, "peak reset preserves accumulated overruns");
+        Check(new DspDashboard([nextWindow], [], 0, 0).EnginePeakMicroseconds == 320,
+            "engine summary uses the new native peak window, not the startup maximum");
+
         // Sustained overload must raise the average too, even without reading overrun events.
-        var heavyTime = quietTime + frequency;
-        var heavy = history.Update([Row(-1, 60, 163680, 7200, 21, heavyTime), Row(0, 60, 163680, 7200, 21, heavyTime)],
+        var heavyTime = windowTime + frequency;
+        var heavy = history.Update([Row(-1, 80, 170080, 7200, 21, heavyTime), Row(0, 80, 170080, 7200, 21, heavyTime)],
             [], frequency, heavyTime, wallTime.AddSeconds(11), 0, 0).Cycles.Single();
         Check(heavy.ProcessingText == "7.200 ms" && heavy.UsageText == "270.0%" &&
             heavy.Plugins[0].AverageText == "7.200 ms / 270.0%", "every block overrun yields high average, not 22 percent");
         Check(heavy.TotalText == "7.200 ms / 270.0%", "VST subtotal shows time and budget percentage");
 
         var panel = new DspDiagnosticsPanel { FontFamily = new FontFamily("Segoe UI"), FontSize = 14 };
+        panel.UpdateHostStatus(new(true, 48000, 128, 3.4, 207L * 1024 * 1024, 7200, "Running"));
         Click(panel, "PerformanceToggle");
         panel.Update(new([heavy, DspCycleUsage.Empty(1) with { Active = true, BudgetMilliseconds = 2.666666,
             ProcessingMilliseconds = .1, Percent = 3.75, PeakMilliseconds = .2 }], [], 0, 0));
@@ -157,9 +300,21 @@ internal static class Program
         panel.UpdateLayout();
         var callbackRows = (ItemsControl)panel.FindName("CallbackRows");
         Check(callbackRows.Items.Count == 2, "all callbacks shown rather than switching to one busiest average");
+        var callbackBars = Descendants(callbackRows).OfType<ProgressBar>().ToArray();
+        Check(callbackBars.Length == 2, "one usage bar beneath each callback summary");
+        foreach (var bar in callbackBars)
+        {
+            var cycle = (DspCycleUsage)bar.DataContext;
+            Check(bar.Value == cycle.BarValue && bar.Foreground is SolidColorBrush brush && brush.Color == (Color)ColorConverter.ConvertFromString(cycle.BarColor),
+                "callback bar is bound to its own usage and warning color");
+            Check(bar.ActualHeight == 7 && bar.ActualWidth > 0, "callback bar uses the existing slim style");
+            Check(bar.ToolTip == null, "callback bar preserves the full summary hover details");
+        }
         var visible = Descendants(panel).OfType<TextBlock>().Where(text => text.ActualWidth > 0).Select(text => text.Text).ToArray();
-        Check(visible.Contains("7.200 ms") && visible.Contains("270.0%") && visible.Contains("7.200 ms / 270.0%"),
-            "peak and sustained overrun numbers are visible without tooltips");
+        Check(visible.Contains("7.200 ms") && visible.Contains("270.0%") && visible.Contains("21") && visible.Contains("Peak"),
+            "callback average, peak and overrun count are visible without tooltips");
+        Check(((ItemsControl)panel.FindName("PluginRows")).Items.Count == 0 && !visible.Contains("Heavy VST"),
+            "individual VSTs stay hidden until expanded");
         var output = Path.GetFullPath("artifacts/dsp-performance-checks");
         Directory.CreateDirectory(output);
         var bitmap = new RenderTargetBitmap(440, (int)Math.Ceiling(panel.ActualHeight), 96, 96, PixelFormats.Pbgra32);
@@ -174,32 +329,41 @@ internal static class Program
         var changed = Row(-1, 1, 100, 100, 0, resetTime);
         changed.SampleRate = 96000; changed.BudgetTicks = budgetTicks / 2;
         var reset = history.Update([changed], [], frequency, resetTime, wallTime.AddSeconds(12), 0, 0).Cycles.Single();
-        Check(reset.PeakText == "0.100 ms" && reset.PeakUsageText == "7.5%", "format change resets held peak and its denominator");
+        Check(reset.PeakText == "0.100 ms" && reset.PeakUsageText == "7.5%", "format change resets peak and its denominator");
         Check(DspCycleUsage.Empty(0).PeakText == "--" && DspCycleUsage.Empty(0).ProcessingText == "--", "inactive values not presented as measurements");
     }
 
     private static void ViewChecks(DspDashboard dashboard)
     {
         var panel = new DspDiagnosticsPanel { FontFamily = new FontFamily("Segoe UI"), FontSize = 14 };
+        panel.UpdateHostStatus(new(true, 48000, 256, 3.4, 207L * 1024 * 1024, 6820, "Running"));
         Check(!panel.IsExpanded, "sections initially collapsed");
         panel.Update(dashboard);
         Click(panel, "PerformanceToggle");
         Click(panel, "OverrunToggle");
         Check(panel.IsExpanded, "sections expand independently");
         panel.Update(dashboard);
+        Check(((StackPanel)panel.FindName("IndividualContent")).Visibility == Visibility.Collapsed,
+            "individual subsection starts collapsed");
+        Check(((ComboBox)panel.FindName("SortPicker")).SelectedIndex == 0, "stable ID order is the default");
+        Click(panel, "IndividualToggle");
         panel.Measure(new Size(545, double.PositiveInfinity));
         panel.Arrange(new Rect(0, 0, 545, panel.DesiredSize.Height));
         panel.UpdateLayout();
         var pluginRows = (ItemsControl)panel.FindName("PluginRows");
         var pluginScroller = (ScrollViewer)panel.FindName("PluginScroller");
         Check(pluginRows.Items.Count == 7, "all seven VSTs retained in the view");
-        Check(Math.Abs(pluginScroller.ViewportHeight - 5 * 78) < .1 && pluginScroller.ScrollableHeight > 0,
+        Check(pluginRows.Items.Cast<DspDisplayRow<DspPluginUsage>>().Select(row => row.Value.Id).SequenceEqual(Enumerable.Range(7, 7)),
+            "lowest ID appears first regardless of usage");
+        Check(Math.Abs(pluginScroller.ViewportHeight - 5 * 64) < .1 && pluginScroller.ScrollableHeight > 0,
             "viewport fits five rows and remaining VSTs can be scrolled");
         var firstRow = Descendants(pluginRows).OfType<Border>().First(border => border.DataContext is DspPluginUsage);
         var firstValue = (DspPluginUsage)firstRow.DataContext;
         Check(firstRow.ToolTip is string details && details.Contains(firstValue.Name) && details.Contains(firstValue.IdText) &&
-            details.Contains("Cycle budget:") && details.Contains("Average:") && details.Contains("Peak (held):") &&
-            details.Contains("Budget overruns:") && details.Contains("IPC"), "full hover details restored on VST rows");
+            details.Contains("Cycle budget:") && details.Contains("Average:") && details.Contains("Peak:") &&
+            details.Contains("Budget overruns:") && details.Contains("10-second"), "full hover details retained on VST rows");
+        Check(!Descendants(firstRow).OfType<TextBlock>().Any(text => text.Text.Contains("Peak")) &&
+            Descendants(firstRow).OfType<ProgressBar>().Count() == 1, "individual row shows average only");
         Check(ToolTipService.GetShowDuration(firstRow) == 60000, "hover details stay open long enough to read");
         Check(Descendants(firstRow).OfType<FrameworkElement>().All(element => element.ToolTip == null),
             "child controls do not override detailed row tooltip");
@@ -219,6 +383,10 @@ internal static class Program
             }
             foreach (var bar in Descendants(panel).OfType<ProgressBar>())
                 Check(bar.ActualWidth > 0 && bar.ActualHeight == 7, "stable slim performance bars");
+            foreach (var row in Descendants(pluginRows).OfType<Border>().Where(row => row.DataContext is DspPluginUsage && row.ToolTip is string))
+                foreach (var bar in Descendants(row).OfType<ProgressBar>())
+                    Check(bar.TransformToAncestor(row).TransformBounds(new Rect(bar.RenderSize)).Bottom <= row.ActualHeight - row.Padding.Bottom + .1,
+                        $"usage bar fits entirely inside its row padding ({bar.TransformToAncestor(row).TransformBounds(new Rect(bar.RenderSize)).Bottom:F2} / {row.ActualHeight - row.Padding.Bottom:F2})");
             var bitmap = new RenderTargetBitmap(width, (int)Math.Ceiling(panel.ActualHeight), 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(panel);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -230,8 +398,8 @@ internal static class Program
         Check(offset > 0 && Math.Abs(offset - pluginScroller.ScrollableHeight) < .1, "last VSTs reachable by scrolling");
         var firstContainer = pluginRows.ItemContainerGenerator.ContainerFromIndex(0);
         var rowsSource = pluginRows.ItemsSource;
-        var updatedCycle = dashboard.Cycles[0] with { Plugins = dashboard.Cycles[0].Plugins.Select((plugin, index) =>
-            index == 0 ? plugin with { Overruns = 999, Milliseconds = .71 } : plugin).ToArray() };
+        var updatedCycle = dashboard.Cycles[0] with { Plugins = dashboard.Cycles[0].Plugins.Select(plugin =>
+            plugin.Token == firstValue.Token ? plugin with { Overruns = 999, Milliseconds = .71, Percent = 99 } : plugin).ToArray() };
         panel.Update(dashboard with { Cycles = [updatedCycle, dashboard.Cycles[1]] });
         panel.UpdateLayout();
         Check(ReferenceEquals(pluginRows.ItemsSource, rowsSource) &&
@@ -241,6 +409,8 @@ internal static class Program
         Check(((string)firstRow.ToolTip).Contains("Budget overruns: 999") && ((string)firstRow.ToolTip).Contains("0.710 ms"),
             "hover data updates without replacing its target");
         Check(Math.Abs(pluginScroller.VerticalOffset - offset) < .1, "refresh preserves scroll position");
+        Check(pluginRows.Items.Cast<DspDisplayRow<DspPluginUsage>>().Select(row => row.Value.Id).SequenceEqual(Enumerable.Range(7, 7)),
+            "changing average usage does not reorder ID view");
         var thumb = Descendants(pluginScroller).OfType<System.Windows.Controls.Primitives.Thumb>().First();
         Check(thumb.ActualWidth == 12 && thumb.ActualHeight == 36, "shared slim rounded scrollbar style");
         var tooltip = new ToolTip { Content = firstRow.ToolTip };
@@ -252,6 +422,19 @@ internal static class Program
         tooltipBitmap.Render(tooltip);
         var tooltipEncoder = new PngBitmapEncoder(); tooltipEncoder.Frames.Add(BitmapFrame.Create(tooltipBitmap));
         using (var file = File.Create(Path.Combine(output, "dsp-hover-details.png"))) tooltipEncoder.Save(file);
+        var sorter = (ComboBox)panel.FindName("SortPicker");
+        sorter.SelectedIndex = 1;
+        panel.Update(dashboard);
+        Check(pluginRows.Items.Cast<DspDisplayRow<DspPluginUsage>>().Select(row => row.Value.Id).SequenceEqual(new[] { 13, 12, 11, 10, 9, 8, 7 }),
+            "highest average usage can be selected explicitly");
+        sorter.SelectedIndex = 0;
+        Check(pluginRows.Items.Cast<DspDisplayRow<DspPluginUsage>>().Select(row => row.Value.Id).SequenceEqual(Enumerable.Range(7, 7)),
+            "ID ordering can be restored");
+        Click(panel, "IndividualToggle");
+        panel.Update(dashboard with { Cycles = [updatedCycle, dashboard.Cycles[1]] });
+        Check(((DspDisplayRow<DspPluginUsage>)pluginRows.Items[0]).Value.Overruns != 999, "collapsed individual list does not refresh hidden rows");
+        Click(panel, "IndividualToggle");
+        Check(((DspDisplayRow<DspPluginUsage>)pluginRows.Items[0]).Value.Overruns == 999, "reopening individual list displays latest values");
         var picker = (ComboBox)panel.FindName("StreamPicker");
         picker.SelectedIndex = 2;
         panel.UpdateLayout();

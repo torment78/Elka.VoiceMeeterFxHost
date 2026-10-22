@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="../../src/app-wpf/QuickDisconnectSelection.cs" Link="QuickDisconnectSelection.cs" />
     <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
     <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
   </ItemGroup>
 </Project>

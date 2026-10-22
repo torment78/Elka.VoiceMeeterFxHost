@@ -133,6 +133,58 @@ void publicationRateChecks()
           "publication frequency does not change measurements");
 }
 
+void peakWindowChecks()
+{
+    auto monitor = std::make_unique<DspPerformance>();
+    monitor->setEnabled(true);
+    const auto second = monitor->ticksPerSecond();
+    const auto ms = second / 1000;
+    const auto firstEnd = second + 8 * ms;
+    const auto boundary = firstEnd + DspPerformance::PeakWindowSeconds * second;
+    const auto emit = [&](int stream, uint64_t end, uint64_t nodeTicks, uint64_t callbackTicks, uint64_t token = 41) {
+        DspPerformance::Block block;
+        monitor->begin(block, stream, 48000, 240, end - callbackTicks);
+        block.nodes[0] = { token, nodeTicks, end, 0 };
+        monitor->finish(block, end);
+    };
+    emit(0, firstEnd, 7 * ms, 8 * ms);
+    emit(1, firstEnd + 5 * second, 6 * ms, 7 * ms);
+    emit(0, boundary - 50 * ms, ms, 2 * ms);
+    Readback result;
+    result.count = monitor->read(result.rows.data(), static_cast<int>(result.rows.size()), nullptr, 0,
+        result.eventCount, result.dropped, result.skipped);
+    check(result.rows[0].peakTicks == 8 * ms && result.rows[1].peakTicks == 7 * ms,
+          "quiet blocks retain callback and plugin peaks before window boundary");
+    allocationCount = 0;
+    countAllocations = true;
+    emit(0, boundary, ms, 2 * ms);
+    countAllocations = false;
+    result.read(*monitor);
+    check(allocationCount == 0, "peak reset allocates no memory");
+    check(result.rows[0].peakTicks == 2 * ms && result.rows[1].peakTicks == ms,
+          "callback and VST peaks reset at ten seconds to the new block");
+    check(result.rows[0].calls == 3 && result.rows[1].calls == 3 &&
+          result.rows[0].elapsedTicks == 12 * ms && result.rows[1].elapsedTicks == 9 * ms &&
+          result.rows[0].pluginTicks == 9 * ms && result.rows[0].budgetTicks == 15 * ms,
+          "peak reset preserves average numerators, denominators and VST totals");
+    check(result.rows[0].overruns == 1 && result.rows[1].overruns == 1 && result.eventCount == 4,
+          "peak reset preserves overrun counters and pending events from both streams");
+    check(result.rows[17].peakTicks == 7 * ms && result.rows[18].peakTicks == 6 * ms,
+          "streams keep independent peak windows");
+    emit(0, boundary + second, 3 * ms, 4 * ms);
+    result.read(*monitor);
+    check(result.rows[0].peakTicks == 4 * ms && result.rows[1].peakTicks == 3 * ms,
+          "new peaks accumulate within the next window");
+    emit(0, boundary + 2 * second, ms, 2 * ms, 42);
+    result.read(*monitor);
+    check(result.rows[1].token == 42 && result.rows[1].calls == 1 && result.rows[1].peakTicks == ms,
+          "reloaded VST cannot inherit the previous instance peak");
+    emit(0, boundary + 10 * second, ms, 2 * ms, 42);
+    result.read(*monitor);
+    check(result.rows[0].peakTicks == 2 * ms && result.rows[0].overruns == 1,
+          "later peak windows also reset without clearing overrun history");
+}
+
 class GainProcessor final : public RealtimePluginProcessor
 {
 public:
@@ -275,6 +327,7 @@ int main()
 {
     collectorChecks();
     publicationRateChecks();
+    peakWindowChecks();
     engineChecks();
     concurrentChecks();
     overheadChecks();

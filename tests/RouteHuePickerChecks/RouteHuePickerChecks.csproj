@@ -13,6 +13,7 @@
     <Page Include="../../src/app-wpf/RouteHuePickerWindow.xaml" Link="RouteHuePickerWindow.xaml" />
     <Page Include="../../src/app-wpf/Themes/ElkaTheme.xaml" Link="Themes/ElkaTheme.xaml" />
     <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
     <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
   </ItemGroup>
 </Project>

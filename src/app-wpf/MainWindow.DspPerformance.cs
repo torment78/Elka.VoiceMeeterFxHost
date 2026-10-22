@@ -7,6 +7,7 @@ public partial class MainWindow
 {
     private DspPerformanceMonitor? _dspMonitor;
     private DispatcherTimer? _dspDisplayTimer;
+    private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Empty;
 
     private void InitializeDspPerformance()
     {
@@ -22,6 +23,17 @@ public partial class MainWindow
     }
 
     private void RefreshDspIdentities() => _dspMonitor?.SetIdentities(_settings.PluginNodes);
+
+    private void UpdateHostStatusDisplay(string? activity = null)
+    {
+        _hostStatus = _engine.ReadHostStatus(_dspMonitor?.Snapshot.EnginePeakMicroseconds);
+        EngineStatus.Update(_hostStatus, activity ?? (_engine.IsAttached ? null : _hostStatus.Detail));
+        DspDiagnostics.UpdateHostStatus(_hostStatus);
+    }
+
+    // Loading/scanning may hold native control locks. Progress uses the last
+    // snapshot instead of adding an engine query while that work is in flight.
+    private void UpdateHostActivity(string activity) => EngineStatus.Update(_hostStatus, activity);
 
     private void UpdateDspDisplayActivity()
     {

@@ -11,6 +11,7 @@
     <Compile Include="../../src/app-wpf/PluginGroupRouting.cs" Link="PluginGroupRouting.cs" />
     <Compile Include="../../src/app-wpf/PluginNodePins.cs" Link="PluginNodePins.cs" />
     <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
     <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
   </ItemGroup>
 </Project>

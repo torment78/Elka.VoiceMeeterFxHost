@@ -29,9 +29,32 @@
                         BorderBrush="{StaticResource DspAccent}" Background="#143439" Click="PerformanceToggle_Click"
                         ToolTip="Expand or collapse DSP performance. Overrun detection continues in the background." />
                 <StackPanel x:Name="PerformanceContent" Visibility="Collapsed" Margin="0,12,0,0">
+                    <Border BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,12" Margin="0,0,0,12">
+                        <StackPanel x:Name="HostUsageContent">
+                            <TextBlock Text="Application" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0" Background="Transparent"
+                                            ToolTip="FX Host process CPU usage across all logical processors. Includes the UI and in-process VSTs, but not separate plugin-worker processes. This is not a callback budget percentage.">
+                                    <TextBlock Text="CPU" FontSize="11" Style="{StaticResource MutedText}" />
+                                    <TextBlock Text="{Binding CpuText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="0,0,12,0" Background="Transparent"
+                                            ToolTip="RAM used by the FX Host process: private working set, or working set if Windows cannot supply the private figure. Separate plugin-worker processes are not included.">
+                                    <TextBlock Text="RAM" FontSize="11" Style="{StaticResource MutedText}" />
+                                    <TextBlock Text="{Binding RamText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Background="Transparent"
+                                            ToolTip="Highest current callback or ASIO processing peak, in microseconds. Each active stream's peak resets every 10 seconds, so startup spikes do not stay indefinitely. This is elapsed audio-engine processing time, not whole-application CPU time. Overrun history is kept.">
+                                    <TextBlock Text="Engine peak" FontSize="11" Style="{StaticResource MutedText}" />
+                                    <TextBlock Text="{Binding EnginePeakText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                     <ComboBox x:Name="StreamPicker" HorizontalAlignment="Left" Width="160" Margin="0,0,0,10"
                               SelectedIndex="0" SelectionChanged="StreamPicker_SelectionChanged"
-                              ToolTip="Browse processing VSTs ranked by average budget usage. Each callback keeps its own average, peak and budget.">
+                              ToolTip="Filter callback summaries and individual VSTs. Each callback keeps its own average, peak and budget.">
                         <ComboBoxItem Content="All VSTs" />
                         <ComboBoxItem Content="Input callback" />
                         <ComboBoxItem Content="Output callback" />
@@ -46,86 +69,74 @@
                                                 ToolTip="{Binding Detail}" ToolTipService.InitialShowDelay="300" ToolTipService.ShowDuration="60000">
                                         <TextBlock Text="{Binding StreamName}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,7" />
                                         <Grid>
-                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition Width="0.8*" /></Grid.ColumnDefinitions>
                                             <StackPanel Margin="0,0,8,0">
                                                 <TextBlock Text="Cycle budget" FontSize="11" Style="{StaticResource MutedText}" />
-                                                <TextBlock Text="{Binding BudgetText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                                <TextBlock Text="{Binding BudgetText}" FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" Margin="0,0,8,0">
                                                 <TextBlock Text="Average" FontSize="11" Style="{StaticResource MutedText}" />
-                                                <TextBlock Text="{Binding ProcessingText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                                <TextBlock Text="{Binding ProcessingText}" FontSize="14" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding UsageText}" FontSize="12" Foreground="{Binding UsageColor}" Margin="0,2,0,0" />
                                             </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <TextBlock Text="Peak (held)" FontSize="11" Style="{StaticResource MutedText}" />
-                                                <TextBlock Text="{Binding PeakText}" FontSize="16" FontWeight="SemiBold" Foreground="{Binding PeakColor}" Margin="0,4,0,0" />
+                                            <StackPanel Grid.Column="2" Margin="0,0,8,0">
+                                                <TextBlock Text="Peak" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding PeakText}" FontSize="14" FontWeight="SemiBold" Foreground="{Binding PeakColor}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding PeakUsageText}" FontSize="12" Foreground="{Binding PeakColor}" Margin="0,2,0,0" />
                                             </StackPanel>
+                                            <StackPanel Grid.Column="3">
+                                                <TextBlock Text="Overruns" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding OverrunsText}" FontSize="14" FontWeight="SemiBold" Foreground="{Binding OverrunsColor}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
                                         </Grid>
+                                        <ProgressBar Style="{StaticResource DspBar}" Value="{Binding BarValue, Mode=OneWay}"
+                                                     Foreground="{Binding BarColor}" Margin="0,9,0,0" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <TextBlock x:Name="PerformanceEmpty" Text="{Binding EmptyText}" Style="{StaticResource MutedText}" Margin="0,2,0,12" />
-                        <ScrollViewer x:Name="PluginScroller" MaxHeight="390" VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
-                            <ScrollViewer.Resources>
-                                <Style TargetType="ScrollBar" BasedOn="{StaticResource StableVerticalScrollBar}" />
-                            </ScrollViewer.Resources>
-                        <ItemsControl x:Name="PluginRows">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border DataContext="{Binding Value}" Height="78" Padding="0,0,8,10" Background="Transparent"
-                                            ToolTip="{Binding Detail}" ToolTipService.InitialShowDelay="300" ToolTipService.ShowDuration="60000">
-                                    <StackPanel>
-                                        <Grid Margin="0,0,0,4">
-                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <TextBlock TextTrimming="CharacterEllipsis" Margin="0,0,8,0">
-                                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  /  " Foreground="{StaticResource MutedTextBrush}" /><Run Text="{Binding StreamName, Mode=OneWay}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
-                                            </TextBlock>
-                                            <TextBlock Grid.Column="1" Text="{Binding IdText}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" />
-                                        </Grid>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="16" /><ColumnDefinition /></Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <TextBlock Text="Average" FontSize="11" Style="{StaticResource MutedText}" />
-                                                <TextBlock Text="{Binding AverageText}" FontSize="12" Margin="0,3,0,5" />
-                                                <ProgressBar Style="{StaticResource DspBar}" Value="{Binding BarValue, Mode=OneWay}" Foreground="{Binding BarColor}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <TextBlock Text="Peak (held)" FontSize="11" Style="{StaticResource MutedText}" />
-                                                <TextBlock Text="{Binding PeakText}" FontSize="12" Foreground="{Binding PeakColor}" Margin="0,3,0,5" />
-                                                <ProgressBar Style="{StaticResource DspBar}" Value="{Binding PeakBarValue, Mode=OneWay}" Foreground="{Binding PeakColor}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        </ScrollViewer>
-                        <Border BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0"
-                                ToolTip="All VST node calls in the selected callback, including worker round trips; excludes other host work.">
+                        <Border BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1" CornerRadius="6" Padding="8">
                             <StackPanel>
-                            <Grid x:Name="SingleCycleTotal">
-                                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="All VSTs - average" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                <TextBlock Grid.Column="1" Text="{Binding TotalText}" FontWeight="SemiBold" FontSize="12" />
-                            </Grid>
-                            <StackPanel x:Name="AllCycleTotals">
-                                <TextBlock Text="All VSTs - average by callback" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,7" />
-                                <ItemsControl x:Name="CycleTotalsList">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid DataContext="{Binding Value}" Margin="0,3,0,0" ToolTip="{Binding Detail}">
-                                                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding StreamName}" Style="{StaticResource MutedText}" FontSize="12" />
-                                                <TextBlock Grid.Column="1" Text="{Binding TotalText}" FontWeight="SemiBold" FontSize="12" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
+                                <Button x:Name="IndividualToggle" Content="Individual" HorizontalContentAlignment="Left"
+                                        FontWeight="SemiBold" Click="IndividualToggle_Click"
+                                        ToolTip="Expand or collapse individual VST averages. Hover over a row for peaks and overrun details." />
+                                <StackPanel x:Name="IndividualContent" Visibility="Collapsed" Margin="0,10,0,0">
+                                    <ComboBox x:Name="SortPicker" HorizontalAlignment="Left" Width="204" Margin="0,0,0,10"
+                                              SelectedIndex="0" SelectionChanged="SortPicker_SelectionChanged"
+                                              ToolTip="ID order keeps VST rows in a fixed order. Highest average usage ranks by callback budget percentage.">
+                                        <ComboBoxItem Content="ID order" />
+                                        <ComboBoxItem Content="Highest average usage" />
+                                    </ComboBox>
+                                    <TextBlock x:Name="PerformanceEmpty" Text="{Binding EmptyText}" Style="{StaticResource MutedText}" Margin="0,2,0,12" />
+                                    <ScrollViewer x:Name="PluginScroller" MaxHeight="320" VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                                        <ScrollViewer.Resources>
+                                            <Style TargetType="ScrollBar" BasedOn="{StaticResource StableVerticalScrollBar}" />
+                                        </ScrollViewer.Resources>
+                                        <ItemsControl x:Name="PluginRows">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border DataContext="{Binding Value}" Height="64" Padding="0,0,8,10" Background="Transparent"
+                                                            ToolTip="{Binding Detail}" ToolTipService.InitialShowDelay="300" ToolTipService.ShowDuration="60000">
+                                                        <StackPanel>
+                                                            <Grid Margin="0,0,0,4">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                <TextBlock TextTrimming="CharacterEllipsis" Margin="0,0,8,0">
+                                                                    <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  /  " Foreground="{StaticResource MutedTextBrush}" /><Run Text="{Binding StreamName, Mode=OneWay}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
+                                                                </TextBlock>
+                                                                <TextBlock Grid.Column="1" Text="{Binding IdText}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                            </Grid>
+                                                            <TextBlock FontSize="12" Margin="0,0,0,5">
+                                                                <Run Text="Average  " Foreground="{StaticResource MutedTextBrush}" /><Run Text="{Binding AverageText, Mode=OneWay}" />
+                                                            </TextBlock>
+                                                            <ProgressBar Style="{StaticResource DspBar}" Value="{Binding BarValue, Mode=OneWay}" Foreground="{Binding BarColor}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

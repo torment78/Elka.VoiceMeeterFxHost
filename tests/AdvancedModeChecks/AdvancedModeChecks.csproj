@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
     <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
     <Compile Include="../../src/app-wpf/AdvancedModeState.cs" Link="AdvancedModeState.cs" />
     <Compile Include="../../src/app-wpf/ApplicationRestart.cs" Link="ApplicationRestart.cs" />

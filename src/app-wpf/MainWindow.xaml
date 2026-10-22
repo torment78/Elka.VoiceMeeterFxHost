@@ -61,11 +61,7 @@
               MaxWidth="820"
               Padding="14,8"
               Margin="0,16,0,16">
-                <TextBlock x:Name="StatusTextBlock"
-                   Text="Starting native engine..."
-                   FontWeight="SemiBold"
-                   TextAlignment="Center"
-                   Style="{StaticResource MutedText}" />
+                <local:EngineStatusView x:Name="EngineStatus" />
             </Border>
         </Grid>
 

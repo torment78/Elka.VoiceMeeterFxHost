@@ -1988,7 +1988,7 @@ public partial class MainWindow : Window
             : _settings.VbanControlStreamName.Trim();
         VbanLocalOnlyCheckBox.IsChecked = _settings.VbanControlLocalOnly;
         MixerTypeTextBlock.Text = VoicemeeterKindInfo.DisplayName(_kind);
-        StatusTextBlock.Text = _engine.StatusText;
+        UpdateHostStatusDisplay();
 
         foreach (var snapshot in _settings.Endpoints)
         {
@@ -3263,21 +3263,21 @@ public partial class MainWindow : Window
         if (_pluginNodeLoadInProgress)
         {
             var elapsed = DateTimeOffset.Now - _pluginNodeLoadStartedAt;
-            StatusTextBlock.Text = $"Loading VST: {_pluginNodeLoadName} | {elapsed.TotalSeconds:0}s | worker/main host is starting";
+            UpdateHostActivity($"Loading VST: {_pluginNodeLoadName} | {elapsed.TotalSeconds:0}s | worker/main host is starting");
             return;
         }
 
         if (_startupEngineDelayActive)
         {
             var remaining = Math.Max(0, (int)Math.Ceiling((_startupEngineDelayEndsAt - DateTimeOffset.Now).TotalSeconds));
-            StatusTextBlock.Text = $"Startup delay: engine starts in {remaining}s | {_engine.StatusText}";
+            UpdateHostStatusDisplay($"Startup delay: engine starts in {remaining}s");
             InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
             return;
         }
 
         RefreshVoicemeeterParametersIfNeeded();
         SyncInsertAsioPatchStateIfNeeded();
-        StatusTextBlock.Text = _engine.StatusText;
+        UpdateHostStatusDisplay();
         InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
         if (InsertAsioPatchControlEnabled)
         {
@@ -3738,9 +3738,9 @@ public partial class MainWindow : Window
         var nativeProgress = _engine.PluginScanProgress();
         var compactProgress = PluginScanProgressWindow.CompactStatus(nativeProgress);
         _pluginScanWindow?.UpdateProgress(nativeProgress, elapsed);
-        StatusTextBlock.Text = string.IsNullOrWhiteSpace(compactProgress)
+        UpdateHostActivity(string.IsNullOrWhiteSpace(compactProgress)
             ? $"Scanning VST folders: {_pluginScanLabel} | {seconds}s | file inventory"
-            : $"Scanning VST folders: {_pluginScanLabel} | {seconds}s | {compactProgress}";
+            : $"Scanning VST folders: {_pluginScanLabel} | {seconds}s | {compactProgress}");
 
         if (!writeHeartbeat || seconds < _pluginScanLastLogSecond + 5)
         {

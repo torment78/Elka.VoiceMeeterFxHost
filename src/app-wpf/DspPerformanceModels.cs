@@ -50,9 +50,9 @@ internal sealed record DspPluginUsage(ulong Token, string Name, int Id, double M
     public double PeakBarValue => Math.Clamp(PeakPercent, 0, 100);
     public string BarColor => DspDisplay.UsageColor(Percent);
     public string PeakColor => DspDisplay.UsageColor(PeakPercent);
-    public string PeakDetail => "Highest recorded block for this plugin instance and audio format. Held until the plugin is reloaded or the format changes; not an average or Windows CPU usage.";
+    public string PeakDetail => "Highest block in the current 10-second measurement window. Peaks reset automatically; accumulated overruns and the overrun log are kept. Not Windows CPU usage.";
     public string Detail => $"{Label}\n{StreamName}\nCycle budget: {DspDisplay.Ms(BudgetMilliseconds)}\n" +
-        $"Average: {AverageText}\nPeak (held): {PeakText}\nBudget overruns: {Overruns}\n\n" +
+        $"Average: {AverageText}\nPeak: {PeakText}\nBudget overruns: {Overruns}\n\n" +
         (Worker ? "Worker round-trip time, including IPC and scheduling waits." : "Elapsed node processing time, including its host wrapper.") +
         $"\n{PeakDetail}";
 }
@@ -65,16 +65,20 @@ internal sealed record DspCycleUsage(int Stream, bool Active, double BudgetMilli
     public string BudgetText => Active ? DspDisplay.Ms(BudgetMilliseconds) : "--";
     public string ProcessingText => Active ? DspDisplay.Ms(ProcessingMilliseconds) : "--";
     public string UsageText => Active ? DspDisplay.Percent(Percent) : "--";
+    public double BarValue => Active ? Math.Clamp(Percent, 0, 100) : 0;
+    public string BarColor => !Active ? DspDisplay.UsageColor(0) : Percent >= 100 ? "#EF7779" : UsageColor;
     public string PeakText => Active ? DspDisplay.Ms(PeakMilliseconds) : "--";
     public double PeakPercent => BudgetMilliseconds > 0 ? 100 * PeakMilliseconds / BudgetMilliseconds : 0;
     public string PeakUsageText => Active ? DspDisplay.Percent(PeakPercent) : "--";
     public string UsageColor => DspDisplay.UsageColor(Percent);
     public string PeakColor => DspDisplay.UsageColor(PeakPercent);
+    public string OverrunsText => Active ? Overruns.ToString("N0", CultureInfo.InvariantCulture) : "--";
+    public string OverrunsColor => Overruns > 0 ? "#EF7779" : "#59CED8";
     public string TotalText => Active ? $"{DspDisplay.Ms(PluginMilliseconds)} / {DspDisplay.Percent(100 * PluginMilliseconds / BudgetMilliseconds)}" : "--";
-    public string PeakDetail => "Highest recorded block for this callback and audio format. Held until the host restarts or the format changes; not an average or Windows CPU usage.";
+    public string PeakDetail => "Highest block in the current 10-second measurement window. Peaks reset automatically; accumulated overruns and the overrun log are kept. Not Windows CPU usage.";
     public string EmptyText => Active ? "No VSTs processing in this cycle." : "Waiting for audio.";
     public string Detail => $"{StreamName}\nCycle budget: {BudgetText}\nAverage: {ProcessingText} / {UsageText}\n" +
-        $"Peak (held): {PeakText} / {PeakUsageText}\nBudget overruns: {Overruns}\nAll VSTs - average: {TotalText}\n\n" +
+        $"Peak: {PeakText} / {PeakUsageText}\nBudget overruns: {Overruns}\nAll VSTs - average: {TotalText}\n\n" +
         $"Total includes host work and worker waits; the VST subtotal includes all {PluginCount} processing VSTs.\n{PeakDetail}";
     public static DspCycleUsage Empty(int stream) => new(stream, false, 0, 0, 0, 0, 0, 0, 0, []);
 }
@@ -97,6 +101,8 @@ internal sealed record DspDashboard(IReadOnlyList<DspCycleUsage> Cycles, IReadOn
     ulong DroppedEvents, ulong SkippedMeasurements, string Error = "")
 {
     public static DspDashboard Empty { get; } = new([], [], 0, 0);
+    public double? EnginePeakMicroseconds => Error.Length > 0 ? null : Cycles
+        .Where(cycle => cycle.Active).Select(cycle => (double?)(cycle.PeakMilliseconds * 1000)).Max();
     public IReadOnlyList<DspPluginUsage> Plugins => Cycles.SelectMany(cycle => cycle.Plugins)
         .OrderByDescending(plugin => plugin.Percent).ThenBy(plugin => plugin.Id).ThenBy(plugin => plugin.Stream).ToArray();
     public string Health => Error.Length > 0 ? Error : DroppedEvents + SkippedMeasurements > 0

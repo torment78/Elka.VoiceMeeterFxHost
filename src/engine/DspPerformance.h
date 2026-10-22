@@ -39,6 +39,7 @@ public:
     static constexpr int Slots = 16;
     static constexpr int Rows = Streams * (Slots + 1);
     static constexpr unsigned EventCapacity = 256;
+    static constexpr uint64_t PeakWindowSeconds = 10;
 
     struct NodeTiming
     {
@@ -95,8 +96,16 @@ public:
         if (block.stream < 0) return;
         auto& state = streams[static_cast<size_t>(block.stream)];
         const double budget = static_cast<double>(frequency) * block.samples / block.sampleRate;
-        if (state.values[0].sampleRate != block.sampleRate || state.values[0].blockSize != block.samples)
+        const bool formatChanged = state.values[0].sampleRate != block.sampleRate || state.values[0].blockSize != block.samples;
+        if (formatChanged)
             state.values = {};
+        // Reset peaks only. Lifetime counters and queued overrun events are preserved.
+        if (formatChanged || state.peakWindowStart == 0 || now < state.peakWindowStart ||
+            now - state.peakWindowStart >= frequency * PeakWindowSeconds)
+        {
+            for (auto& value : state.values) value.peakTicks = 0;
+            state.peakWindowStart = now;
+        }
         uint64_t plugins = 0;
         for (int slot = 0; slot < Slots; ++slot)
         {
@@ -207,6 +216,7 @@ private:
         std::atomic_flag writer = ATOMIC_FLAG_INIT;
         std::array<DspTimingSnapshot, Slots + 1> values {};
         uint64_t lastPublish = 0;
+        uint64_t peakWindowStart = 0;
         std::atomic<uint64_t> sequence { 0 }, dropped { 0 }, skipped { 0 };
         std::array<AtomicSnapshot, Slots + 1> published {};
         std::array<DspOverrunEvent, EventCapacity> events {};

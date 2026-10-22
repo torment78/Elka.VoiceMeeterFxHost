@@ -11,13 +11,16 @@ try
     Native.Close(0);
     if (Native.Read(0, new float[8], 8, new float[120], 120, out _, out _) != -1)
         throw new Exception("Read unexpectedly succeeded without a host.");
+    if (Native.EnableDsp(1) != -1 || Native.DspTokens(new ulong[16], 16) != -1 ||
+        Native.ReadDsp(new byte[88 * 68], 68, new byte[56 * 1024], 1024, out _, out _, out _, out _) != -1)
+        throw new Exception("DSP diagnostics unexpectedly initialized a host.");
     var module = Process.GetCurrentProcess().Modules.Cast<ProcessModule>().Single(m =>
         string.Equals(m.ModuleName, "ElkaVoiceMeeterFxHost.Native.dll", StringComparison.OrdinalIgnoreCase));
     using var file = File.OpenRead(module.FileName);
     string hash = Convert.ToHexString(SHA256.HashData(file));
     if (args.Length != 1 || !hash.Equals(args[0], StringComparison.OrdinalIgnoreCase))
         throw new Exception($"Wrong native DLL: {module.FileName}, SHA256 {hash}");
-    Console.WriteLine($"PASS: monitor and Remote readiness exports resolve from the expected DLL: {module.FileName}");
+    Console.WriteLine($"PASS: signal monitor, DSP diagnostics and Remote readiness exports resolve from the expected DLL: {module.FileName}");
     Console.WriteLine("No audio engine or VoiceMeeter connection was started.");
     return 0;
 }
@@ -39,4 +42,11 @@ internal static class Native
     [DllImport(Dll, EntryPoint = "ElkaFx_ReadSignalMonitor", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int Read(int handle, [Out] float[] peaks, int peakCount, [Out] float[] spectrum,
         int bins, out int sampleRate, out ulong sequence);
+    [DllImport(Dll, EntryPoint = "ElkaFx_SetDspPerformanceEnabled", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int EnableDsp(int enabled);
+    [DllImport(Dll, EntryPoint = "ElkaFx_GetDspPluginTokens", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int DspTokens([Out] ulong[] tokens, int capacity);
+    [DllImport(Dll, EntryPoint = "ElkaFx_ReadDspPerformance", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int ReadDsp([Out] byte[] rows, int capacity, [Out] byte[] events, int eventCapacity,
+        out int count, out ulong dropped, out ulong skipped, out ulong frequency);
 }

@@ -2,6 +2,7 @@
 
 #include "engine/AudioBufferView.h"
 #include "engine/SignalMonitor.h"
+#include "engine/DspPerformance.h"
 #include "plugins/RealtimePluginProcessor.h"
 
 #include <array>
@@ -135,8 +136,11 @@ class RealtimeEngine
 {
 public:
     SignalMonitorHub signalMonitors;
+    DspPerformance dspPerformance;
+    uint64_t pluginPerformanceToken(int slot) const noexcept;
     static constexpr int MaxDelayMilliseconds = 10000;
     static constexpr int MaxPluginSlots = 16;
+    static_assert(MaxPluginSlots == DspPerformance::Slots);
     static constexpr int MaxPluginRoutes = 64;
     static constexpr int MaxPluginPins = 32;
     static constexpr int MaxPluginScratchSamples = 8192;
@@ -234,12 +238,12 @@ private:
     bool hasProcessingWork(CallbackStreamKind kind, bool enableInputOutputRoutes, int delayStreamIndex) const noexcept;
     void recordCallbackArrivalJitter(AudioBufferView buffer, int streamIndex) noexcept;
     void refreshRealtimeActivityCounters() noexcept;
-    void processInternal(AudioBufferView buffer, CallbackStreamKind kind, bool enableInputOutputRoutes, int delayStreamIndex) noexcept;
+    void processInternal(AudioBufferView buffer, CallbackStreamKind kind, bool enableInputOutputRoutes, int delayStreamIndex, DspPerformanceScope* timing) noexcept;
     void probeAudioDiscontinuity(AudioBufferView buffer, CallbackStreamKind kind, int streamIndex, int readOffset, int position, bool preferCurrentBuffer) noexcept;
     void probePassthroughResidual(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, int position) noexcept;
     void copyPassthrough(AudioBufferView buffer, int readOffset, bool suppressInputCallbackChannels) noexcept;
     void applyConfiguredDelays(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, int streamIndex, bool suppressInputCallbackChannels) noexcept;
-    void applyPlugins(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, bool suppressInputCallbackChannels, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
+    void applyPlugins(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, bool suppressInputCallbackChannels, std::array<bool, MaxChannels>& pluginOutputWritten, DspPerformanceScope* timing) noexcept;
     void applyPluginPassthroughRoutes(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, int streamIndex, bool suppressInputCallbackChannels, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void processSinglePingInput(AudioBufferView buffer) noexcept;
     void processSinglePingOutput(AudioBufferView buffer) noexcept;

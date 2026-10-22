@@ -28,6 +28,12 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
+**[0.8.3.2 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.2).**
+It adds **DSP Performance** and **DSP Overrun Log** above the normal log: see
+the five busiest VSTs by name and ID, processing time, and audio-cycle usage.
+Overrun detection continues when the sections are collapsed or the app is in
+the tray. See [DSP diagnostics](docs/DspDiagnostics.md) for what the figures mean.
+
 ## Requirements
 
 - Windows x64.
@@ -111,6 +117,8 @@ The full selection rules and examples are in the
 - Optional stable/beta update checks and installer downloads from the
   [Menu](docs/UserGuide.md#application-updates).
 - A custom **FX Host** button inside supported VoiceMeeter versions.
+- [DSP performance and overrun diagnostics](docs/DspDiagnostics.md) in the
+  development build, with separate Input, Output, Main, and ASIO cycle budgets.
 
 ## Documentation
 
@@ -121,6 +129,7 @@ The full selection rules and examples are in the
 - [VBAN-TEXT and VFX commands](VFX_COMMANDS.md)
 - [VST2 setup and scanning](docs/VST2Workflow.md)
 - [Risks and current limitations](docs/RisksAndLimitations.md)
+- [DSP performance and overrun log](docs/DspDiagnostics.md)
 
 ### Building And Development
 

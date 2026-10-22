@@ -1050,6 +1050,13 @@ void RealtimeEngine::clearPluginSlots() noexcept
         clearPluginSlot(slot);
 }
 
+uint64_t RealtimeEngine::pluginPerformanceToken(int slot) const noexcept
+{
+    if (slot < 0 || slot >= MaxPluginSlots) return 0;
+    const auto* processor = pluginSlots[static_cast<size_t>(slot)].processor.load(std::memory_order_acquire);
+    return processor != nullptr ? processor->performanceToken : 0;
+}
+
 void RealtimeEngine::setPluginSlot(
     int slot,
     RealtimePluginProcessor* processor,
@@ -1323,15 +1330,17 @@ void RealtimeEngine::recordCallbackArrivalJitter(AudioBufferView buffer, int str
 }
 void RealtimeEngine::process(AudioBufferView buffer, CallbackStreamKind kind) noexcept
 {
+    DspPerformanceScope timing(dspPerformance, delayStreamIndex(kind), buffer.sampleRate, buffer.samplesPerFrame);
     signalMonitors.capture(static_cast<int>(kind), false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
-    processInternal(buffer, kind, true, delayStreamIndex(kind));
+    processInternal(buffer, kind, true, delayStreamIndex(kind), timing.active() ? &timing : nullptr);
     signalMonitors.capture(static_cast<int>(kind), true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
 }
 
 void RealtimeEngine::processInsertAsio(AudioBufferView buffer) noexcept
 {
+    DspPerformanceScope timing(dspPerformance, 3, buffer.sampleRate, buffer.samplesPerFrame);
     signalMonitors.capture(0, false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
-    processInternal(buffer, CallbackStreamKind::InputInsert, false, 3);
+    processInternal(buffer, CallbackStreamKind::InputInsert, false, 3, timing.active() ? &timing : nullptr);
     signalMonitors.capture(0, true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
 }
 
@@ -1339,7 +1348,8 @@ void RealtimeEngine::processInternal(
     AudioBufferView buffer,
     CallbackStreamKind kind,
     bool enableInputOutputRoutes,
-    int delayStream) noexcept
+    int delayStream,
+    DspPerformanceScope* timing) noexcept
 {
     ensureDenormalFlush();
     ensureRealtimeThreadPriority();
@@ -1501,7 +1511,7 @@ void RealtimeEngine::processInternal(
             };
 
             PluginProcessingGuard guard { pluginStreamActive };
-            applyPlugins(buffer, kind, sourceReadOffset, suppressInputCallbackChannels, pluginOutputWritten);
+            applyPlugins(buffer, kind, sourceReadOffset, suppressInputCallbackChannels, pluginOutputWritten, timing);
         }
         else
         {
@@ -2286,7 +2296,8 @@ void RealtimeEngine::applyPlugins(
     CallbackStreamKind kind,
     int readOffset,
     bool suppressInputCallbackChannels,
-    std::array<bool, MaxChannels>& pluginOutputWritten) noexcept
+    std::array<bool, MaxChannels>& pluginOutputWritten,
+    DspPerformanceScope* timing) noexcept
 {
     const int streamIndex = std::clamp(delayStreamIndex(kind), 0, DelayStreamCount - 1);
     if (activePluginSlotCounts[static_cast<size_t>(streamIndex)].load(std::memory_order_relaxed) <= 0)
@@ -2524,6 +2535,14 @@ void RealtimeEngine::applyPlugins(
 
         if (validInputRoutes > 0)
         {
+            const auto processNode = [&](AudioBufferView block, const PluginRoutingView& routes) noexcept {
+                const auto start = timing != nullptr ? DspPerformance::clock() : 0;
+                const bool result = processor->process(block, routes);
+                if (timing != nullptr)
+                    timing->record(slot, processor->performanceToken, start, DspPerformance::clock(),
+                                   processor->usesWorkerProcess() ? 1 : 0);
+                return result;
+            };
             const bool bypassed = pluginSlot.bypassed.load(std::memory_order_relaxed);
             const bool powered = pluginSlot.powered.load(std::memory_order_relaxed);
             bool rendered = false;
@@ -2551,7 +2570,7 @@ void RealtimeEngine::applyPlugins(
 
                 if (validMonitorOutputRoutes > 0)
                 {
-                    processor->process(
+                    processNode(
                         buffer,
                         PluginRoutingView {
                             inputRoutes.data(),
@@ -2563,7 +2582,7 @@ void RealtimeEngine::applyPlugins(
             }
             else if (powered)
             {
-                rendered = processor->process(
+                rendered = processNode(
                     buffer,
                     PluginRoutingView {
                         inputRoutes.data(),

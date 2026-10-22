@@ -2119,6 +2119,37 @@ __declspec(dllexport) void __cdecl ElkaFx_SetProbeChannels(int inputChannel, int
     target.engine.setProbeChannels(inputChannel, outputChannel);
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_SetDspPerformanceEnabled(int enabled)
+{
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_host) return -1;
+    g_host->engine.dspPerformance.setEnabled(enabled != 0);
+    return 0;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetDspPluginTokens(uint64_t* tokens, int capacity)
+{
+    if (tokens == nullptr || capacity < RealtimeEngine::MaxPluginSlots) return -1;
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_host) return -1;
+    for (int slot = 0; slot < RealtimeEngine::MaxPluginSlots; ++slot)
+        tokens[slot] = g_host->engine.pluginPerformanceToken(slot);
+    return RealtimeEngine::MaxPluginSlots;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_ReadDspPerformance(
+    DspTimingSnapshot* rows, int capacity, DspOverrunEvent* events, int eventCapacity,
+    int* eventCount, uint64_t* dropped, uint64_t* skipped, uint64_t* frequency)
+{
+    if (!rows || capacity < DspPerformance::Rows || !events || eventCapacity < 1 ||
+        !eventCount || !dropped || !skipped || !frequency) return -1;
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_host) return -1;
+    auto& performance = g_host->engine.dspPerformance;
+    *frequency = performance.ticksPerSecond();
+    return performance.read(rows, capacity, events, eventCapacity, *eventCount, *dropped, *skipped);
+}
+
 __declspec(dllexport) void __cdecl ElkaFx_GetStats(NativeStats* stats)
 {
     if (stats == nullptr)

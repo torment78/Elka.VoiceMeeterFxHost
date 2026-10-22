@@ -2600,6 +2600,8 @@ public:
     SandboxedPluginProcessor(const SandboxedPluginProcessor&) = delete;
     SandboxedPluginProcessor& operator=(const SandboxedPluginProcessor&) = delete;
 
+    bool usesWorkerProcess() const noexcept override { return true; }
+
     bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept override
     {
         if (!ready || header == nullptr || audioData == nullptr || requestEvent == nullptr || responseEvent == nullptr)

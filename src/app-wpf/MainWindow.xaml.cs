@@ -320,6 +320,7 @@ public partial class MainWindow : Window
         }
         UpdateLiveStatusText();
         _statusTimer.Start();
+        InitializeDspPerformance();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
         _ = CheckStartupUpdatesAsync();
     }
@@ -3250,6 +3251,7 @@ public partial class MainWindow : Window
 
     private void UpdateLiveStatusText()
     {
+        RefreshDspIdentities();
         TryRegisterVoicemeeterCustomButton();
 
         if (_pluginScanInProgress)
@@ -7741,6 +7743,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RebuildVstNodeList()
     {
+        RefreshDspIdentities();
         VstNodesPanel.Children.Clear();
         foreach (var node in _settings.PluginNodes.Where(NodeBelongsToCurrentCanvas))
         {
@@ -13858,6 +13861,7 @@ private void RefreshEndpointButtonSelection()
 
     protected override void OnClosed(EventArgs e)
     {
+        StopDspPerformance();
         _isShuttingDown = true;
         _updateLifetime.Cancel();
         _updateLifetime.Dispose();

@@ -155,3 +155,10 @@ add_executable(PluginEditorChecks EXCLUDE_FROM_ALL tests/PluginEditorChecks/main
 target_include_directories(PluginEditorChecks PRIVATE src)
 target_compile_definitions(PluginEditorChecks PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 NOMINMAX)
 target_link_libraries(PluginEditorChecks PRIVATE juce::juce_audio_processors)
+
+# Synthetic callback checks never attach to VoiceMeeter or open an audio device.
+add_executable(DspPerformanceChecks EXCLUDE_FROM_ALL
+    tests/DspPerformanceChecks/main.cpp src/engine/RealtimeEngine.cpp)
+target_include_directories(DspPerformanceChecks PRIVATE src)
+target_compile_definitions(DspPerformanceChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(DspPerformanceChecks PRIVATE Avrt)

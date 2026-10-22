@@ -1,6 +1,7 @@
 <Window x:Class="Elka.VoiceMeeterFxHost.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Elka.VoiceMeeterFxHost.App"
         Title="Elka VoiceMeeter FX Host"
         Icon="Assets/VoicemeeterDelay.ico"
         Width="1632"
@@ -466,6 +467,8 @@
                             </Grid>
                         </Grid>
                     </Border>
+
+                    <local:DspDiagnosticsPanel x:Name="DspDiagnostics" />
 
                     <Border Style="{StaticResource PanelCard}">
                         <Grid>

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/AudioBufferView.h"
+#include <atomic>
+#include <cstdint>
 
 namespace elka
 {
@@ -57,6 +59,11 @@ class RealtimePluginProcessor
 public:
     virtual ~RealtimePluginProcessor() = default;
 
+    const uint64_t performanceToken = nextPerformanceToken.fetch_add(1, std::memory_order_relaxed);
+    virtual bool usesWorkerProcess() const noexcept { return false; }
+
     virtual bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept = 0;
+private:
+    inline static std::atomic<uint64_t> nextPerformanceToken { 1 };
 };
 }

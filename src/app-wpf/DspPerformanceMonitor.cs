@@ -61,7 +61,7 @@ internal sealed class DspPerformanceMonitor : IDisposable
                     Volatile.Write(ref _snapshot, history.Update(rows.AsSpan(0, count), events.AsSpan(0, eventCount),
                         frequency, (ulong)Stopwatch.GetTimestamp(), DateTimeOffset.Now, dropped, skipped, WriteLog));
                 }
-                _stop.Wait(50);
+                _stop.Wait(TimeSpan.FromSeconds(1.0 / 60));
             }
             // Drain already-recorded events once more before the native host is disposed.
             ElkaFx_SetDspPerformanceEnabled(0);

@@ -31,7 +31,7 @@
                 <StackPanel x:Name="PerformanceContent" Visibility="Collapsed" Margin="0,12,0,0">
                     <ComboBox x:Name="StreamPicker" HorizontalAlignment="Left" Width="160" Margin="0,0,0,10"
                               SelectedIndex="0" SelectionChanged="StreamPicker_SelectionChanged"
-                              ToolTip="Show the five highest-usage VSTs across the app, or within one callback. Cycle totals are never added across callbacks.">
+                              ToolTip="Browse processing VSTs ranked by average budget usage. Each callback keeps its own average, peak and budget.">
                         <ComboBoxItem Content="All VSTs" />
                         <ComboBoxItem Content="Input callback" />
                         <ComboBoxItem Content="Output callback" />
@@ -39,50 +39,85 @@
                         <ComboBoxItem Content="ASIO Patch" />
                     </ComboBox>
                     <StackPanel x:Name="CycleContent">
-                        <TextBlock x:Name="CycleName" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,0,0,6" />
-                        <Grid Margin="0,0,0,14" ToolTip="{Binding Detail}">
-                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Audio cycle" Style="{StaticResource MutedText}" />
-                                <TextBlock Text="{Binding BudgetText}" FontSize="21" FontWeight="SemiBold" Margin="0,3,0,0" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                <TextBlock x:Name="TotalCycleHeading" Text="Busiest cycle processing" Style="{StaticResource MutedText}" />
-                                <TextBlock Text="{Binding UsageText}" FontSize="21" FontWeight="SemiBold"
-                                           HorizontalAlignment="Right" Margin="0,3,0,0" />
-                            </StackPanel>
-                        </Grid>
-                        <TextBlock x:Name="PerformanceEmpty" Text="{Binding EmptyText}" Style="{StaticResource MutedText}" Margin="0,2,0,12" />
-                        <ItemsControl x:Name="PluginRows">
+                        <ItemsControl x:Name="CallbackRows" Margin="0,0,0,8">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Margin="0,0,0,13" ToolTip="{Binding Detail}">
-                                        <Grid Margin="0,0,0,6">
-                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                                       Margin="0,0,8,0" ToolTip="{Binding Label}" />
-                                            <TextBlock Grid.Column="1" Text="{Binding IdText}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,0,12,0" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="2" Text="{Binding Values}" FontSize="12" VerticalAlignment="Center" />
+                                    <StackPanel DataContext="{Binding Value}" Background="Transparent" Margin="0,0,0,12"
+                                                ToolTip="{Binding Detail}" ToolTipService.InitialShowDelay="300" ToolTipService.ShowDuration="60000">
+                                        <TextBlock Text="{Binding StreamName}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,7" />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,8,0">
+                                                <TextBlock Text="Cycle budget" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding BudgetText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                                <TextBlock Text="Average" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding ProcessingText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                                <TextBlock Text="{Binding UsageText}" FontSize="12" Foreground="{Binding UsageColor}" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Peak (held)" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding PeakText}" FontSize="16" FontWeight="SemiBold" Foreground="{Binding PeakColor}" Margin="0,4,0,0" />
+                                                <TextBlock Text="{Binding PeakUsageText}" FontSize="12" Foreground="{Binding PeakColor}" Margin="0,2,0,0" />
+                                            </StackPanel>
                                         </Grid>
-                                        <ProgressBar Style="{StaticResource DspBar}" Value="{Binding BarValue, Mode=OneWay}" Foreground="{Binding BarColor}" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <TextBlock x:Name="PerformanceEmpty" Text="{Binding EmptyText}" Style="{StaticResource MutedText}" Margin="0,2,0,12" />
+                        <ScrollViewer x:Name="PluginScroller" MaxHeight="390" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                            <ScrollViewer.Resources>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource StableVerticalScrollBar}" />
+                            </ScrollViewer.Resources>
+                        <ItemsControl x:Name="PluginRows">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border DataContext="{Binding Value}" Height="78" Padding="0,0,8,10" Background="Transparent"
+                                            ToolTip="{Binding Detail}" ToolTipService.InitialShowDelay="300" ToolTipService.ShowDuration="60000">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock TextTrimming="CharacterEllipsis" Margin="0,0,8,0">
+                                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  /  " Foreground="{StaticResource MutedTextBrush}" /><Run Text="{Binding StreamName, Mode=OneWay}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding IdText}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="16" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Average" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding AverageText}" FontSize="12" Margin="0,3,0,5" />
+                                                <ProgressBar Style="{StaticResource DspBar}" Value="{Binding BarValue, Mode=OneWay}" Foreground="{Binding BarColor}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Peak (held)" FontSize="11" Style="{StaticResource MutedText}" />
+                                                <TextBlock Text="{Binding PeakText}" FontSize="12" Foreground="{Binding PeakColor}" Margin="0,3,0,5" />
+                                                <ProgressBar Style="{StaticResource DspBar}" Value="{Binding PeakBarValue, Mode=OneWay}" Foreground="{Binding PeakColor}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        </ScrollViewer>
                         <Border BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0"
-                                ToolTip="All VST node calls in the selected callback, including worker round trips; excludes other host work. Top five ranked by recent average cycle usage.">
+                                ToolTip="All VST node calls in the selected callback, including worker round trips; excludes other host work.">
                             <StackPanel>
                             <Grid x:Name="SingleCycleTotal">
                                 <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="Total measured VST time" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBlock Text="All VSTs - average" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
                                 <TextBlock Grid.Column="1" Text="{Binding TotalText}" FontWeight="SemiBold" FontSize="12" />
                             </Grid>
                             <StackPanel x:Name="AllCycleTotals">
-                                <TextBlock Text="Total measured VST time by cycle" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,7" />
+                                <TextBlock Text="All VSTs - average by callback" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,7" />
                                 <ItemsControl x:Name="CycleTotalsList">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Margin="0,3,0,0" ToolTip="{Binding Detail}">
+                                            <Grid DataContext="{Binding Value}" Margin="0,3,0,0" ToolTip="{Binding Detail}">
                                                 <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                 <TextBlock Text="{Binding StreamName}" Style="{StaticResource MutedText}" FontSize="12" />
                                                 <TextBlock Grid.Column="1" Text="{Binding TotalText}" FontWeight="SemiBold" FontSize="12" />

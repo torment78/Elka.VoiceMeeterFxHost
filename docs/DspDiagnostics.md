@@ -1,24 +1,40 @@
 # DSP Performance And Overrun Log
 
-Available from the unsigned 0.8.3.2 development build. Both sections are above
-the normal Log in the sidebar and start collapsed. Click a section heading to
-open or close it.
+Available from the unsigned 0.8.3.2 development build, with the average/peak
+display and refresh improvements described below added in 0.8.3.3. Both sections
+are above the normal Log in the sidebar and start collapsed. Click a section
+heading to open or close it.
 
 ## DSP Performance
 
-- **All VSTs** shows the five processing VSTs using the largest percentage of
-  their audio-cycle budget. Each row includes the plugin name and its VST ID.
+- **All VSTs** lists processing VSTs ranked by average percentage of their
+  audio-cycle budget. Five rows fit in the list; scroll to inspect the rest.
+  Each row includes the plugin name, callback and VST ID on one line.
 - Select **Input**, **Output**, **Main**, or **ASIO Patch** to inspect one cycle.
-- **Audio cycle** is the available time for one block: samples divided by sample
+- **Cycle budget** is the available time for one block: samples divided by sample
   rate. For example, 256 samples at 48,000 Hz gives about 5.333 ms.
-- Row percentages and times show recent average elapsed node-processing time.
-  Hover over a row for its peak and accumulated budget-overrun count.
-- The header includes host processing work. The VST subtotal includes all
+- **Average** shows recent average elapsed processing per block in milliseconds
+  and as a percentage of the cycle budget. **Peak (held)** shows the highest
+  recorded block in both units, without averaging it down or hiding it between
+  refreshes. Peak values remain visible until the audio format changes or the
+  host restarts; a plugin reload also resets that plugin's peak.
+- Every callback summary and VST row shows its average and held peak. Values
+  over 100% remain visible in red; only the bar length stops at 100%.
+- Hover anywhere over a row for its full name, ID, callback, cycle budget,
+  average, held peak, accumulated budget-overrun count and measurement details.
+  These hover details stay available as the values refresh.
+- Callback processing includes host work. The VST average subtotal includes all
   processing VSTs in that cycle, not only the five displayed rows.
 
 Input, Output, Main, and ASIO have separate budgets. **All VSTs** shows the
-busiest cycle in its header and lists the VST totals by cycle below; it does
-not add independent callbacks into one percentage.
+average and peak for every active callback above the plugin list, and lists
+the VST average totals by callback below. It does not add independent callbacks
+into one percentage or add individual plugin peaks into a fictitious total peak.
+
+An occasional 7.2 ms block can coexist with a low average, but consistently
+taking 7.2 ms against a 2.667 ms budget must produce an average around 270%.
+The average and peak are different measurements; the overrun log preserves
+individual bad blocks instead of the average.
 
 These are elapsed processing measurements, not Windows Task Manager CPU
 percentages. A sandboxed plugin's time includes communication with its worker
@@ -45,6 +61,12 @@ Detection and file logging continue when both panels are closed or FX Host is
 in the tray. Panel rendering stops while hidden. Formatting and disk writes
 run outside the audio threads; the audio path records only bounded timing data.
 Timing measurement has a small overhead and does not change routing or samples.
+
+The visible dashboard refreshes at a target of 30 Hz (about every 33.3 ms). Native
+timing snapshots are published at up to 60 Hz on audio-block boundaries, and the
+background reader polls about every 16.7 ms. Overrun detection still runs per block;
+repeated log entries are grouped roughly once per second. These are diagnostic
+refresh intervals, not audio sample rates or buffer settings.
 
 The persistent log is stored at:
 

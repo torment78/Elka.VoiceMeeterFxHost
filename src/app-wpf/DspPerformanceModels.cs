@@ -33,31 +33,49 @@ internal static class DspDisplay
     };
     public static string Ms(double value) => value.ToString("0.000", CultureInfo.InvariantCulture) + " ms";
     public static string Percent(double value) => value.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+    public static string UsageColor(double percent) => percent > 100 ? "#EF7779" : percent >= 80 ? "#F0AF55" : "#59CED8";
 }
 
 internal sealed record DspPluginUsage(ulong Token, string Name, int Id, double Milliseconds,
-    double Percent, double PeakMilliseconds, ulong Overruns, bool Worker)
+    double Percent, double PeakMilliseconds, ulong Overruns, bool Worker, double BudgetMilliseconds, int Stream)
 {
     public string Label => Id >= 0 ? $"{Name}  |  ID {Id}" : Name;
     public string IdText => Id >= 0 ? $"ID {Id}" : "";
     public string Values => $"{DspDisplay.Percent(Percent)} / {DspDisplay.Ms(Milliseconds)}";
+    public string AverageText => $"{DspDisplay.Ms(Milliseconds)} / {DspDisplay.Percent(Percent)}";
+    public double PeakPercent => BudgetMilliseconds > 0 ? 100 * PeakMilliseconds / BudgetMilliseconds : 0;
+    public string PeakText => $"{DspDisplay.Ms(PeakMilliseconds)} / {DspDisplay.Percent(PeakPercent)}";
+    public string StreamName => DspDisplay.StreamName(Stream);
     public double BarValue => Math.Clamp(Percent, 0, 100);
-    public string BarColor => Percent > 100 ? "#EF7779" : Percent >= 80 ? "#F0AF55" : "#59CED8";
-    public string Detail => $"Peak: {DspDisplay.Ms(PeakMilliseconds)}. Budget overruns: {Overruns}. " +
-        (Worker ? "Worker round-trip time, including IPC and scheduling waits." : "Elapsed node processing time, including its host wrapper.");
+    public double PeakBarValue => Math.Clamp(PeakPercent, 0, 100);
+    public string BarColor => DspDisplay.UsageColor(Percent);
+    public string PeakColor => DspDisplay.UsageColor(PeakPercent);
+    public string PeakDetail => "Highest recorded block for this plugin instance and audio format. Held until the plugin is reloaded or the format changes; not an average or Windows CPU usage.";
+    public string Detail => $"{Label}\n{StreamName}\nCycle budget: {DspDisplay.Ms(BudgetMilliseconds)}\n" +
+        $"Average: {AverageText}\nPeak (held): {PeakText}\nBudget overruns: {Overruns}\n\n" +
+        (Worker ? "Worker round-trip time, including IPC and scheduling waits." : "Elapsed node processing time, including its host wrapper.") +
+        $"\n{PeakDetail}";
 }
 
 internal sealed record DspCycleUsage(int Stream, bool Active, double BudgetMilliseconds,
     double ProcessingMilliseconds, double Percent, double PluginMilliseconds, double PeakMilliseconds,
-    ulong Overruns, int PluginCount, IReadOnlyList<DspPluginUsage> TopPlugins)
+    ulong Overruns, int PluginCount, IReadOnlyList<DspPluginUsage> Plugins)
 {
     public string StreamName => DspDisplay.StreamName(Stream);
     public string BudgetText => Active ? DspDisplay.Ms(BudgetMilliseconds) : "--";
+    public string ProcessingText => Active ? DspDisplay.Ms(ProcessingMilliseconds) : "--";
     public string UsageText => Active ? DspDisplay.Percent(Percent) : "--";
-    public string TotalText => Active ? $"{DspDisplay.Ms(PluginMilliseconds)} / {DspDisplay.Ms(BudgetMilliseconds)}" : "--";
+    public string PeakText => Active ? DspDisplay.Ms(PeakMilliseconds) : "--";
+    public double PeakPercent => BudgetMilliseconds > 0 ? 100 * PeakMilliseconds / BudgetMilliseconds : 0;
+    public string PeakUsageText => Active ? DspDisplay.Percent(PeakPercent) : "--";
+    public string UsageColor => DspDisplay.UsageColor(Percent);
+    public string PeakColor => DspDisplay.UsageColor(PeakPercent);
+    public string TotalText => Active ? $"{DspDisplay.Ms(PluginMilliseconds)} / {DspDisplay.Percent(100 * PluginMilliseconds / BudgetMilliseconds)}" : "--";
+    public string PeakDetail => "Highest recorded block for this callback and audio format. Held until the host restarts or the format changes; not an average or Windows CPU usage.";
     public string EmptyText => Active ? "No VSTs processing in this cycle." : "Waiting for audio.";
-    public string Detail => $"{DspDisplay.StreamName(Stream)}. Peak: {DspDisplay.Ms(PeakMilliseconds)}. " +
-        $"Budget overruns: {Overruns}. Total includes host work and worker waits; the VST subtotal includes all {PluginCount} processing VSTs, not only the top five.";
+    public string Detail => $"{StreamName}\nCycle budget: {BudgetText}\nAverage: {ProcessingText} / {UsageText}\n" +
+        $"Peak (held): {PeakText} / {PeakUsageText}\nBudget overruns: {Overruns}\nAll VSTs - average: {TotalText}\n\n" +
+        $"Total includes host work and worker waits; the VST subtotal includes all {PluginCount} processing VSTs.\n{PeakDetail}";
     public static DspCycleUsage Empty(int stream) => new(stream, false, 0, 0, 0, 0, 0, 0, 0, []);
 }
 
@@ -79,8 +97,8 @@ internal sealed record DspDashboard(IReadOnlyList<DspCycleUsage> Cycles, IReadOn
     ulong DroppedEvents, ulong SkippedMeasurements, string Error = "")
 {
     public static DspDashboard Empty { get; } = new([], [], 0, 0);
-    public IReadOnlyList<DspPluginUsage> TopPlugins => Cycles.SelectMany(cycle => cycle.TopPlugins)
-        .OrderByDescending(plugin => plugin.Percent).ThenBy(plugin => plugin.Id).Take(5).ToArray();
+    public IReadOnlyList<DspPluginUsage> Plugins => Cycles.SelectMany(cycle => cycle.Plugins)
+        .OrderByDescending(plugin => plugin.Percent).ThenBy(plugin => plugin.Id).ThenBy(plugin => plugin.Stream).ToArray();
     public string Health => Error.Length > 0 ? Error : DroppedEvents + SkippedMeasurements > 0
         ? $"Event queue overflow: {DroppedEvents}. Skipped measurements: {SkippedMeasurements}." : "";
 }
@@ -161,7 +179,8 @@ internal sealed class DspPerformanceHistory
             else
             {
                 var identity = Identity(row.Token, row.Slot);
-                _usage[key] = new(row.Token, identity.Name, identity.Id, milliseconds, percent, peak, row.Overruns, (row.Flags & 1) != 0);
+                _usage[key] = new(row.Token, identity.Name, identity.Id, milliseconds, percent, peak, row.Overruns,
+                    (row.Flags & 1) != 0, row.BlockSize * 1000.0 / row.SampleRate, row.Stream);
             }
         }
         var cycles = new List<DspCycleUsage>();
@@ -174,7 +193,7 @@ internal sealed class DspPerformanceHistory
                 .Select(pair => _identities.TryGetValue(pair.Value.Token, out var identity)
                     ? pair.Value with { Name = identity.Name, Id = identity.Id } : pair.Value)
                 .OrderByDescending(plugin => plugin.Percent).ThenBy(plugin => plugin.Id).ToArray();
-            cycles.Add(cycle with { PluginCount = plugins.Length, TopPlugins = plugins.Take(5).ToArray() });
+            cycles.Add(cycle with { PluginCount = plugins.Length, Plugins = plugins });
         }
         if (_lastFlush == 0) _lastFlush = now;
         if (flush || Age(now, _lastFlush) >= frequency)

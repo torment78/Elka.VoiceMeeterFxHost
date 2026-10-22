@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -9,9 +11,17 @@ public partial class DspDiagnosticsPanel : UserControl
     internal event Action? ClearLogRequested;
     private DspDashboard _snapshot = DspDashboard.Empty;
     private IReadOnlyList<DspOverrunEntry> _shownEntries = [];
+    private readonly ObservableCollection<DspDisplayRow<DspPluginUsage>> _pluginRows = [];
+    private readonly ObservableCollection<DspDisplayRow<DspCycleUsage>> _callbackRows = [];
     internal bool IsExpanded => PerformanceContent.Visibility == Visibility.Visible || OverrunContent.Visibility == Visibility.Visible;
 
-    public DspDiagnosticsPanel() { InitializeComponent(); }
+    public DspDiagnosticsPanel()
+    {
+        InitializeComponent();
+        PluginRows.ItemsSource = _pluginRows;
+        CallbackRows.ItemsSource = _callbackRows;
+        CycleTotalsList.ItemsSource = _callbackRows;
+    }
 
     internal void Update(DspDashboard snapshot)
     {
@@ -28,15 +38,12 @@ public partial class DspDiagnosticsPanel : UserControl
             var cycle = (all ? snapshot.Cycles.OrderByDescending(item => item.Percent).FirstOrDefault() :
                 snapshot.Cycles.FirstOrDefault(item => item.Stream == selected)) ?? DspCycleUsage.Empty(Math.Max(0, selected));
             CycleContent.DataContext = cycle;
-            var plugins = all ? snapshot.TopPlugins : cycle.TopPlugins;
-            PluginRows.ItemsSource = plugins;
+            var plugins = all ? snapshot.Plugins : cycle.Plugins;
+            SyncRows(_pluginRows, plugins, item => (item.Token, item.Stream));
             PerformanceEmpty.Visibility = plugins.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            CycleName.Text = cycle.Active ? cycle.StreamName : "";
-            CycleName.Visibility = all && cycle.Active ? Visibility.Visible : Visibility.Collapsed;
-            TotalCycleHeading.Text = all ? "Busiest cycle processing" : "Total cycle processing";
+            SyncRows(_callbackRows, all && snapshot.Cycles.Count > 0 ? snapshot.Cycles : new[] { cycle }, item => item.Stream);
             SingleCycleTotal.Visibility = all ? Visibility.Collapsed : Visibility.Visible;
             AllCycleTotals.Visibility = all ? Visibility.Visible : Visibility.Collapsed;
-            CycleTotalsList.ItemsSource = snapshot.Cycles;
         }
         if (OverrunContent.Visibility == Visibility.Visible &&
             (_shownEntries.Count != snapshot.Overruns.Count || _shownEntries.FirstOrDefault() != snapshot.Overruns.FirstOrDefault()))
@@ -47,6 +54,26 @@ public partial class DspDiagnosticsPanel : UserControl
         }
         HealthText.Text = snapshot.Health;
         HealthText.Visibility = snapshot.Health.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Keep item containers alive so a display refresh does not dismiss hover details
+    // or replace the scrollable list while the user is reading it.
+    private static void SyncRows<T, TKey>(ObservableCollection<DspDisplayRow<T>> target,
+        IReadOnlyList<T> source, Func<T, TKey> key) where T : class
+    {
+        for (var index = 0; index < source.Count; ++index)
+        {
+            var wanted = key(source[index]);
+            var found = index;
+            while (found < target.Count && !EqualityComparer<TKey>.Default.Equals(key(target[found].Value), wanted)) ++found;
+            if (found == target.Count) target.Insert(index, new(source[index]));
+            else
+            {
+                if (found != index) target.Move(found, index);
+                target[index].Update(source[index]);
+            }
+        }
+        while (target.Count > source.Count) target.RemoveAt(target.Count - 1);
     }
 
     private void PerformanceToggle_Click(object sender, RoutedEventArgs e)
@@ -67,5 +94,17 @@ public partial class DspDiagnosticsPanel : UserControl
     private void StreamPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (CycleContent != null) Update(_snapshot);
+    }
+}
+
+internal sealed class DspDisplayRow<T>(T value) : INotifyPropertyChanged where T : class
+{
+    public T Value { get; private set; } = value;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public void Update(T value)
+    {
+        if (EqualityComparer<T>.Default.Equals(Value, value)) return;
+        Value = value;
+        PropertyChanged?.Invoke(this, new(nameof(Value)));
     }
 }

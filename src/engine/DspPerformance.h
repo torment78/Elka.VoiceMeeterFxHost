@@ -118,8 +118,8 @@ public:
             push(state, { block.stream, -1, block.sampleRate, block.samples, 0, now, elapsed, budget });
 
         // Every block contributes to counters and overrun events. Publishing the
-        // display snapshot at 20 Hz avoids bouncing dozens of cache lines per block.
-        if (state.lastPublish == 0 || now - state.lastPublish >= frequency / 20)
+        // display snapshot at 60 Hz avoids bouncing dozens of cache lines per block.
+        if (state.lastPublish == 0 || now - state.lastPublish >= frequency / 60)
         {
             state.sequence.fetch_add(1, std::memory_order_acq_rel);
             for (int row = 0; row <= Slots; ++row)

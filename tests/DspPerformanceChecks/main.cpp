@@ -107,6 +107,32 @@ void collectorChecks()
     check(result.eventCount == 0, "event drain does not repeat");
 }
 
+void publicationRateChecks()
+{
+    auto monitor = std::make_unique<DspPerformance>();
+    monitor->setEnabled(true);
+    const auto second = monitor->ticksPerSecond();
+    const auto ms = second / 1000;
+    const auto publish = [&](uint64_t start) {
+        DspPerformance::Block block;
+        monitor->begin(block, 0, 48000, 240, start);
+        block.nodes[0] = { 41, ms, start + ms, 0 };
+        monitor->finish(block, start + ms);
+    };
+    Readback result;
+    publish(second);
+    result.read(*monitor);
+    check(result.rows[0].calls == 1, "first timing snapshot published immediately");
+    publish(second + second / 60 - 1);
+    result.read(*monitor);
+    check(result.rows[0].calls == 1, "publication remains bounded before one sixtieth second");
+    publish(second + second / 60);
+    result.read(*monitor);
+    check(result.rows[0].calls == 3 && result.rows[1].calls == 3, "60 Hz publication includes every measured block");
+    check(result.rows[0].elapsedTicks == 3 * ms && result.rows[1].peakTicks == ms,
+          "publication frequency does not change measurements");
+}
+
 class GainProcessor final : public RealtimePluginProcessor
 {
 public:
@@ -248,6 +274,7 @@ void overheadChecks()
 int main()
 {
     collectorChecks();
+    publicationRateChecks();
     engineChecks();
     concurrentChecks();
     overheadChecks();

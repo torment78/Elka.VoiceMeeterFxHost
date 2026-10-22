@@ -12,7 +12,7 @@ public partial class MainWindow
     {
         _dspMonitor = new DspPerformanceMonitor(RuntimeLog.LogDirectory);
         RefreshDspIdentities();
-        _dspDisplayTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
+        _dspDisplayTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.0 / 30) };
         _dspDisplayTimer.Tick += (_, _) => DspDiagnostics.Update(_dspMonitor.Snapshot);
         DspDiagnostics.ExpansionChanged += UpdateDspDisplayActivity;
         DspDiagnostics.ClearLogRequested += _dspMonitor.ClearLog;

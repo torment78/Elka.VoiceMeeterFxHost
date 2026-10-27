@@ -18,7 +18,7 @@ internal static class Program
         CheckRegistrationPolicy();
         var result = 0;
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-        app.Startup += (_, _) => app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+        app.Startup += (_, _) => app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(async () =>
         {
             try
             {
@@ -31,19 +31,21 @@ internal static class Program
                 Check(IsWindowVisible(handle) == !StartHidden, "native window visibility agrees");
                 Check(window.VisibleTransitions == (StartHidden ? 0 : 1), "tray startup never flashes visible");
                 Check(window.ShowInTaskbar == !StartHidden, "tray startup stays off taskbar");
-                SendMessage(handle, 0x0111, new IntPtr(0x4f58), new IntPtr(1));
-                Check(window.CommandCount == 1, "command received without first opening from tray");
-                // Keep test windows off screen when checking the later show/hide cycle.
-                window.WindowState = WindowState.Normal;
-                window.Show();
-                window.Hide();
+                await CheckButtonToggle(window, handle);
                 Check(new WindowInteropHelper(window).Handle == handle, "show/hide preserves the command HWND");
                 Check(window.SourceCount == 1, "show/hide does not install another message hook");
-                SendMessage(handle, 0x0111, new IntPtr(0x4f58), new IntPtr(1));
-                Check(window.CommandCount == 2, "hidden receiver still handles subsequent commands");
+
+                window.HideForTest();
+                PressButton(handle);
+                // Allow the delayed toggle to start, then shut down while it waits.
+                await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                window.BeginShutdownForTest();
+                var restores = window.RestoreCount;
                 window.Close();
+                await Task.Delay(200);
+                Check(window.RestoreCount == restores, "pending button press cannot reopen during shutdown");
                 Check(!IsWindow(handle), "shutdown destroys the command HWND");
-                Console.WriteLine($"PASS: {_checks} tray startup and registration checks ({string.Join(' ', args)}). No audio engine started.");
+                Console.WriteLine($"PASS: {_checks} tray startup, button toggle, and registration checks ({string.Join(' ', args)}). No audio engine started.");
             }
             catch (Exception ex)
             {
@@ -57,6 +59,56 @@ internal static class Program
         }));
         app.Run();
         return result;
+    }
+
+    private static async Task CheckButtonToggle(MainWindow window, IntPtr handle)
+    {
+        var initiallyVisible = window.IsVisible;
+        SendMessage(handle, 0x0111, new IntPtr(MainWindow.ButtonCommandForTest), IntPtr.Zero);
+        SendMessage(handle, 0x0111, new IntPtr(0x1234), new IntPtr(1));
+        SendMessage(handle, 0x8001, new IntPtr(MainWindow.ButtonCommandForTest), new IntPtr(1));
+        await Task.Delay(200);
+        Check(window.IsVisible == initiallyVisible && window.HideCount == 0 && window.RestoreCount == 0,
+            "release and unrelated messages do not toggle");
+
+        PressButton(handle);
+        await Task.Delay(200);
+        Check(window.IsVisible != initiallyVisible, "first press toggles without opening from the tray first");
+        PressButton(handle);
+        await Task.Delay(200);
+        Check(window.IsVisible == initiallyVisible, "second press toggles back");
+
+        window.HideForTest();
+        for (var click = 0; click < 3; ++click)
+        {
+            PressButton(handle);
+            await Task.Delay(200);
+            Check(window.IsVisible && window.ShowInTaskbar && IsWindowVisible(handle), "press restores from tray");
+            Check(window.WindowState == (StartMaximized ? WindowState.Maximized : WindowState.Normal),
+                "restore preserves normal or maximized state");
+            PressButton(handle);
+            await Task.Delay(200);
+            Check(!window.IsVisible && !window.ShowInTaskbar && !IsWindowVisible(handle), "next press hides to tray");
+            Check(!window.LastHideShowHint, "toggle does not show a tray notification");
+        }
+
+        window.ActivateFromSecondInstance();
+        Check(window.IsVisible, "second-instance activation still opens");
+        window.ActivateFromSecondInstance();
+        Check(window.IsVisible, "second-instance activation never hides an open window");
+        window.WindowState = WindowState.Minimized;
+        PressButton(handle);
+        await Task.Delay(200);
+        Check(window.IsVisible && window.WindowState != WindowState.Minimized, "minimized window is restored, not hidden");
+        PressButton(handle);
+        await Task.Delay(200);
+        Check(!window.IsVisible, "restored minimized window hides on the following click");
+    }
+
+    private static void PressButton(IntPtr handle)
+    {
+        SendMessage(handle, 0x0111, new IntPtr(MainWindow.ButtonCommandForTest), new IntPtr(1));
+        SendMessage(handle, 0x0111, new IntPtr(MainWindow.ButtonCommandForTest), IntPtr.Zero);
     }
 
     private static void CheckRegistrationPolicy()
@@ -110,12 +162,17 @@ internal static class Program
 
 namespace Elka.VoiceMeeterFxHost.App
 {
-    public sealed class MainWindow : Window
+    public sealed partial class MainWindow : Window
     {
         private HwndSource? _source;
+        private bool _isShuttingDown;
+        private WindowState _windowStateBeforeTray;
+        internal static int ButtonCommandForTest => VoicemeeterFxHostCommandId;
         public bool ShouldStartHiddenToTray => Program.StartHidden;
         public int SourceCount { get; private set; }
-        public int CommandCount { get; private set; }
+        public int RestoreCount { get; private set; }
+        public int HideCount { get; private set; }
+        public bool LastHideShowHint { get; private set; }
         public int VisibleTransitions { get; private set; }
 
         public MainWindow()
@@ -124,9 +181,11 @@ namespace Elka.VoiceMeeterFxHost.App
             Height = 100;
             Left = -10000;
             Top = -10000;
-            ShowActivated = false;
+            // WPF requires activation when a window is first shown maximized.
+            ShowActivated = Program.StartMaximized && !ShouldStartHiddenToTray;
             ShowInTaskbar = !ShouldStartHiddenToTray;
             WindowState = Program.StartMaximized ? WindowState.Maximized : WindowState.Normal;
+            _windowStateBeforeTray = WindowState;
             IsVisibleChanged += (_, _) => { if (IsVisible) ++VisibleTransitions; };
         }
 
@@ -135,17 +194,32 @@ namespace Elka.VoiceMeeterFxHost.App
             base.OnSourceInitialized(e);
             ++SourceCount;
             _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
-            _source.AddHook(CommandHook);
+            _source.AddHook(WindowMessageHook);
         }
 
-        private IntPtr CommandHook(IntPtr hwnd, int msg, IntPtr wparam, IntPtr lparam, ref bool handled)
+        internal void BeginShutdownForTest() => _isShuttingDown = true;
+
+        internal void HideForTest() => HideToTray(showHint: false);
+
+        private void HideToTray(bool showHint = true)
         {
-            if (msg == 0x0111 && wparam.ToInt64() == 0x4f58 && lparam.ToInt64() == 1)
+            ++HideCount;
+            LastHideShowHint = showHint;
+            if (WindowState != WindowState.Minimized)
             {
-                ++CommandCount;
-                handled = true;
+                _windowStateBeforeTray = WindowState;
             }
-            return IntPtr.Zero;
+            ShowInTaskbar = false;
+            Hide();
+        }
+
+        private void RestoreFromTray()
+        {
+            ++RestoreCount;
+            WindowState = WindowState.Normal;
+            ShowInTaskbar = true;
+            Show();
+            WindowState = _windowStateBeforeTray;
         }
     }
 

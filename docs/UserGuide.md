@@ -282,7 +282,10 @@ the app is launched, whether Windows starts it automatically or it is opened
 manually.
 
 Supported VoiceMeeter versions can show a custom **FX Host** button. The button
-opens or restores the app and is removed during a normal FX Host shutdown.
+opens or restores the app on one click and hides it back to the tray on the
+next click while the window is open. This does not stop audio processing and
+works independently of **Close to Tray**, which controls the window's X button.
+The VoiceMeeter button is removed during a normal FX Host shutdown.
 
 Command-line startup also supports tray/hidden launch arguments used by external
 launchers.

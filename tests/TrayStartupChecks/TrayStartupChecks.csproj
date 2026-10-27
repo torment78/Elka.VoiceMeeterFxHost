@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/app-wpf/App.xaml.cs" Link="App.xaml.cs" />
+    <Compile Include="../../src/app-wpf/MainWindow.Activation.cs" Link="MainWindow.Activation.cs" />
     <Compile Include="../../src/app-wpf/VoicemeeterButtonRegistration.cs" Link="VoicemeeterButtonRegistration.cs" />
   </ItemGroup>
 </Project>

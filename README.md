@@ -28,7 +28,11 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.4 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.4).**
+**[0.8.3.5 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.5).**
+The **FX Host** button in VoiceMeeter now toggles the window: click to open or
+restore it, then click again to hide it to the system tray. Audio keeps running;
+the tray menu's **Open** action and normal shutdown behavior are unchanged.
+
 The top bar shows **Running/Stop**, sample rate, buffer size and cycle time.
 CPU, RAM and the resettable engine peak are now in **DSP Performance**, alongside
 callback usage bars. Expand **Individual** for VST averages, with stable ID order

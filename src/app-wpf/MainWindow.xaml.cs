@@ -124,10 +124,8 @@ public partial class MainWindow : Window
 
     private static readonly bool InsertAsioPatchControlEnabled = true;
     private const string InsertAsioPatchDisabledMessage = "ASIO Patch is disabled in this build.";
-    private const int WindowsMessageCommand = 0x0111;
     private const int VoicemeeterCustomButtonIndex = 0;
     private const int VoicemeeterCustomButtonPushType = 1;
-    private const int VoicemeeterFxHostCommandId = 0x4546;
     private const int DefaultVbanControlPort = 6981;
     private const string DefaultVbanControlStreamName = "Command1";
     private const string PluginChoiceDragFormat = "ElkaVoiceMeeterFxHost.PluginChoice";
@@ -450,11 +448,6 @@ public partial class MainWindow : Window
                 Forms.ToolTipIcon.Info);
             _trayCloseHintShown = true;
         }
-    }
-
-    internal void ActivateFromSecondInstance()
-    {
-        BringFxHostWindowToFront();
     }
 
     private void RestoreFromTray()
@@ -3311,61 +3304,6 @@ public partial class MainWindow : Window
         _windowMessageSource = HwndSource.FromHwnd(_voicemeeterCommandWindow);
         _windowMessageSource?.AddHook(WindowMessageHook);
         TryRegisterVoicemeeterCustomButton(force: true);
-    }
-
-    private IntPtr WindowMessageHook(
-        IntPtr windowHandle,
-        int message,
-        IntPtr wParam,
-        IntPtr lParam,
-        ref bool handled)
-    {
-        if (message != WindowsMessageCommand)
-        {
-            return IntPtr.Zero;
-        }
-
-        var commandId = unchecked((int)wParam.ToInt64()) & 0xffff;
-        if (commandId != VoicemeeterFxHostCommandId)
-        {
-            return IntPtr.Zero;
-        }
-
-        handled = true;
-        if (lParam.ToInt64() != 0)
-        {
-            Dispatcher.BeginInvoke((Action)BringFxHostWindowToFrontAfterVoiceMeeterClick);
-        }
-
-        return IntPtr.Zero;
-    }
-
-    private async void BringFxHostWindowToFrontAfterVoiceMeeterClick()
-    {
-        await Task.Delay(100);
-        if (!_isShuttingDown)
-        {
-            BringFxHostWindowToFront();
-        }
-    }
-
-    private void BringFxHostWindowToFront()
-    {
-        if (!IsVisible || !ShowInTaskbar)
-        {
-            RestoreFromTray();
-            return;
-        }
-
-        if (WindowState == WindowState.Minimized)
-        {
-            WindowState = _windowStateBeforeTray == WindowState.Maximized
-                ? WindowState.Maximized
-                : WindowState.Normal;
-        }
-
-        Activate();
-        Focus();
     }
 
     private void TryRegisterVoicemeeterCustomButton(bool force = false)

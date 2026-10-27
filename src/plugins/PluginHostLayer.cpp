@@ -1,4 +1,5 @@
 #include "plugins/PluginHostLayer.h"
+#include "plugins/PluginContainerIdentity.h"
 
 #include <algorithm>
 #include <array>
@@ -1480,7 +1481,9 @@ PluginSummary toSummary(const juce::PluginDescription& description)
         description.manufacturerName.toStdString(),
         description.pluginFormatName.toStdString(),
         description.category.toStdString(),
-        description.fileOrIdentifier.toStdString(),
+        description.hasSharedContainer
+            ? pluginContainerIdentifier(description.fileOrIdentifier.toStdString(), static_cast<uint32_t>(description.uniqueId))
+            : description.fileOrIdentifier.toStdString(),
         description.numInputChannels,
         description.numOutputChannels,
         description.isInstrument
@@ -1512,9 +1515,7 @@ std::string pluginKey(const PluginSummary& summary)
 
 std::string pluginKey(const juce::PluginDescription& description)
 {
-    return description.pluginFormatName.toStdString() + "|" +
-           description.name.toStdString() + "|" +
-           description.fileOrIdentifier.toStdString();
+    return pluginKey(toSummary(description));
 }
 
 std::string decodeJsonStringValue(const std::string& text, size_t quoteIndex)
@@ -1686,6 +1687,65 @@ juce::PluginDescription nameOnlyDescriptionForCandidate(const juce::String& form
     return description;
 }
 
+bool isWaveShell(const juce::String& identifier)
+{
+    return juce::File(identifier).getFileName().startsWithIgnoreCase("WaveShell");
+}
+
+std::wstring configuredWorkerPath();
+
+bool scanWaveShellIsolated(const juce::String& format, const juce::String& path,
+                          juce::OwnedArray<juce::PluginDescription>& found, std::string& error)
+{
+    const auto worker = configuredWorkerPath();
+    if (worker.empty() || !std::filesystem::exists(worker))
+    {
+        error = "Plugin worker is missing; WaveShell could not be scanned safely.";
+        return false;
+    }
+
+    juce::TemporaryFile result(".xml");
+    juce::ChildProcess child;
+    const juce::StringArray arguments { juce::String(worker.c_str()), "scan-shell", format, path,
+                                        result.getFile().getFullPathName() };
+    if (!child.start(arguments, 0))
+    {
+        error = "Could not start the WaveShell scanner.";
+        return false;
+    }
+    if (!child.waitForProcessToFinish(120000))
+    {
+        child.kill();
+        child.waitForProcessToFinish(5000);
+        error = "WaveShell scan timed out after 120 seconds. Check Waves installation and licensing.";
+        return false;
+    }
+
+    const auto xml = juce::XmlDocument::parse(result.getFile());
+    if (child.getExitCode() != 0 || xml == nullptr || !xml->hasTagName("ELKA_SHELL_SCAN"))
+    {
+        error = xml != nullptr ? xml->getStringAttribute("error").toStdString() : std::string();
+        if (error.empty()) error = "WaveShell scan failed or the scanner exited unexpectedly.";
+        return false;
+    }
+    for (auto* entry = xml->getFirstChildElement(); entry != nullptr; entry = entry->getNextElement())
+    {
+        auto description = std::make_unique<juce::PluginDescription>();
+        if (!description->loadFromXml(*entry) || description->name.isEmpty() ||
+            !description->pluginFormatName.equalsIgnoreCase(format) ||
+            normalizedPluginIdentifier(description->fileOrIdentifier) != normalizedPluginIdentifier(path))
+        {
+            error = "WaveShell scanner returned an invalid plugin description.";
+            found.clear();
+            return false;
+        }
+        description->hasSharedContainer = true;
+        found.add(description.release());
+    }
+    if (found.isEmpty()) error = "WaveShell did not report any available plugins.";
+    return !found.isEmpty();
+}
+
 void scanFormatIntoList(
     const juce::String& formatName,
     const std::vector<std::string>& paths,
@@ -1699,6 +1759,7 @@ void scanFormatIntoList(
     const PluginScanProgressCallback& progress)
 {
     const auto formatText = formatName.toStdString();
+    std::set<std::string> scannedShells;
     for (const auto& path : paths)
     {
         if (progress)
@@ -1733,6 +1794,42 @@ void scanFormatIntoList(
             const auto normalizedCandidate = normalizedPluginIdentifier(fileOrIdentifier);
             const auto candidateKey = pluginCandidateKey(formatName, fileOrIdentifier);
             const auto candidateSignature = pluginCandidateSignature(fileOrIdentifier);
+            if (isWaveShell(fileOrIdentifier))
+            {
+                if (!scannedShells.insert(normalizedCandidate).second) continue;
+                if (progress)
+                    progress("Reading individual WaveShell plugins", fileOrIdentifier.toStdString(),
+                             static_cast<int>(candidateIndex + 1), static_cast<int>(candidates.size()));
+                juce::OwnedArray<juce::PluginDescription> found;
+                std::string scanError;
+                if (!scanWaveShellIsolated(formatName, fileOrIdentifier, found, scanError))
+                {
+                    report << "  WaveShell scan failed: " << fileOrIdentifier << " | " << scanError << "\n";
+                    continue; // Retain previously verified entries if a rescan fails.
+                }
+                for (size_t i = descriptions.size(); i-- > 0;)
+                {
+                    if (descriptions[i].pluginFormatName == formatName &&
+                        normalizedPluginIdentifier(descriptions[i].fileOrIdentifier) == normalizedCandidate)
+                    {
+                        seen.erase(pluginKey(summaries[i]));
+                        descriptions.erase(descriptions.begin() + static_cast<std::ptrdiff_t>(i));
+                        summaries.erase(summaries.begin() + static_cast<std::ptrdiff_t>(i));
+                        lazyDescriptions.erase(lazyDescriptions.begin() + static_cast<std::ptrdiff_t>(i));
+                    }
+                }
+                for (auto* description : found)
+                {
+                    if (!seen.insert(pluginKey(*description)).second) continue;
+                    summaries.push_back(toSummary(*description));
+                    descriptions.push_back(*description);
+                    lazyDescriptions.push_back(0);
+                    report << "  WaveShell plugin: " << description->name << "\n";
+                }
+                knownFiles.insert(normalizedCandidate);
+                checkedCandidates[candidateKey] = candidateSignature;
+                continue;
+            }
             if (knownFiles.find(normalizedCandidate) != knownFiles.end())
             {
                 report << "  Cached: " << fileOrIdentifier.toStdString() << "\n";
@@ -1822,7 +1919,10 @@ bool probePluginFileInternal(
     const int preparedSampleRate = std::clamp(sampleRate, 8000, 192000);
     const int preparedBlockSize = std::clamp(blockSize, 64, 8192);
     const auto formatName = juce::String::fromUTF8(format.c_str());
-    const auto identifier = juce::String::fromUTF8(fileOrIdentifier.c_str());
+    PluginContainerIdentity identity;
+    try { identity = parsePluginContainerIdentity(fileOrIdentifier); }
+    catch (const std::exception& ex) { error = ex.what(); return false; }
+    const auto identifier = juce::String::fromUTF8(identity.path.c_str());
 
     if (progress)
         progress("Probe starting", fileOrIdentifier);
@@ -1871,7 +1971,13 @@ bool probePluginFileInternal(
             return false;
         }
 
-        const auto description = *found[0];
+        const auto* selected = selectContainerPlugin(found, identity.uid);
+        if (selected == nullptr)
+        {
+            error = "The selected plugin is no longer present in this WaveShell. Rescan the plugin folder.";
+            return false;
+        }
+        const auto description = *selected;
         const auto detail = description.name.toStdString() + " | " + description.fileOrIdentifier.toStdString();
         if (progress)
             progress("Probe creating plugin instance", detail);
@@ -2365,7 +2471,10 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
     const auto inputLayout = layoutForId(inputLayoutId, safeInputPins);
     const auto outputLayout = layoutForId(outputLayoutId, safeOutputPins);
     const auto formatName = juce::String::fromUTF8(format.c_str());
-    const auto identifier = juce::String::fromUTF8(fileOrIdentifier.c_str());
+    PluginContainerIdentity identity;
+    try { identity = parsePluginContainerIdentity(fileOrIdentifier); }
+    catch (const std::exception& ex) { error = ex.what(); return nullptr; }
+    const auto identifier = juce::String::fromUTF8(identity.path.c_str());
 
     juce::OwnedArray<juce::PluginDescription> found;
     if (formatName.equalsIgnoreCase("VST3"))
@@ -2403,7 +2512,13 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
         return nullptr;
     }
 
-    const auto description = *found[0];
+    const auto* selected = selectContainerPlugin(found, identity.uid);
+    if (selected == nullptr)
+    {
+        error = "The selected plugin is no longer present in this WaveShell. Rescan the plugin folder.";
+        return nullptr;
+    }
+    const auto description = *selected;
     juce::String creationError;
     auto instance = createPluginInstanceForDescription(
         description,
@@ -3265,6 +3380,54 @@ struct WorkerPluginSession
 std::mutex workerSessionsMutex;
 std::map<int, std::unique_ptr<WorkerPluginSession>> workerSessions;
 int nextWorkerSessionHandle = 1;
+#endif
+}
+
+bool scanPluginContainerToFile(const std::string& format, const std::string& path,
+                               const std::string& outputPath, std::string& error)
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    juce::XmlElement result("ELKA_SHELL_SCAN");
+    try
+    {
+        juce::ScopedJuceInitialiser_GUI juceInitialiser;
+        juce::OwnedArray<juce::PluginDescription> found;
+        const auto identifier = juce::String::fromUTF8(path.c_str());
+        if (format == "VST3")
+        {
+            juce::VST3PluginFormat pluginFormat;
+            for (const auto& candidate : vst3ResolutionCandidates(identifier))
+            {
+                pluginFormat.findAllTypesForFile(found, candidate);
+                if (!found.isEmpty()) break;
+            }
+        }
+#if ELKA_ENABLE_VST2_HOST && JUCE_INTERNAL_HAS_VST
+        else if (format == "VST" || format == "VST2")
+        {
+            juce::VSTPluginFormat pluginFormat;
+            pluginFormat.findAllTypesForFile(found, identifier);
+        }
+#endif
+        else
+            error = "Unsupported plugin format: " + format;
+
+        if (found.isEmpty() && error.empty()) error = "The shell did not report any loadable plugins.";
+        for (auto* description : found)
+        {
+            description->hasSharedContainer = true;
+            result.addChildElement(description->createXml().release());
+        }
+    }
+    catch (const std::exception& ex) { error = ex.what(); }
+    catch (...) { error = "The shell failed while reading its plugin list."; }
+    if (!error.empty()) result.setAttribute("error", error);
+    if (!result.writeTo(juce::File(juce::String::fromUTF8(outputPath.c_str()))))
+        error = "Could not write the WaveShell scan result.";
+    return error.empty();
+#else
+    error = "Plugin hosting is unavailable.";
+    return false;
 #endif
 }
 
@@ -4173,6 +4336,12 @@ bool PluginHostLayer::resolvePluginDescription(size_t index)
     const auto candidate = impl->descriptions[index];
     const auto identifier = candidate.fileOrIdentifier;
     const auto formatName = candidate.pluginFormatName;
+
+    if (isWaveShell(identifier))
+    {
+        error = "Rescan the WaveShell folder and choose an individual Waves plugin from the list.";
+        return false;
+    }
 
     juce::OwnedArray<juce::PluginDescription> found;
     try

@@ -28,10 +28,13 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.5 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.5).**
-The **FX Host** button in VoiceMeeter now toggles the window: click to open or
-restore it, then click again to hide it to the system tray. Audio keeps running;
-the tray menu's **Open** action and normal shutdown behavior are unchanged.
+**[0.8.3.6 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.6).**
+WaveShell scanning now lists individual Waves VST2/VST3 plugins, including
+separate mono/stereo variants. Run **Scan** again after updating, then select
+the plugin by name. Its identity is retained for reloads and saved setups.
+Canvas scrolling now follows nodes dragged beyond its edges without shifting
+the other nodes, and dragging the VST-list scrollbar no longer starts a plugin
+drag. Audio processing and callback behavior are unchanged.
 
 The top bar shows **Running/Stop**, sample rate, buffer size and cycle time.
 CPU, RAM and the resettable engine peak are now in **DSP Performance**, alongside

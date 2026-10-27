@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/app-wpf/RoutingCanvasViewport.cs" Link="RoutingCanvasViewport.cs" />
+    <Page Include="../../src/app-wpf/Themes/ElkaTheme.xaml" Link="Themes/ElkaTheme.xaml" />
+    <None Include="../../src/app-wpf/MainWindow.xaml" Link="MainWindow.source.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../src/app-wpf/MainWindow.xaml.cs" Link="MainWindow.source.cs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

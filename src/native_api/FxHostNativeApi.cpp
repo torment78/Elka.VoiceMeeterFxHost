@@ -2619,6 +2619,16 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginLoadProgress(wchar_t* buffer, 
     return g_pluginLoadProgress.running ? 1 : 0;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_ScanPluginContainer(
+    const wchar_t* format, const wchar_t* path, const wchar_t* outputPath,
+    wchar_t* status, int statusChars)
+{
+    std::string error;
+    const auto ok = scanPluginContainerToFile(narrowWide(format), narrowWide(path), narrowWide(outputPath), error);
+    writeWide(ok ? L"WaveShell scan complete." : widenUtf8(error), status, statusChars);
+    return ok ? 0 : -1;
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_ProbePluginFile(
     const wchar_t* format,
     const wchar_t* fileOrIdentifier,

@@ -147,8 +147,8 @@ public partial class MainWindow : Window
     private const string ConnectionGroupOutputToNode = "group-output-to-node";
     private const string ConnectionGroupOutputToGroupInput = "group-output-to-group-input";
     private const int GroupSidechainPinBase = 100;
-    private const double VstCanvasMinWidth = 900.0;
-    private const double VstCanvasMinHeight = 920.0;
+    private readonly RoutingCanvasViewport _vstCanvasViewport = new();
+    private bool _canvasRebuildAfterDrag;
     private const double VstCanvasWallMargin = 24.0;
     private const double VstEndpointStackTop = 57.0;
     private const double VstEndpointCardWidth = 124.0;
@@ -264,7 +264,10 @@ public partial class MainWindow : Window
         {
             if (_workspaceView == WorkspaceView.Vst)
             {
-                RebuildRoutingCanvas();
+                if (InitializeVstCanvasLayoutWidth())
+                    RebuildRoutingCanvas();
+                else
+                    UpdateVstCanvasSize();
             }
         };
 
@@ -927,7 +930,7 @@ public partial class MainWindow : Window
         ShowPluginScanWindow();
         UpdatePluginScanProgress(writeHeartbeat: false);
         _pluginScanTimer.Start();
-        AppendLog($"Plugin scan started ({_pluginScanLabel}). This pass reads lightweight VST names only; full metadata is resolved when a VST is added.");
+        AppendLog($"Plugin scan started ({_pluginScanLabel}). Reading VST names and individual WaveShell plugins; WaveShell discovery runs in an isolated worker.");
 
         try
         {
@@ -1832,22 +1835,15 @@ public partial class MainWindow : Window
 
     private void VstCanvasScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (MainPageScrollViewer.ScrollableHeight <= 0 || e.Delta == 0)
-        {
-            return;
-        }
+        e.Handled = RoutingCanvasViewport.ScrollWheel(VstCanvasScrollViewer, MainPageScrollViewer,
+            e.Delta, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+    }
 
-        const double pixelsPerWheelNotch = 48.0;
-        var requestedOffset = MainPageScrollViewer.VerticalOffset -
-            ((double)e.Delta / Mouse.MouseWheelDeltaForOneLine * pixelsPerWheelNotch);
-        var targetOffset = Math.Clamp(requestedOffset, 0.0, MainPageScrollViewer.ScrollableHeight);
-        if (Math.Abs(targetOffset - MainPageScrollViewer.VerticalOffset) < 0.5)
-        {
-            return;
-        }
-
-        MainPageScrollViewer.ScrollToVerticalOffset(targetOffset);
-        e.Handled = true;
+    private void VstCanvasScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_workspaceView == WorkspaceView.Vst &&
+            (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0 || e.HorizontalChange != 0 || e.VerticalChange != 0))
+            UpdateVstCanvasSize();
     }
 
     private void RoutingCanvas_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
@@ -6726,6 +6722,14 @@ private void RefreshEndpointButtonSelection()
 
     private void PluginListBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        _pluginListDragChoice = null;
+        var clickedChoice = PluginChoiceFromElement(e.OriginalSource as DependencyObject);
+        if (clickedChoice is null)
+        {
+            // Scrollbar/thumb and empty-space gestures must never drag the selected VST.
+            return;
+        }
+
         if (PluginBrowserBusy)
         {
             _pluginListDragChoice = null;
@@ -6733,7 +6737,6 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        var clickedChoice = PluginChoiceFromElement(e.OriginalSource as DependencyObject);
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && clickedChoice is not null)
         {
             AddQuickGroupPluginChoice(clickedChoice);
@@ -6743,8 +6746,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         _pluginListDragStartPoint = e.GetPosition(null);
-        _pluginListDragChoice = clickedChoice ??
-                                PluginListBox.SelectedItem as PluginChoice;
+        _pluginListDragChoice = clickedChoice;
     }
 
     private void PluginListBox_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -6761,6 +6763,13 @@ private void RefreshEndpointButtonSelection()
 
     private void PluginListBox_MouseMove(object sender, MouseEventArgs e)
     {
+        if (e.LeftButton != MouseButtonState.Pressed ||
+            Mouse.Captured is System.Windows.Controls.Primitives.Thumb or System.Windows.Controls.Primitives.ScrollBar)
+        {
+            _pluginListDragChoice = null;
+            return;
+        }
+
         if (PluginBrowserBusy)
         {
             _pluginListDragChoice = null;
@@ -6863,12 +6872,15 @@ private void RefreshEndpointButtonSelection()
     {
         while (source is not null)
         {
-            if (source is FrameworkElement { DataContext: PluginChoice choice })
+            if (source is System.Windows.Controls.Primitives.ScrollBar or System.Windows.Controls.Primitives.Thumb)
+                return null;
+
+            if (source is ListBoxItem { DataContext: PluginChoice choice })
             {
                 return choice;
             }
 
-            source = VisualTreeHelper.GetParent(source);
+            source = source is Visual ? VisualTreeHelper.GetParent(source) : LogicalTreeHelper.GetParent(source);
         }
 
         return null;
@@ -7275,9 +7287,18 @@ private void RefreshEndpointButtonSelection()
 
         if (!string.IsNullOrWhiteSpace(savedIdentifier))
         {
-            return choices.FirstOrDefault(choice =>
+            var exact = choices.FirstOrDefault(choice =>
                 CanonicalPluginIdentifier(choice.Identifier).Equals(savedIdentifier, StringComparison.Ordinal) &&
                 FormatMatches(choice));
+            if (exact is not null || PluginIdentity.HasContainerId(savedNode.PluginIdentifier)) return exact;
+
+            // Older saves identified a WaveShell by path only. Migrate only an unambiguous name match.
+            var shellMatches = choices.Where(choice =>
+                PluginIdentity.HasContainerId(choice.Identifier) &&
+                CanonicalPluginIdentifier(PluginIdentity.FilePart(choice.Identifier)) == savedIdentifier &&
+                PluginDisplayBaseName(choice.Name).Equals(savedBaseName, StringComparison.OrdinalIgnoreCase) &&
+                FormatMatches(choice)).ToArray();
+            return shellMatches.Length == 1 ? shellMatches[0] : null;
         }
 
         var byIndexAndName = choices.FirstOrDefault(choice =>
@@ -7313,26 +7334,7 @@ private void RefreshEndpointButtonSelection()
 
     private static string CanonicalPluginIdentifier(string? identifier)
     {
-        var value = (identifier ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        value = value.Replace('/', '\\');
-        try
-        {
-            if (value.Contains(":\\", StringComparison.Ordinal) || value.StartsWith(@"\\", StringComparison.Ordinal))
-            {
-                value = System.IO.Path.GetFullPath(value);
-            }
-        }
-        catch
-        {
-            // Some plugin identifiers are not filesystem paths. Keep the raw identifier normalized.
-        }
-
-        return value.TrimEnd('\\').ToUpperInvariant();
+        return PluginIdentity.Canonical(identifier);
     }
 
     private static void ApplySavedNodeVisualState(PluginNodeSnapshot restored, PluginNodeSnapshot saved)
@@ -8159,6 +8161,12 @@ private void RefreshEndpointButtonSelection()
 
     private void RebuildRoutingCanvas()
     {
+        if (IsVstCanvasDragging)
+        {
+            _canvasRebuildAfterDrag = true;
+            return;
+        }
+        _canvasRebuildAfterDrag = false;
         RefreshSignalMonitors();
         if (_workspaceView == WorkspaceView.Channels)
         {
@@ -8176,6 +8184,7 @@ private void RefreshEndpointButtonSelection()
         _canvasConnectionPaths.Clear();
         _dragElementOrigins.Clear();
         RoutingCanvas.Children.Clear();
+        InitializeVstCanvasLayoutWidth();
         UpdateVstCanvasSize();
         DrawCanvasCards();
         DrawPluginGroups();
@@ -8202,7 +8211,7 @@ private void RefreshEndpointButtonSelection()
         var rightMode = CanvasEndpointMode(outputSide: true);
         var leftEndpoints = VoicemeeterIoLayout.GetEndpoints(leftMode, _kind);
         var rightEndpoints = VoicemeeterIoLayout.GetEndpoints(rightMode, _kind);
-        var rightX = Math.Max(560.0, RoutingCanvas.Width - VstEndpointCardWidth - VstCanvasWallMargin);
+        var rightX = VstRightEndpointX;
         var y = VstEndpointStackTop;
         foreach (var endpoint in leftEndpoints)
         {
@@ -8222,53 +8231,71 @@ private void RefreshEndpointButtonSelection()
 
     private void UpdateVstCanvasSize()
     {
-        var viewportWidth = VstCanvasScrollViewer.ViewportWidth;
-        var availableWidth = double.IsFinite(viewportWidth) && viewportWidth > 0
-            ? viewportWidth - 1.0
-            : VstWorkspaceView.ActualWidth - SystemParameters.VerticalScrollBarWidth - 3.0;
-        var width = double.IsFinite(availableWidth) && availableWidth > 0
-            ? Math.Max(VstCanvasMinWidth, availableWidth)
-            : VstCanvasMinWidth;
-
-        RoutingCanvas.Width = width;
-        RoutingCanvas.Height = CalculateVstCanvasHeight();
+        _vstCanvasViewport.UpdateExtent(VstCanvasScrollViewer, RoutingCanvas, VstCanvasCardBounds(),
+            IsVstCanvasDragging);
     }
 
-    private double CalculateVstCanvasHeight()
-    {
-        var leftMode = CanvasEndpointMode(outputSide: false);
-        var rightMode = CanvasEndpointMode(outputSide: true);
-        var endpointBottom = Math.Max(
-            VstEndpointStackBottom(leftMode, outputSide: false),
-            VstEndpointStackBottom(rightMode, outputSide: true));
-        var nodeBottom = _settings.PluginNodes
-            .Where(NodeBelongsToCurrentCanvas)
-            .Where(node => GroupForNode(node.Slot) is null)
-            .Select(static node => node.Y + VstNodeHeight(node) + 96.0)
-            .DefaultIfEmpty(0.0)
-            .Max();
-        var groupBottom = _settings.PluginGroups
-            .Where(GroupBelongsToCurrentCanvas)
-            .Select(group => group.Y + VstGroupHeight(group) + 96.0)
-            .DefaultIfEmpty(0.0)
-            .Max();
+    private bool IsVstCanvasDragging =>
+        _draggingNode is not null || _draggingGroup is not null || _draggingEndpointKey is not null;
 
-        return Math.Max(VstCanvasMinHeight, Math.Max(endpointBottom, Math.Max(nodeBottom, groupBottom)) + 160.0);
+    private void FinishVstCanvasDrag()
+    {
+        UpdateVstCanvasSize();
+        if (_canvasRebuildAfterDrag)
+            RebuildRoutingCanvas();
+        else
+            RefreshVstCanvasSelection();
+        QueueSave();
     }
 
-    private double VstEndpointStackBottom(CallbackMode mode, bool outputSide)
+    private void RefreshVstCanvasSelection()
     {
-        var y = VstEndpointStackTop;
-        var bottom = y;
-        foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(mode, _kind))
+        foreach (var (slot, elements) in _nodeVisualElements)
         {
-            var pinCount = CanvasPinCount(mode, endpoint, outputSide);
-            var endpointY = y + EndpointCanvasYOffset(endpoint.Key(mode));
-            bottom = Math.Max(bottom, endpointY + VstEndpointCardHeight(mode, endpoint, pinCount));
-            y += VstEndpointCardSpacing(pinCount);
+            var border = elements.OfType<Border>().FirstOrDefault();
+            if (border is null) continue;
+            var selected = _selectedPluginNodeSlot == slot || _quickGroupNodeSlots.Contains(slot);
+            border.BorderBrush = (Brush)FindResource(selected ? "VolumeAccentBrush" : "RouteAccentBrush");
+            border.BorderThickness = new Thickness(selected ? 2 : 1);
+        }
+        foreach (var group in _settings.PluginGroups.Where(GroupBelongsToCurrentCanvas))
+        {
+            if (!_groupVisualElements.TryGetValue(group.Id, out var elements)) continue;
+            var border = elements.OfType<Border>().FirstOrDefault();
+            if (border is null) continue;
+            var selected = _selectedPluginGroupId == group.Id || _quickGroupIds.Contains(group.Id);
+            border.BorderBrush = selected ? (Brush)FindResource("VolumeAccentBrush") :
+                HueStrokeBrush(GroupDisplayHue(group)) ?? (Brush)FindResource("RouteAccentBrush");
+            border.BorderThickness = new Thickness(selected ? 2 : 1);
+        }
+    }
+
+    private bool InitializeVstCanvasLayoutWidth() => _vstCanvasViewport.InitializeLayoutWidth(
+        VstWorkspaceView.ActualWidth - VstWorkspaceView.BorderThickness.Left - VstWorkspaceView.BorderThickness.Right);
+
+    private double VstRightEndpointX =>
+        Math.Max(560.0, _vstCanvasViewport.LayoutWidth - VstEndpointCardWidth - VstCanvasWallMargin);
+
+    private IEnumerable<Rect> VstCanvasCardBounds()
+    {
+        foreach (var outputSide in new[] { false, true })
+        {
+            var mode = CanvasEndpointMode(outputSide);
+            var y = VstEndpointStackTop;
+            foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(mode, _kind))
+            {
+                var pinCount = CanvasPinCount(mode, endpoint, outputSide);
+                yield return new Rect(outputSide ? VstRightEndpointX : VstCanvasWallMargin,
+                    y + EndpointCanvasYOffset(endpoint.Key(mode)), VstEndpointCardWidth,
+                    VstEndpointCardHeight(mode, endpoint, pinCount));
+                y += VstEndpointCardSpacing(pinCount);
+            }
         }
 
-        return bottom;
+        foreach (var node in _settings.PluginNodes.Where(NodeBelongsToCurrentCanvas).Where(node => GroupForNode(node.Slot) is null))
+            yield return new Rect(node.X, node.Y, VstNodeWidth, VstNodeHeight(node));
+        foreach (var group in _settings.PluginGroups.Where(GroupBelongsToCurrentCanvas))
+            yield return new Rect(group.X, group.Y, VstGroupWidth, VstGroupHeight(group));
     }
 
     private double VstEndpointCardHeight(CallbackMode mode, IoEndpoint endpoint, int pinCount)
@@ -8732,6 +8759,7 @@ private void RefreshEndpointButtonSelection()
         border.MouseLeftButtonDown += Group_MouseLeftButtonDown;
         border.MouseMove += Group_MouseMove;
         border.MouseLeftButtonUp += Group_MouseLeftButtonUp;
+        border.LostMouseCapture += VstNode_LostMouseCapture;
         border.DragOver += Group_DragOver;
         border.Drop += Group_Drop;
         Canvas.SetLeft(border, group.X);
@@ -9476,6 +9504,7 @@ private void RefreshEndpointButtonSelection()
             border.MouseLeftButtonDown += Node_MouseLeftButtonDown;
             border.MouseMove += Node_MouseMove;
             border.MouseLeftButtonUp += Node_MouseLeftButtonUp;
+            border.LostMouseCapture += VstNode_LostMouseCapture;
             Canvas.SetLeft(border, node.X);
             Canvas.SetTop(border, node.Y);
             RoutingCanvas.Children.Add(border);
@@ -12699,8 +12728,7 @@ private void RefreshEndpointButtonSelection()
 
         var point = e.GetPosition(RoutingCanvas);
         var minX = (int)(VstCanvasWallMargin + VstEndpointCardWidth + 34);
-        var maxX = (int)Math.Max(minX, RoutingCanvas.Width - VstEndpointCardWidth - VstGroupWidth - (VstCanvasWallMargin * 2));
-        _draggingGroup.X = Math.Clamp((int)(point.X - _dragOffset.X), minX, maxX);
+        _draggingGroup.X = Math.Max(minX, (int)(point.X - _dragOffset.X));
         _draggingGroup.Y = Math.Max(30, (int)(point.Y - _dragOffset.Y));
         if (!TryGetDragOriginMinimum(out var origin))
         {
@@ -12713,20 +12741,20 @@ private void RefreshEndpointButtonSelection()
             _draggingGroup.Y - origin.Y);
         UpdateGroupPinPositionCache(_draggingGroup, _draggingGroup.X - DragPreviewXCorrection, _draggingGroup.Y);
         RefreshCanvasConnectionPaths(connection => ConnectionTouchesGroup(connection, _draggingGroup.Id));
+        UpdateVstCanvasSize();
         e.Handled = true;
     }
 
     private void Group_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        _draggingGroup = null;
+        _dragElementOrigins.Clear();
         if (sender is Border border)
         {
             border.ReleaseMouseCapture();
         }
 
-        _draggingGroup = null;
-        _dragElementOrigins.Clear();
-        RebuildRoutingCanvas();
-        QueueSave();
+        FinishVstCanvasDrag();
         e.Handled = true;
     }
 
@@ -12771,8 +12799,7 @@ private void RefreshEndpointButtonSelection()
 
         var point = e.GetPosition(RoutingCanvas);
         var minX = (int)(VstCanvasWallMargin + VstEndpointCardWidth + 34);
-        var maxX = (int)Math.Max(minX, RoutingCanvas.Width - VstEndpointCardWidth - VstNodeWidth - (VstCanvasWallMargin * 2));
-        _draggingNode.X = Math.Clamp((int)(point.X - _dragOffset.X), minX, maxX);
+        _draggingNode.X = Math.Max(minX, (int)(point.X - _dragOffset.X));
         _draggingNode.Y = Math.Max(30, (int)(point.Y - _dragOffset.Y));
         _nodeDragMoved = true;
         if (!TryGetDragOriginMinimum(out var origin))
@@ -12786,20 +12813,20 @@ private void RefreshEndpointButtonSelection()
             _draggingNode.Y - origin.Y);
         UpdateNodePinPositionCache(_draggingNode, _draggingNode.X - DragPreviewXCorrection, _draggingNode.Y);
         RefreshCanvasConnectionPaths(connection => ConnectionTouchesNode(connection, _draggingNode.Slot));
+        UpdateVstCanvasSize();
         e.Handled = true;
     }
 
     private void Node_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is Border border)
-        {
-            border.ReleaseMouseCapture();
-        }
-
         var droppedNode = _draggingNode;
         var dropPoint = e.GetPosition(RoutingCanvas);
         _draggingNode = null;
         _dragElementOrigins.Clear();
+        if (sender is Border border)
+        {
+            border.ReleaseMouseCapture();
+        }
         if (droppedNode is not null &&
             _nodeDragMoved &&
             GroupForNode(droppedNode.Slot) is null &&
@@ -12832,9 +12859,18 @@ private void RefreshEndpointButtonSelection()
         }
 
         _nodeDragMoved = false;
-        RebuildRoutingCanvas();
-        QueueSave();
+        FinishVstCanvasDrag();
         e.Handled = true;
+    }
+
+    private void VstNode_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_draggingNode is null && _draggingGroup is null) return;
+        _draggingNode = null;
+        _draggingGroup = null;
+        _nodeDragMoved = false;
+        _dragElementOrigins.Clear();
+        FinishVstCanvasDrag();
     }
 
     private PluginGroupSnapshot? GroupAtPoint(Point point, CallbackMode mode)
@@ -13649,6 +13685,7 @@ private void RefreshEndpointButtonSelection()
         var offset = Math.Max(-320.0, _endpointDragStartOffset + deltaY);
         _settings.EndpointCanvasYOffsets[_draggingEndpointKey] = offset;
         MoveDragElements(0, offset - _endpointDragStartOffset);
+        UpdateVstCanvasSize();
         e.Handled = true;
     }
 

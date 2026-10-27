@@ -102,6 +102,21 @@ format without performing a heavy full plugin load for every list item.
 Plugin loading can take longer when a vendor performs licensing or online
 authorization. The in-app log reports the current operation.
 
+### Waves WaveShell (Development Build)
+
+From version 0.8.3.6, **Scan** discovers the individual plugins inside installed
+Waves WaveShell files. VST3 shells are normally in
+`C:\Program Files\Common Files\VST3`; older x64 VST2 shells are normally in
+`C:\Program Files\VSTPlugins`. Scan the shell location, not the internal Waves
+`Plug-Ins Vxx` folder, and leave the Waves installation files in place.
+
+After updating FX Host, or adding/updating Waves plugins, run **Scan** again.
+Choose the individual effect by name, including its mono/stereo variant where
+available. Shell discovery runs in a separate worker with a timeout; it can take
+longer than ordinary filename scanning. Reloads and saves retain the selected
+plugin's identity, not just the WaveShell filename. Missing selections are not
+silently replaced with another effect. Waves licensing still applies.
+
 ## Connect A VST
 
 Basic stereo route:

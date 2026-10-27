@@ -385,6 +385,39 @@ internal sealed record PluginChoice(int Index, string Name, string Format, strin
     public override string ToString() => Name;
 }
 
+internal static class PluginIdentity
+{
+    internal const string ContainerMarker = "|elka-shell-v1|";
+
+    internal static bool HasContainerId(string? identifier) =>
+        identifier?.Contains(ContainerMarker, StringComparison.OrdinalIgnoreCase) == true;
+
+    internal static string FilePart(string? identifier)
+    {
+        var value = (identifier ?? string.Empty).Trim();
+        var marker = value.IndexOf(ContainerMarker, StringComparison.OrdinalIgnoreCase);
+        return marker >= 0 ? value[..marker] : value;
+    }
+
+    internal static string Canonical(string? identifier)
+    {
+        var value = (identifier ?? string.Empty).Trim();
+        if (value.Length == 0) return string.Empty;
+        var file = FilePart(value);
+        var path = file.Replace('/', '\\');
+        var suffix = value[file.Length..];
+        try
+        {
+            if (path.Contains(":\\", StringComparison.Ordinal) || path.StartsWith(@"\\", StringComparison.Ordinal))
+                path = System.IO.Path.GetFullPath(path);
+        }
+        catch (ArgumentException) { }
+        catch (NotSupportedException) { }
+        catch (System.IO.PathTooLongException) { }
+        return (path.TrimEnd('\\') + suffix).ToUpperInvariant();
+    }
+}
+
 internal sealed record PluginLayoutChoice(int Id, string Name, int Channels)
 {
     public override string ToString() => Name;
@@ -1636,6 +1669,21 @@ internal sealed class NativeEngineClient : IDisposable
             return null;
         }
 
+        // A shell rescan can expand/reorder the list. Never reload by a stale list index.
+        if (!string.IsNullOrWhiteSpace(choice.Identifier))
+        {
+            var identity = PluginIdentity.Canonical(choice.Identifier);
+            var current = PluginChoices().FirstOrDefault(candidate =>
+                PluginIdentity.Canonical(candidate.Identifier) == identity &&
+                NormalizePluginFormat(candidate.Format) == NormalizePluginFormat(choice.Format));
+            if (current is null)
+            {
+                _lastStatus = "The selected plugin is no longer in the scanned list. Rescan its folder before loading.";
+                return null;
+            }
+            choice = current;
+        }
+
         var status = new StringBuilder(512);
         var slot = 0;
         var loadedInputPins = 0;
@@ -1723,6 +1771,11 @@ internal sealed class NativeEngineClient : IDisposable
         {
             return null;
         }
+
+        var resolvedIdentifier = new StringBuilder(2048);
+        if (ElkaFx_GetPluginIdentifier(choice.Index, resolvedIdentifier, resolvedIdentifier.Capacity) == 0 &&
+            resolvedIdentifier.Length > 0)
+            choice = choice with { Identifier = resolvedIdentifier.ToString() };
 
         var loadedMainInputPins = Math.Clamp(Math.Max(1, mainInputPins), 1, Math.Max(1, loadedInputPins));
 

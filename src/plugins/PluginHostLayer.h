@@ -16,6 +16,7 @@ static constexpr int MaxPluginNodeRoutes = 64;
 using PluginScanProgressCallback = std::function<void(const std::string& stage, const std::string& path, int current, int total)>;
 using PluginLoadProgressCallback = std::function<void(const std::string& stage, const std::string& detail)>;
 
+bool scanPluginContainerToFile(const std::string& format, const std::string& path, const std::string& outputPath, std::string& error);
 bool probePluginFile(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, std::string& error, PluginLoadProgressCallback progress = {});
 int createWorkerPluginProcessor(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, int inputPins, int outputPins, int inputLayoutId, int outputLayoutId, std::string& error);
 bool processWorkerPluginProcessor(int handle, float* planarData, int channelCount, int samples);

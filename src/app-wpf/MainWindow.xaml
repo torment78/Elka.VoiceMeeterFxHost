@@ -572,15 +572,24 @@
                   Background="{StaticResource FieldBrush}"
                   BorderBrush="{StaticResource SubtleBorderBrush}"
                   BorderThickness="1"
-                  CornerRadius="6">
+                  CornerRadius="6"
+                  RequestBringIntoView="RoutingCanvas_RequestBringIntoView">
                         <Grid>
                             <ScrollViewer x:Name="VstCanvasScrollViewer"
-                            HorizontalScrollBarVisibility="Disabled"
-                            VerticalScrollBarVisibility="Disabled"
+                            Height="{x:Static local:RoutingCanvasViewport.DefaultHeight}"
+                            VerticalAlignment="Top"
+                            HorizontalContentAlignment="Left"
+                            VerticalContentAlignment="Top"
+                            HorizontalScrollBarVisibility="Auto"
+                            VerticalScrollBarVisibility="Auto"
+                            CanContentScroll="False"
+                            ScrollChanged="VstCanvasScrollViewer_ScrollChanged"
                             PreviewMouseWheel="VstCanvasScrollViewer_PreviewMouseWheel">
                                 <Canvas x:Name="RoutingCanvas"
                         Width="929"
                         Height="737"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top"
                         Focusable="True"
                         Background="{StaticResource FieldBrush}"
                         RequestBringIntoView="RoutingCanvas_RequestBringIntoView"

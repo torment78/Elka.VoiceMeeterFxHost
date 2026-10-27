@@ -40,6 +40,7 @@ internal static class Program
             Console.WriteLine("Elka Plugin Worker");
             Console.WriteLine("Commands:");
             Console.WriteLine("  probe <format> <plugin-file-or-identifier> [sampleRate] [blockSize]");
+            Console.WriteLine("  scan-shell <format> <plugin-file> <result-xml>");
             Console.WriteLine("  host-v1 <format> <plugin-file-or-identifier> <sampleRate> <blockSize> <inputPins> <outputPins> [inputLayoutId outputLayoutId] <mapName> <requestEvent> <responseEvent> <shutdownEvent> <controlEvent>");
             return 0;
         }
@@ -47,6 +48,23 @@ internal static class Program
         if (args[0].Equals("probe", StringComparison.OrdinalIgnoreCase))
         {
             return Probe(args);
+        }
+
+        if (args[0].Equals("scan-shell", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Length != 4) return 64;
+            try
+            {
+                var status = new StringBuilder(8192);
+                var result = ElkaFx_ScanPluginContainer(args[1], args[2], args[3], status, status.Capacity);
+                Console.WriteLine(status.ToString());
+                return result == 0 ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return 3;
+            }
         }
 
         if (args[0].Equals("host-v1", StringComparison.OrdinalIgnoreCase))
@@ -57,6 +75,10 @@ internal static class Program
         Console.Error.WriteLine($"Unknown worker command: {args[0]}");
         return 64;
     }
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_ScanPluginContainer(string format, string path, string outputPath,
+        StringBuilder status, int statusChars);
 
     private static void EnableDpiAwareness()
     {

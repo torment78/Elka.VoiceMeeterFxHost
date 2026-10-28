@@ -1,8 +1,13 @@
 # DSP Performance And Overrun Log
 
 Both sections are above the normal Log in the sidebar and start collapsed.
-Click a section heading to open or close it. The layout and 10-second peak
-windows below are available in the unsigned 0.8.3.4 development release.
+Click a section heading to open or close it. These diagnostics are included in
+the [unsigned 0.8.3.6 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.6).
+
+![DSP Performance with individual VST usage and DSP Overrun Log](images/dsp-performance-dev.png)
+
+*The actual application panel rendered with example data. These values illustrate
+the controls and are not a benchmark or a live measurement.*
 
 ## DSP Performance
 
@@ -84,7 +89,7 @@ An overrun is a timing warning, not proof of an audible glitch. A low measured
 time also cannot rule out a driver, device, or callback-delivery problem.
 
 Intermittent clicks in normal callback mode remain under investigation, including
-reports with no increasing DSP overrun counts. Version 0.8.3.4 does not include
+reports with no increasing DSP overrun counts. Version 0.8.3.6 does not include
 a confirmed fix for those clicks. The counters measure processing after callback
 delivery, not late delivery or audio-sample continuity.
 

@@ -36,13 +36,35 @@ Canvas scrolling now follows nodes dragged beyond its edges without shifting
 the other nodes, and dragging the VST-list scrollbar no longer starts a plugin
 drag. Audio processing and callback behavior are unchanged.
 
-The top bar shows **Running/Stop**, sample rate, buffer size and cycle time.
-CPU, RAM and the resettable engine peak are now in **DSP Performance**, alongside
-callback usage bars. Expand **Individual** for VST averages, with stable ID order
-or highest-average sorting and full hover details. Peaks reset every 10 seconds;
-overrun history is preserved. Diagnostics keep their 60 Hz measurement-snapshot
-and 30 Hz display targets, with background overrun detection. See
-[DSP diagnostics](docs/DspDiagnostics.md) for details and measurement limits.
+## DSP Performance In The Dev Build
+
+The development build includes **DSP Performance** and **DSP Overrun Log**.
+Click their headings above the normal **Log** in the sidebar to expand them.
+
+- **Application usage:** CPU, RAM and the engine's processing peak, with the
+  top bar kept clear for running status, sample rate, buffer size and cycle time.
+- **Callback timing:** average and peak processing in milliseconds and as a
+  percentage of each callback's own cycle budget, with usage bars and overrun
+  counts. Peaks reset every 10 seconds; overrun history is kept.
+- **Individual VSTs:** expand **Individual** for plugin names, IDs and average
+  usage. Keep a stable ID order or sort by highest average usage, scroll beyond
+  the first five rows, and hover for full timing details.
+- **Overrun history:** see which VST or callback exceeded its budget, by how
+  much, and how often. Detection continues while the panels are collapsed or
+  FX Host is in the tray.
+
+<p align="center">
+  <a href="docs/images/dsp-performance-dev.png">
+    <img src="docs/images/dsp-performance-dev.png" width="560" alt="FX Host DSP Performance showing separate callback budgets, individual VST usage and the DSP Overrun Log" />
+  </a>
+</p>
+
+*Actual development-build UI rendered with example data, not a benchmark or a
+live measurement. Click the image for full size.*
+
+Budget usage is not Task Manager CPU usage, and an overrun does not by itself
+prove an audible glitch. See the [DSP diagnostics guide](docs/DspDiagnostics.md)
+for the readings, refresh rates, saved log and measurement limits.
 
 **Known issue under investigation:** intermittent clicks have been reported in
 normal callback mode without recorded DSP overruns. This development release

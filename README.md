@@ -28,8 +28,16 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.6 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.6).**
-WaveShell scanning now lists individual Waves VST2/VST3 plugins, including
+**[0.8.3.7 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.7).**
+Endpoint nodes now have horizontal VU meters, with two channels when compact
+and all eight when expanded. **Menu > Settings** can turn them off and opens
+the new **Hotkey** window for global VST/group editor shortcuts. VST power and
+bypass controls can optionally be linked, and right-click menus follow the
+app's dark theme. See [Settings and hotkeys](docs/UserGuide.md#settings-and-hotkeys)
+for setup. Audio processing and routing are unchanged.
+
+This build also includes the earlier WaveShell support and canvas fixes.
+WaveShell scanning lists individual Waves VST2/VST3 plugins, including
 separate mono/stereo variants. Run **Scan** again after updating, then select
 the plugin by name. Its identity is retained for reloads and saved setups.
 Canvas scrolling now follows nodes dragged beyond its edges without shifting

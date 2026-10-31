@@ -517,6 +517,7 @@ internal sealed class PluginNodeSnapshot
     public List<PluginLayoutChoice> SupportedOutputLayouts { get; set; } = [new(1, "Stereo", 2)];
     public bool Enabled { get; set; } = true;
     public bool Bypassed { get; set; }
+    public bool BypassPowerLinked { get; set; }
     public bool PinsCollapsed { get; set; }
     public bool Sandboxed { get; set; }
     public bool MissingPlugin { get; set; }
@@ -582,6 +583,17 @@ internal sealed class VoicemeeterEditionWorkspace
     public Dictionary<string, string> EndpointRouteHues { get; set; } = [];
 }
 
+internal sealed record EditorHotkeySnapshot
+{
+    public VoicemeeterKind Edition { get; set; } = VoicemeeterKind.Potato;
+    public int VstId { get; set; } = -1;
+    public string GroupId { get; set; } = string.Empty;
+    public string PluginIdentifier { get; set; } = string.Empty;
+    public string TargetName { get; set; } = string.Empty;
+    public int VirtualKey { get; set; }
+    public uint Modifiers { get; set; }
+}
+
 internal sealed class FxHostSettings
 {
     public VoicemeeterKind Kind { get; set; } = VoicemeeterKind.Potato;
@@ -599,6 +611,8 @@ internal sealed class FxHostSettings
     public bool InsertAsioAutoStart { get; set; }
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
+    public bool NodeVuMetersEnabled { get; set; } = true;
+    public List<EditorHotkeySnapshot> EditorHotkeys { get; set; } = [];
     public bool AdvancedModeEnabled { get; set; }
     public bool CheckStableUpdatesAutomatically { get; set; }
     public bool CheckBetaUpdatesAutomatically { get; set; }

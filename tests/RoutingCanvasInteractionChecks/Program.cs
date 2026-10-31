@@ -45,6 +45,7 @@ internal static class CanvasInteractionChecks
             window.Top = -20000;
             window.Show();
             window.CheckCanvasInteraction();
+            window.CheckEndpointMeterUi();
             Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, no user settings loaded or saved.");
             return 0;
         }

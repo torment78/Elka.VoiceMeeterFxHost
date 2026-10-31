@@ -23,9 +23,9 @@ internal static class Program
         var fixture = new Fixture();
         var node = fixture.Nodes[0];
         var menu = Menu(fixture.Window, node);
-        var headers = menu.Items.OfType<MenuItem>().Select(item => (string)item.Header).ToArray();
-        Check(headers.SequenceEqual(new[] { "ID 1", "Open Editor", "Info", "Reload", "Bypass", "Properties",
-            "Minimize Pins", "Remove From Group", "Turn Off", "Remove" }), "group VST menu parity and order");
+        var headers = menu.Items.OfType<MenuItem>().Select(item => item.Header is PluginNodePowerControls ? "Power controls" : (string)item.Header).ToArray();
+        Check(headers.SequenceEqual(new[] { "ID 1", "Open Editor", "Info", "Reload", "Power controls", "Properties",
+            "Minimize Pins", "Remove From Group", "Remove" }), "group VST menu parity and order");
         Check(!menu.Items.OfType<MenuItem>().First().IsEnabled, "ID is not clickable");
         Click(fixture, node, "Open Editor");
         Click(fixture, node, "Info");
@@ -55,6 +55,12 @@ internal static class Program
         Click(fixture, node, "Disable Bypass");
         Click(fixture, node, "Turn On");
         Check(node.Enabled && !node.Bypassed, "power and bypass can be restored");
+        Click(fixture, node, "Link");
+        Check(node.BypassPowerLinked && node.Enabled && !node.Bypassed, "link alone leaves audio state unchanged");
+        Click(fixture, node, "Turn Off");
+        Check(!node.Enabled && node.Bypassed, "linked group member powers off and bypasses");
+        Click(fixture, node, "Disable Bypass");
+        Check(node.Enabled && !node.Bypassed, "linked group member resumes from either control");
         fixture.Window.Close();
         Check(fixture.RouteCalls == 0, "menu and visual operations did not alter routes");
     }
@@ -116,9 +122,20 @@ internal static class Program
     private static ContextMenu Menu(PluginGroupPropertiesWindow window, PluginNodeSnapshot node) =>
         (ContextMenu)Invoke(window, "BuildNodeMenu", node)!;
 
-    private static void Click(Fixture fixture, PluginNodeSnapshot node, string header) =>
-        Menu(fixture.Window, node).Items.OfType<MenuItem>().Single(item => (string)item.Header == header)
+    private static void Click(Fixture fixture, PluginNodeSnapshot node, string header)
+    {
+        var menu = Menu(fixture.Window, node);
+        var controls = menu.Items.OfType<MenuItem>().Select(item => item.Header).OfType<PluginNodePowerControls>().SingleOrDefault();
+        if (header is "Bypass" or "Disable Bypass" or "Turn Off" or "Turn On" or "Link")
+        {
+            var button = header == "Link" ? controls!.LinkButton :
+                header is "Turn Off" or "Turn On" ? controls!.PowerButton : controls!.BypassButton;
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            return;
+        }
+        menu.Items.OfType<MenuItem>().Single(item => item.Header as string == header)
             .RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+    }
 
     private static object? Invoke(object instance, string method, params object[] args) =>
         instance.GetType().GetMethod(method, PrivateInstance)!.Invoke(instance, args);
@@ -168,7 +185,8 @@ internal static class Program
                 n => Actions.Add($"remove:{n.InstanceId}"), n => Actions.Add($"editor:{n.InstanceId}"),
                 n => { Actions.Add($"properties:{n.InstanceId}"); Replace(n, n.Slot + 10, changeLayout: true); },
                 n => Actions.Add($"info:{n.InstanceId}"),
-                (n, enabled) => n.Enabled = enabled, (n, bypassed) => n.Bypassed = bypassed,
+                (n, enabled) => PluginNodePowerState.SetEnabled(n, enabled, (_, _) => { }, (_, _) => { }),
+                (n, bypassed) => PluginNodePowerState.SetBypass(n, bypassed, (_, _) => { }, (_, _) => { }),
                 n => { Actions.Add($"reload:{n.InstanceId}"); Replace(n, n.Slot + 10); },
                 (n, collapsed) => n.PinsCollapsed = collapsed);
         }

@@ -71,6 +71,8 @@
 
 
   <Style TargetType="{x:Type ContextMenu}">
+    <Setter Property="FontFamily" Value="Segoe UI" />
+    <Setter Property="FontSize" Value="14" />
     <Setter Property="Background" Value="{StaticResource PanelBrush}" />
     <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
@@ -124,7 +126,8 @@
                     Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="4"
+                    Padding="{TemplateBinding Padding}">
               <Grid MinWidth="{TemplateBinding MinWidth}">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="22" />
@@ -199,6 +202,8 @@
       </Setter.Value>
     </Setter>
   </Style>
+  <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="{x:Type Separator}"
+         BasedOn="{StaticResource {x:Type Separator}}" />
   <Style TargetType="TextBlock">
     <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
     <Setter Property="TextTrimming" Value="CharacterEllipsis" />
@@ -356,7 +361,20 @@
     </Style.Triggers>
   </Style>
 
+  <ContextMenu x:Key="ThemedTextContextMenu" x:Shared="False">
+    <MenuItem Header="Cut" Command="ApplicationCommands.Cut"
+              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+    <MenuItem Header="Copy" Command="ApplicationCommands.Copy"
+              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+    <MenuItem Header="Paste" Command="ApplicationCommands.Paste"
+              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+    <Separator />
+    <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll"
+              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+  </ContextMenu>
+
   <Style TargetType="TextBox">
+    <Setter Property="ContextMenu" Value="{StaticResource ThemedTextContextMenu}" />
     <Setter Property="MinHeight" Value="34" />
     <Setter Property="Padding" Value="9,5" />
     <Setter Property="Background" Value="{StaticResource FieldBrush}" />

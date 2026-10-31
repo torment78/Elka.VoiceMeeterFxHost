@@ -322,6 +322,7 @@ public partial class MainWindow : Window
         UpdateLiveStatusText();
         _statusTimer.Start();
         InitializeDspPerformance();
+        InitializeEndpointMeters();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
         _ = CheckStartupUpdatesAsync();
     }
@@ -335,6 +336,7 @@ public partial class MainWindow : Window
 
         _trayIconHandle = CreateTrayIcon();
         var menu = new Forms.ContextMenuStrip();
+        TrayMenuTheme.Apply(menu);
         menu.Items.Add("Open", null, (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray)));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Shutdown", null, (_, _) => Dispatcher.BeginInvoke(new Action(ShutdownFromTray)));
@@ -1506,15 +1508,11 @@ public partial class MainWindow : Window
 
         var footer = CreateMenuColumns();
         footer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        AddMenuCell(footer, new TextBlock
-        {
-            Text = CurrentApplicationVersionText(),
-            Style = (Style)FindResource("MutedText"),
-            FontSize = 11,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap
-        }, 0, 0);
+        var settings = CreateSaveManagerButton("Settings");
+        settings.Style = (Style)FindResource("VbanButton");
+        settings.Margin = new Thickness(0);
+        settings.Click += (_, _) => ShowHostSettings(window);
+        AddMenuCell(footer, settings, 0, 0);
         var donate = CreateSaveManagerButton("Donate");
         donate.Style = (Style)FindResource("VstButton");
         donate.Margin = new Thickness(0);
@@ -1522,6 +1520,14 @@ public partial class MainWindow : Window
         donate.Click += DonateButton_Click;
         AddMenuCell(footer, donate, 0, 2);
         stack.Children.Add(footer);
+        stack.Children.Add(new TextBlock
+        {
+            Text = CurrentApplicationVersionText(),
+            Style = (Style)FindResource("MutedText"),
+            FontSize = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 10, 0, 0)
+        });
         window.ShowDialog();
     }
 
@@ -1932,6 +1938,7 @@ public partial class MainWindow : Window
         _settings.EndpointCanvasYOffsets ??= [];
         _settings.EndpointRouteHues ??= [];
         _settings.CustomRouteColors = RouteHueColor.NormalizePalette(_settings.CustomRouteColors);
+        _settings.EditorHotkeys ??= [];
         _settings.EditionWorkspaces ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
@@ -3299,6 +3306,8 @@ public partial class MainWindow : Window
         _voicemeeterCommandWindow = new WindowInteropHelper(this).Handle;
         _windowMessageSource = HwndSource.FromHwnd(_voicemeeterCommandWindow);
         _windowMessageSource?.AddHook(WindowMessageHook);
+        _windowMessageSource?.AddHook(EditorHotkeyMessageHook);
+        RefreshEditorHotkeys();
         TryRegisterVoicemeeterCustomButton(force: true);
     }
 
@@ -3365,6 +3374,8 @@ public partial class MainWindow : Window
         }
 
         _voicemeeterCustomButtonRemovalStarted = true;
+        _editorHotkeys?.Dispose();
+        _editorHotkeys = null;
         _voicemeeterButtonRegistration.Stop();
         if (_voicemeeterCommandWindow != IntPtr.Zero && _engine.IsAttached)
         {
@@ -3390,6 +3401,7 @@ public partial class MainWindow : Window
         }
 
         _windowMessageSource?.RemoveHook(WindowMessageHook);
+        _windowMessageSource?.RemoveHook(EditorHotkeyMessageHook);
         _windowMessageSource = null;
         _voicemeeterCommandWindow = IntPtr.Zero;
     }
@@ -7346,6 +7358,7 @@ private void RefreshEndpointButtonSelection()
         restored.Mode = saved.Mode == CallbackMode.None ? CallbackMode.Input : saved.Mode;
         restored.Enabled = saved.Enabled;
         restored.Bypassed = saved.Bypassed;
+        restored.BypassPowerLinked = saved.BypassPowerLinked;
         restored.PinsCollapsed = saved.PinsCollapsed;
         restored.Sandboxed = restored.Sandboxed ||
                              saved.Sandboxed ||
@@ -7625,6 +7638,7 @@ private void RefreshEndpointButtonSelection()
             OutputPins = node.OutputPins,
             Enabled = node.Enabled,
             Bypassed = node.Bypassed,
+            BypassPowerLinked = node.BypassPowerLinked,
             PinsCollapsed = node.PinsCollapsed,
             Sandboxed = node.Sandboxed,
             MissingPlugin = node.MissingPlugin,
@@ -7716,27 +7730,11 @@ private void RefreshEndpointButtonSelection()
                 VerticalAlignment = VerticalAlignment.Center
             });
 
-            var enabled = new CheckBox
-            {
-                Content = "On",
-                IsChecked = node.Enabled,
-                Margin = new Thickness(10, 0, 0, 0)
-            };
-            enabled.Checked += (_, _) => SetNodeEnabled(node, true);
-            enabled.Unchecked += (_, _) => SetNodeEnabled(node, false);
-            Grid.SetColumn(enabled, 1);
-            grid.Children.Add(enabled);
-
-            var bypass = new CheckBox
-            {
-                Content = "Bypass",
-                IsChecked = node.Bypassed,
-                Margin = new Thickness(10, 0, 0, 0)
-            };
-            bypass.Checked += (_, _) => SetNodeBypass(node, true);
-            bypass.Unchecked += (_, _) => SetNodeBypass(node, false);
-            Grid.SetColumn(bypass, 2);
-            grid.Children.Add(bypass);
+            var powerControls = new PluginNodePowerControls(node, bypassed => SetNodeBypass(node, bypassed),
+                enabled => SetNodeEnabled(node, enabled), linked => SetNodePowerLinked(node, linked));
+            Grid.SetColumn(powerControls, 1);
+            Grid.SetColumnSpan(powerControls, 2);
+            grid.Children.Add(powerControls);
 
             var open = new Button
             {
@@ -7772,8 +7770,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        node.Enabled = enabled;
-        _engine.SetPluginNodePowered(node.Slot, enabled);
+        PluginNodePowerState.SetEnabled(node, enabled, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         QueueSave();
@@ -7786,8 +7783,15 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        node.Bypassed = bypassed;
-        _engine.SetPluginNodeBypassed(node.Slot, bypassed);
+        PluginNodePowerState.SetBypass(node, bypassed, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
+    }
+
+    private void SetNodePowerLinked(PluginNodeSnapshot node, bool linked)
+    {
+        node.BypassPowerLinked = linked;
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         QueueSave();
@@ -8135,6 +8139,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RemovePluginNode(PluginNodeSnapshot node)
     {
+        RemoveEditorHotkeys(binding => binding.VstId == node.InstanceId && string.IsNullOrEmpty(binding.GroupId));
         if (!node.MissingPlugin)
         {
             _engine.RemovePluginNode(node.Slot);
@@ -8168,8 +8173,11 @@ private void RefreshEndpointButtonSelection()
         }
         _canvasRebuildAfterDrag = false;
         RefreshSignalMonitors();
+        RefreshEditorHotkeys();
+        _endpointMeterTimer?.Stop();
         if (_workspaceView == WorkspaceView.Channels)
         {
+            StopEndpointMeters();
             RebuildCrossRouteCanvas();
             UpdateRouteSummary();
             RebuildVstNodeList();
@@ -8181,6 +8189,7 @@ private void RefreshEndpointButtonSelection()
         _nodeVisualElements.Clear();
         _groupVisualElements.Clear();
         _endpointVisualElements.Clear();
+        _endpointMeters.Clear();
         _canvasConnectionPaths.Clear();
         _dragElementOrigins.Clear();
         RoutingCanvas.Children.Clear();
@@ -8192,6 +8201,7 @@ private void RefreshEndpointButtonSelection()
         DrawDefaultPassthroughConnections();
         DrawMirroredChannelRoutes();
         DrawCanvasConnections();
+        QueueEndpointMeterUpdate();
         UpdateRouteSummary();
         RebuildVstNodeList();
     }
@@ -8508,19 +8518,15 @@ private void RefreshEndpointButtonSelection()
         var textAlignment = outputSide ? TextAlignment.Right : TextAlignment.Left;
         var textWidth = Math.Max(42.0, VstEndpointCardWidth - textLeft - textRight);
         var endpointStack = new StackPanel();
-        endpointStack.Children.Add(new TextBlock
+        var endpointTitle = EndpointCardTitle(endpoint, pinCount);
+        endpointTitle.Margin = new Thickness(textLeft, 6, textRight, 0);
+        endpointTitle.Width = textWidth;
+        endpointTitle.Padding = new Thickness(0, 0, textPaddingRight, 0);
+        endpointTitle.TextAlignment = textAlignment;
+        endpointStack.Children.Add(endpointTitle);
+        if (patchBypassed) endpointStack.Children.Add(new TextBlock
         {
-            Text = endpoint.Name,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(textLeft, 6, textRight, 0),
-            Width = textWidth,
-            Padding = new Thickness(0, 0, textPaddingRight, 0),
-            TextAlignment = textAlignment,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-        endpointStack.Children.Add(new TextBlock
-        {
-            Text = patchBypassed ? "Bus only" : EndpointPinModeLabel(mode, endpoint, pinCount),
+            Text = "Bus only",
             Style = (Style)FindResource("MutedText"),
             FontSize = 11,
             Margin = new Thickness(textLeft, 2, textRight, 0),
@@ -8593,6 +8599,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         RegisterHiddenEndpointPinAnchors(endpoint, mode, x, y, outputSide, pinCount);
+        DrawEndpointMeters(endpoint, mode, outputSide, pinCount, x, y, endpointElements);
         DrawHiddenEndpointPinSummary(endpoint, mode, x, y, outputSide, pinCount, height, endpointElements);
     }
 
@@ -9037,8 +9044,7 @@ private void RefreshEndpointButtonSelection()
 
         foreach (var member in members)
         {
-            member.Enabled = enabled;
-            _engine.SetPluginNodePowered(member.Slot, enabled);
+            PluginNodePowerState.SetEnabled(member, enabled, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
         }
 
         AppendLog($"{group.Name}: turned {members.Count} VST node(s) {(enabled ? "on" : "off")}.");
@@ -9058,8 +9064,7 @@ private void RefreshEndpointButtonSelection()
 
         foreach (var member in members)
         {
-            member.Bypassed = bypassed;
-            _engine.SetPluginNodeBypassed(member.Slot, bypassed);
+            PluginNodePowerState.SetBypass(member, bypassed, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
         }
 
         AppendLog($"{group.Name}: {(bypassed ? "bypassed" : "disabled bypass for")} {members.Count} VST node(s).");
@@ -9561,7 +9566,8 @@ private void RefreshEndpointButtonSelection()
         menu.Items.Add(CreateNodeMenuItem("Open Editor", () => OpenPluginEditorWithSavedData(node)));
         menu.Items.Add(CreateNodeMenuItem("Info", () => ShowExposedPluginParameters(node)));
         menu.Items.Add(CreateNodeMenuItem("Reload", () => ReloadPluginNode(node)));
-        menu.Items.Add(CreateNodeMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
+        menu.Items.Add(new PluginNodePowerControls(node, bypassed => SetNodeBypass(node, bypassed),
+            enabled => SetNodeEnabled(node, enabled), linked => SetNodePowerLinked(node, linked)).AsMenuItem());
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem("Properties", () => ShowNodeProperties(node)));
         menu.Items.Add(CreateNodeMenuItem(node.PinsCollapsed ? "Expand Pins" : "Minimize Pins", () => SetNodePinsCollapsed(node, !node.PinsCollapsed)));
@@ -9572,7 +9578,6 @@ private void RefreshEndpointButtonSelection()
         }
 
         menu.Items.Add(new Separator());
-        menu.Items.Add(CreateNodeMenuItem(node.Enabled ? "Turn Off" : "Turn On", () => SetNodeEnabled(node, !node.Enabled)));
 
         var remove = CreateNodeMenuItem("Remove", () => RemovePluginNode(node));
         remove.Foreground = (Brush)FindResource("DangerBrush");
@@ -9674,7 +9679,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        var editor = new PluginNodePropertiesWindow(node)
+        var editor = new PluginNodePropertiesWindow(node, owner => ShowEditorHotkeys(owner, node))
         {
             Owner = this
         };
@@ -9708,7 +9713,8 @@ private void RefreshEndpointButtonSelection()
             SetNodeEnabled,
             SetNodeBypass,
             ReloadPluginNode,
-            SetNodePinsCollapsed)
+            SetNodePinsCollapsed,
+            SetNodePowerLinked)
         {
             Owner = this
         };
@@ -9760,6 +9766,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RemovePluginGroup(PluginGroupSnapshot group)
     {
+        RemoveEditorHotkeys(binding => binding.GroupId == group.Id);
         var members = GroupMembers(group).ToList();
         PlaceUngroupedMembersNearGroup(group, members);
         RemoveGroupExternalConnections(group);
@@ -9779,6 +9786,8 @@ private void RefreshEndpointButtonSelection()
     private void DeletePluginGroupWithMembers(PluginGroupSnapshot group)
     {
         var members = GroupMembers(group).ToList();
+        RemoveEditorHotkeys(binding => binding.GroupId == group.Id ||
+            (string.IsNullOrEmpty(binding.GroupId) && members.Any(node => node.InstanceId == binding.VstId)));
         var memberSlots = members.Select(static node => node.Slot).ToHashSet();
         RemoveGroupExternalConnections(group);
 
@@ -9944,6 +9953,7 @@ private void RefreshEndpointButtonSelection()
             VerifyRestoredPluginState(copy, member);
             copy.Enabled = member.Enabled;
             copy.Bypassed = member.Bypassed;
+            copy.BypassPowerLinked = member.BypassPowerLinked;
             copy.PinsCollapsed = member.PinsCollapsed;
             if (!copy.Enabled)
             {
@@ -13836,6 +13846,7 @@ private void RefreshEndpointButtonSelection()
 
     protected override void OnClosed(EventArgs e)
     {
+        StopEndpointMeters();
         StopDspPerformance();
         _isShuttingDown = true;
         _updateLifetime.Cancel();

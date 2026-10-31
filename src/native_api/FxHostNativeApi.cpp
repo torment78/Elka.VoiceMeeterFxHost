@@ -1753,8 +1753,9 @@ __declspec(dllexport) void __cdecl ElkaFx_CloseSignalMonitor(int id)
 __declspec(dllexport) int __cdecl ElkaFx_ReadSignalMonitor(int id, float* peaks, int peakCount,
     float* spectrum, int spectrumCount, int* sampleRate, unsigned long long* sequence)
 {
-    if (!peaks || peakCount != SignalMonitorHub::Channels || !spectrum ||
-        spectrumCount != SignalMonitorAnalyzer::Bins || !sampleRate || !sequence) return -1;
+    const bool peaksOnly = spectrum == nullptr && spectrumCount == 0;
+    if (!peaks || peakCount != SignalMonitorHub::Channels ||
+        (!peaksOnly && (!spectrum || spectrumCount != SignalMonitorAnalyzer::Bins)) || !sampleRate || !sequence) return -1;
     try
     {
         std::unique_lock lock(g_mutex, std::try_to_lock);
@@ -1773,7 +1774,7 @@ __declspec(dllexport) int __cdecl ElkaFx_ReadSignalMonitor(int id, float* peaks,
         std::copy(analyzer->snapshot.peaks.begin(), analyzer->snapshot.peaks.end(), peaks);
         *sampleRate = analyzer->snapshot.sampleRate;
         *sequence = analyzer->snapshot.sequence;
-        analyzer->spectrum(spectrum);
+        if (!peaksOnly) analyzer->spectrum(spectrum);
         return 0;
     }
     catch (...) { return -1; }

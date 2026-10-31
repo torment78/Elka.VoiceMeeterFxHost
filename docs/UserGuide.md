@@ -217,7 +217,8 @@ The **Menu** window contains:
 - **Delay Start** with a `0` to `60` second engine startup delay
 - independent automatic stable and beta update checks
 - **Stable** and **Beta** buttons for manual checks and installer downloads
-- the installed application version at the bottom left
+- **Settings** at the bottom left for node VU meters and editor hotkeys
+- the installed application version centered below the bottom buttons
 - **Donate** at the bottom right, opening the [ElkaSoft Ko-fi page](https://ko-fi.com/msffixit) in your browser
 
 The same **Donate** button is available at the bottom of the main window's left
@@ -228,6 +229,30 @@ visible. Reinstall and rescan the plugin to restore that part of the layout.
 
 **Reload** restarts every VST node while preserving the graph and saved state.
 Use it after a sample-rate change or when a plugin has become unresponsive.
+
+## Settings And Hotkeys
+
+In development version **0.8.3.7**, open **Menu > Settings** to toggle **Node VU
+Meters**. Hardware inputs show L/R meters; virtual inputs and buses show two
+channels when compact and eight when expanded. The meters stop reading when
+the canvas is hidden, the app is minimized or in the tray, or the setting is off.
+
+Click **Hotkey** to open the separate assignment window. Click **Add**, choose
+a loaded VST or group on the left, click the field on the right and press the
+desired key combination, then click that row's save icon. Use the delete icon
+to remove an assignment. The same window is available from a VST's **Properties
+> Hotkey** button.
+
+Shortcuts open the selected VST editor or group window globally, including
+while FX Host is in the tray. Use Ctrl, Alt, Shift or Win with a letter, number
+or function key other than F12. Conflicting shortcuts are rejected. Assignments
+are saved separately for each VoiceMeeter edition.
+
+The VST's adjacent **Bypass** and **Turn Off / Turn On** controls have a chain
+button. When linked, switching off also enables bypass so dry audio can pass;
+switching on restores processing and removes bypass. Unlink them to control
+power and bypass independently. Changing the link itself does not change the
+current audio state.
 
 ## Application Updates
 

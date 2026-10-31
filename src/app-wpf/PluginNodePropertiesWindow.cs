@@ -9,11 +9,11 @@ internal sealed class PluginNodePropertiesWindow : Window
     private readonly ComboBox _sidechainPinsCombo = new();
     private readonly ComboBox _outputLayoutCombo = new();
 
-    public PluginNodePropertiesWindow(PluginNodeSnapshot node)
+    public PluginNodePropertiesWindow(PluginNodeSnapshot node, Action<Window>? showHotkeys = null)
     {
         Title = $"{node.Name} Properties";
         Width = 380;
-        Height = 250;
+        Height = showHotkeys is null ? 250 : 292;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
 
@@ -50,6 +50,20 @@ internal sealed class PluginNodePropertiesWindow : Window
             outputChoices,
             OutputLayoutId,
             OutputPins);
+
+        if (showHotkeys is not null)
+        {
+            var hotkey = new Button
+            {
+                Content = "Hotkey", MinHeight = 30, HorizontalAlignment = HorizontalAlignment.Left,
+                MinWidth = 90, Margin = new Thickness(0, 0, 0, 10),
+                Style = TryFindResource("VbanButton") as Style
+            };
+            hotkey.Click += (_, _) => showHotkeys(this);
+            Grid.SetRow(hotkey, 3);
+            Grid.SetColumnSpan(hotkey, 2);
+            root.Children.Add(hotkey);
+        }
 
         var buttons = new StackPanel
         {

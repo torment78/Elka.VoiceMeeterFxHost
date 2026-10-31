@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/app-wpf/EndpointMeters.cs" Link="EndpointMeters.cs" />
+    <Compile Include="../../src/app-wpf/GlobalEditorHotkeys.cs" Link="GlobalEditorHotkeys.cs" />
+    <Compile Include="../../src/app-wpf/PluginNodePowerControls.cs" Link="PluginNodePowerControls.cs" />
+    <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
+    <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
+  </ItemGroup>
+</Project>

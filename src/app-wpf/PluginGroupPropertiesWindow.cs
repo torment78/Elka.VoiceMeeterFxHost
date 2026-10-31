@@ -33,6 +33,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodeBypass;
     private readonly Action<PluginNodeSnapshot> _reloadPluginNode;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePinsCollapsed;
+    private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePowerLinked;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
     private readonly TextBox _nameTextBox = new();
@@ -71,7 +72,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot, bool> setPluginNodeEnabled,
         Action<PluginNodeSnapshot, bool> setPluginNodeBypass,
         Action<PluginNodeSnapshot> reloadPluginNode,
-        Action<PluginNodeSnapshot, bool> setPluginNodePinsCollapsed)
+        Action<PluginNodeSnapshot, bool> setPluginNodePinsCollapsed,
+        Action<PluginNodeSnapshot, bool>? setPluginNodePowerLinked = null)
     {
         _group = group;
         _members = members.ToList();
@@ -85,6 +87,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _setPluginNodeBypass = setPluginNodeBypass;
         _reloadPluginNode = reloadPluginNode;
         _setPluginNodePinsCollapsed = setPluginNodePinsCollapsed;
+        _setPluginNodePowerLinked = setPluginNodePowerLinked ?? ((node, linked) => node.BypassPowerLinked = linked);
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
 
@@ -111,6 +114,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     }
 
     public string GroupName { get; private set; }
+    internal string GroupId => _group.Id;
     public int InputPins { get; private set; }
     public int OutputPins { get; private set; }
     public bool SidechainPortsEnabled { get; private set; }
@@ -535,7 +539,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _reloadPluginNode(node);
             RebuildCanvas();
         }));
-        menu.Items.Add(CreateMenuItem(node.Bypassed ? "Disable Bypass" : "Bypass", () => SetNodeBypass(node, !node.Bypassed)));
+        menu.Items.Add(new PluginNodePowerControls(node, bypassed => SetNodeBypass(node, bypassed),
+            enabled => SetNodeEnabled(node, enabled), linked => _setPluginNodePowerLinked(node, linked)).AsMenuItem());
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Properties", () =>
         {
@@ -549,7 +554,6 @@ internal sealed class PluginGroupPropertiesWindow : Window
         }));
         menu.Items.Add(CreateMenuItem("Remove From Group", () => RemoveNodeFromGroup(node)));
         menu.Items.Add(new Separator());
-        menu.Items.Add(CreateMenuItem(node.Enabled ? "Turn Off" : "Turn On", () => SetNodeEnabled(node, !node.Enabled)));
         var delete = CreateMenuItem("Remove", () => DeleteNode(node));
         delete.Foreground = BrushFrom("#E15F5F");
         menu.Items.Add(delete);

@@ -41,7 +41,7 @@ public partial class MainWindow
     private void RunHotkeyAction(EditorHotkeySnapshot hotkey)
     {
         if (_isShuttingDown || _hostSettingsWindow is not null || _editorHotkeysWindow is not null || hotkey.Edition != _kind) return;
-        if (!GlobalEditorHotkeys.ActionsFor(!string.IsNullOrEmpty(hotkey.GroupId)).Any(a => a.Action == hotkey.Action)) return;
+        if (!GlobalEditorHotkeys.ActionsFor(!string.IsNullOrEmpty(hotkey.GroupId), hotkey.Endpoint).Any(a => a.Action == hotkey.Action)) return;
         // Properties is modal, but its own shortcut must still be able to close it.
         if (hotkey.Action == EditorHotkeyAction.Properties && HotkeyNode(hotkey) is { } node)
         {
@@ -57,6 +57,11 @@ public partial class MainWindow
 
     private void ExecuteHotkeyAction(EditorHotkeySnapshot hotkey)
     {
+        if (hotkey.Endpoint is { } endpoint)
+        {
+            ExecuteEndpointHotkey(endpoint, hotkey.Action);
+            return;
+        }
         if (!string.IsNullOrEmpty(hotkey.GroupId))
         {
             var group = GroupById(hotkey.GroupId);
@@ -167,12 +172,14 @@ public partial class MainWindow
         finally { _hostSettingsWindow = null; }
     }
 
-    private void ShowEditorHotkeys(Window owner, PluginNodeSnapshot? selectedNode = null, PluginGroupSnapshot? selectedGroup = null)
+    private void ShowEditorHotkeys(Window owner, PluginNodeSnapshot? selectedNode = null, PluginGroupSnapshot? selectedGroup = null,
+        EndpointHotkeyTarget? selectedEndpoint = null)
     {
         if (_editorHotkeysWindow is { } existing) { existing.Activate(); return; }
         var targets = _settings.PluginNodes.Where(n => !n.MissingPlugin).OrderBy(n => n.InstanceId)
             .Select(n => new EditorHotkeyTarget($"ID {n.InstanceId} / {n.Name}", n.Name, n.InstanceId, string.Empty, n.PluginIdentifier))
-            .Concat(_settings.PluginGroups.OrderBy(g => g.Name).Select(g => new EditorHotkeyTarget($"Group / {g.Name}", g.Name, -1, g.Id, string.Empty))).ToArray();
+            .Concat(_settings.PluginGroups.OrderBy(g => g.Name).Select(g => new EditorHotkeyTarget($"Group / {g.Name}", g.Name, -1, g.Id, string.Empty)))
+            .Concat(EndpointHotkeyTargets()).ToArray();
         _editorHotkeys ??= new GlobalEditorHotkeys(new WindowInteropHelper(this).EnsureHandle());
         // Release our shortcuts while recording, so existing assignments reach the capture field.
         _editorHotkeys.TryApply([], out _);
@@ -187,7 +194,7 @@ public partial class MainWindow
             return string.Empty;
         }
         var window = new EditorHotkeysWindow(targets, _kind, _settings.EditorHotkeys.Where(h => h.Edition == _kind), Commit,
-            selectedNode?.InstanceId, selectedGroup?.Id) { Owner = owner };
+            selectedNode?.InstanceId, selectedGroup?.Id, selectedEndpoint) { Owner = owner };
         _editorHotkeysWindow = window;
         try { window.ShowDialog(); }
         finally

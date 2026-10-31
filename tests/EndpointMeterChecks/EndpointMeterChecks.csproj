@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/app-wpf/EndpointMeters.cs" Link="EndpointMeters.cs" />
+    <Compile Include="../../src/app-wpf/EndpointPeakIndicator.cs" Link="EndpointPeakIndicator.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorCadence.cs" Link="SignalMonitorCadence.cs" />
     <Compile Include="../../src/app-wpf/GlobalEditorHotkeys.cs" Link="GlobalEditorHotkeys.cs" />
     <Compile Include="../../src/app-wpf/PluginNodePowerControls.cs" Link="PluginNodePowerControls.cs" />

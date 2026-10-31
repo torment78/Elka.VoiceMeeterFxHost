@@ -4333,6 +4333,8 @@ private void RefreshEndpointButtonSelection()
     {
         var menu = new ContextMenu();
         menu.Items.Add(CreateNodeMenuItem("Signal Monitor", () => OpenSignalMonitor(mode, endpoint, outputSide)));
+        var hotkeyTarget = EndpointHotkeyReference(mode, endpoint, outputSide);
+        menu.Items.Add(CreateNodeMenuItem("Hotkey", () => ShowEditorHotkeys(this, selectedEndpoint: hotkeyTarget)));
         menu.Items.Add(CreateNodeMenuItem("Select Section", () => SelectCanvasEndpoint(mode, endpoint)));
         menu.Items.Add(new Separator());
         var patchBypassed = IsInputPatchBypassEndpoint(mode, endpoint, out var patchExplanation);
@@ -4498,7 +4500,7 @@ private void RefreshEndpointButtonSelection()
         return EndpointPinModeLabel(mode, endpoint);
     }
 
-    private void SetEndpointPinMode(CallbackMode mode, IoEndpoint endpoint, EndpointPinMode pinMode)
+    private void SetEndpointPinMode(CallbackMode mode, IoEndpoint endpoint, EndpointPinMode pinMode, bool refreshCallback = true)
     {
         if (!CanChangeEndpointPinMode(endpoint))
         {
@@ -4520,7 +4522,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         AppendLog($"{endpoint.DisplayName}: VST canvas pins set to {EndpointPinModeLabel(mode, endpoint)}.");
-        RefreshEngineCallbackMode();
+        if (refreshCallback) RefreshEngineCallbackMode();
         RebuildRoutingCanvas();
         QueueSave();
     }
@@ -8510,11 +8512,26 @@ private void RefreshEndpointButtonSelection()
         border.MouseMove += EndpointCard_MouseMove;
         border.MouseLeftButtonUp += EndpointCard_MouseLeftButtonUp;
         border.LostMouseCapture += EndpointCard_LostMouseCapture;
+        bool monitorShortcut = false;
+        border.PreviewMouseRightButtonDown += (_, e) =>
+        {
+            monitorShortcut = TryOpenEndpointMonitor(mode, endpoint, outputSide, Keyboard.Modifiers);
+            if (monitorShortcut) e.Handled = true;
+        };
+        border.PreviewMouseRightButtonUp += (_, e) =>
+        {
+            if (monitorShortcut) { e.Handled = true; monitorShortcut = false; }
+        };
         RoutingCanvas.Children.Add(border);
         endpointElements.Add(border);
 
         var textLeft = outputSide ? 0 : 8;
         var textRight = outputSide ? 0 : 8;
+        if (_settings.NodeVuMetersEnabled && !patchBypassed)
+        {
+            if (outputSide) textLeft += 16;
+            else textRight += 14;
+        }
         var textPaddingRight = outputSide ? 12 : 0;
         var textAlignment = outputSide ? TextAlignment.Right : TextAlignment.Left;
         var textWidth = Math.Max(42.0, VstEndpointCardWidth - textLeft - textRight);
@@ -8600,7 +8617,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         RegisterHiddenEndpointPinAnchors(endpoint, mode, x, y, outputSide, pinCount);
-        DrawEndpointMeters(endpoint, mode, outputSide, pinCount, x, y, endpointElements);
+        DrawEndpointMeters(endpoint, mode, outputSide, pinCount, x, y, border, endpointElements);
         DrawHiddenEndpointPinSummary(endpoint, mode, x, y, outputSide, pinCount, height, endpointElements);
     }
 

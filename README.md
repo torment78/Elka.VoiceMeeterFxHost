@@ -28,14 +28,18 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.8 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.8).**
+**[0.8.3.9 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.9).**
 Endpoint nodes now have horizontal VU meters, with two channels when compact
 and all eight when expanded. **Menu > Settings** can turn them off and opens
 the **Hotkey** window for global VST/group actions: open/close, bypass, power,
 combined bypass/power, and VST reload or properties. VST and group power/bypass
 controls can optionally be linked. Node meters now target 60 Hz with smoother
-decay; their reader, rendering and taps stop when hidden or disabled. No new
-peak or clip indicators are included. See
+decay; their reader, rendering and taps stop when hidden or disabled.
+Input and output endpoint nodes now have independent, click-to-reset peak
+warnings. Signal Monitor shows the highest captured sample peak in dBFS,
+including values above zero. These are sample-level warnings, not confirmed
+clipping or true-peak detection. **Ctrl+right-click** opens an endpoint's monitor;
+endpoint hotkeys can toggle its monitor or expand/minimize multichannel pins. See
 [Settings and hotkeys](docs/UserGuide.md#settings-and-hotkeys) for setup.
 Audio processing and routing are unchanged.
 

@@ -232,19 +232,40 @@ Use it after a sample-rate change or when a plugin has become unresponsive.
 
 ## Settings And Hotkeys
 
-In development version **0.8.3.8**, open **Menu > Settings** to toggle **Node VU
+In development version **0.8.3.9**, open **Menu > Settings** to toggle **Node VU
 Meters**. Hardware inputs show L/R meters; virtual inputs and buses show two
 channels when compact and eight when expanded. The meters target 60 Hz with
 immediate attack and smooth decay. Their reader, rendering and monitor taps
 stop when the canvas is hidden, the app is minimized or in the tray, or the
-setting is off. This build does not add peak/clip indicators.
+setting is off.
+
+With node meters enabled, a small circle warns when a captured sample reaches
+**0 dBFS or above**. Source nodes use the upper-right corner; destination nodes
+use the upper-left corner. Each side measures its own signal, and compact
+eight-channel nodes still check all eight channels. Click a circle to reset it.
+Existing warnings remain latched across redraws and tray hides, but no new node
+peaks are measured while their meters are off or hidden.
+
+Open **Signal Monitor** from an endpoint's right-click menu, or use
+**Ctrl+right-click** on its card. The upper-right **Peak** readout holds the
+highest captured sample amplitude since opening or reset, for example
+`Peak +3.01 dBFS`. Click the readout to reset that monitor's value and red dot.
+It is independent of the canvas circle. An open monitor has its own reader;
+closing it stops that reader and releases its tap.
+
+These indicators measure sample peaks, not true peaks or confirmed clipping.
+Floating-point values can exceed 0 dBFS without being clipped inside the host;
+a later stage may still distort. The existing monitor taps provide best-effort
+captures, not a guaranteed lossless clipping detector. Reset discards the next
+peak snapshot because it may include samples captured before the click.
 
 Click **Hotkey** to open the separate assignment window. Click **Add**, choose
-a loaded VST or group on the left, choose its action in the middle, then click
+a loaded VST, group or endpoint on the left, choose its action in the middle, then click
 the shortcut field on the right and press the desired key combination. Click
 that row's save icon. Use the delete icon to remove an assignment. The same
 window is available from a VST's **Properties > Hotkey** button or a group's
-right-click **Hotkey** command, with that target selected.
+right-click **Hotkey** command, with that target selected. Input and output
+endpoint menus also have **Hotkey**, preselecting the correct left/right side.
 
 Shortcuts work globally, including while FX Host is in the tray. Use Ctrl,
 Alt, Shift or Win with a letter, number or function key other than F12.
@@ -255,6 +276,11 @@ VoiceMeeter edition, and a target can have multiple shortcuts.
   first press and closes it on the next.
 - VSTs also offer **Reload** and **Properties Open / Close**. Closing Properties
   with its shortcut cancels unapplied changes.
+- Endpoints offer **Signal Monitor Open / Close**, including from the tray.
+  Multichannel endpoints also offer **Minimize Pins**, **Expand Pins** and
+  **Minimize / Expand Pins**. These retain the existing shared left/right pin
+  layout for that endpoint and do not change its audio cables. Monitor targets
+  keep their own side and callback stream even when another canvas is selected.
 - **Bypass On**, **Bypass Off** and **Bypass On / Off (Toggle)** set or toggle bypass.
 - **Turn On**, **Turn Off** and **Turn On / Off (Toggle)** set or toggle power.
 - **Bypass On + Turn Off** passes dry audio with processing off;

@@ -5,7 +5,8 @@ using System.Windows.Media;
 
 namespace Elka.VoiceMeeterFxHost.App;
 
-internal sealed record EditorHotkeyTarget(string Label, string Name, int VstId, string GroupId, string Identifier)
+internal sealed record EditorHotkeyTarget(string Label, string Name, int VstId, string GroupId, string Identifier,
+    EndpointHotkeyTarget? Endpoint = null)
 {
     public override string ToString() => Label;
 }
@@ -61,7 +62,7 @@ internal sealed class EditorHotkeysWindow : Window
 
     internal EditorHotkeysWindow(EditorHotkeyTarget[] targets, VoicemeeterKind edition,
         IEnumerable<EditorHotkeySnapshot> bindings, Func<IReadOnlyList<EditorHotkeySnapshot>, string> commit,
-        int? selectedVstId = null, string? selectedGroupId = null)
+        int? selectedVstId = null, string? selectedGroupId = null, EndpointHotkeyTarget? selectedEndpoint = null)
     {
         _targets = targets;
         _edition = edition;
@@ -83,7 +84,7 @@ internal sealed class EditorHotkeysWindow : Window
         add.Click += (_, _) => AddRow(null, null, true);
         root.Children.Add(add);
         var headers = RowGrid();
-        foreach (var (label, column) in new[] { ("VST / Group", 0), ("Action", 1), ("Hotkey", 2) })
+        foreach (var (label, column) in new[] { ("VST / Group / Endpoint", 0), ("Action", 1), ("Hotkey", 2) })
         {
             var heading = new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 6) };
             heading.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
@@ -102,6 +103,8 @@ internal sealed class EditorHotkeysWindow : Window
             AddRow(null, _targets.FirstOrDefault(t => t.VstId == id && t.GroupId.Length == 0), false);
         if (selectedGroupId is not null && !_bindings.Any(b => b.GroupId == selectedGroupId))
             AddRow(null, _targets.FirstOrDefault(t => t.GroupId == selectedGroupId), false);
+        if (selectedEndpoint is not null && !_bindings.Any(b => b.Endpoint == selectedEndpoint))
+            AddRow(null, _targets.FirstOrDefault(t => t.Endpoint == selectedEndpoint), false);
     }
 
     private static Grid RowGrid()
@@ -118,27 +121,28 @@ internal sealed class EditorHotkeysWindow : Window
         row.Margin = new Thickness(0, 0, 0, 8);
         var choices = _targets.ToList();
         var selected = preselect ?? (saved is null ? null : choices.FirstOrDefault(t => t.VstId == saved.VstId &&
-            t.GroupId == saved.GroupId && string.Equals(PluginIdentity.Canonical(t.Identifier),
+            t.GroupId == saved.GroupId && t.Endpoint == saved.Endpoint && string.Equals(PluginIdentity.Canonical(t.Identifier),
                 PluginIdentity.Canonical(saved.PluginIdentifier), StringComparison.OrdinalIgnoreCase)));
         if (saved is not null && selected is null)
         {
-            selected = new EditorHotkeyTarget($"{saved.TargetName} (unavailable)", saved.TargetName, saved.VstId, saved.GroupId, saved.PluginIdentifier);
+            selected = new EditorHotkeyTarget($"{saved.TargetName} (unavailable)", saved.TargetName, saved.VstId, saved.GroupId, saved.PluginIdentifier, saved.Endpoint);
             choices.Add(selected);
         }
         var target = new ComboBox { ItemsSource = choices, SelectedItem = selected, Height = 34,
-            Margin = new Thickness(0, 0, 10, 0), ToolTip = "VST or group" };
+            Margin = new Thickness(0, 0, 10, 0), ToolTip = "VST, group or endpoint" };
         var text = new FrameworkElementFactory(typeof(TextBlock));
         text.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Label"));
         text.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
         target.ItemTemplate = new DataTemplate { VisualTree = text };
         var action = new ComboBox { Height = 34, Margin = new Thickness(0, 0, 10, 0),
             ItemTemplate = target.ItemTemplate, ToolTip = "Action for this hotkey" };
-        System.Windows.Automation.AutomationProperties.SetName(target, "VST or group");
+        System.Windows.Automation.AutomationProperties.SetName(target, "VST, group or endpoint");
         System.Windows.Automation.AutomationProperties.SetName(action, "Hotkey action");
         void UpdateActions(EditorHotkeyAction preferred)
         {
             action.IsEnabled = target.SelectedItem is EditorHotkeyTarget;
-            var options = GlobalEditorHotkeys.ActionsFor(target.SelectedItem is EditorHotkeyTarget { GroupId.Length: > 0 });
+            var options = GlobalEditorHotkeys.ActionsFor(target.SelectedItem is EditorHotkeyTarget { GroupId.Length: > 0 },
+                (target.SelectedItem as EditorHotkeyTarget)?.Endpoint);
             action.ItemsSource = options;
             action.SelectedItem = options.FirstOrDefault(a => a.Action == preferred) ?? options[0];
         }
@@ -160,10 +164,11 @@ internal sealed class EditorHotkeysWindow : Window
         save.Click += (_, _) =>
         {
             if (target.SelectedItem is not EditorHotkeyTarget chosen || action.SelectedItem is not EditorHotkeyActionChoice chosenAction || key.VirtualKey == 0)
-            { _error.Text = "Choose a VST or group, an action and a key combination."; return; }
+            { _error.Text = "Choose a target, an action and a key combination."; return; }
             var binding = new EditorHotkeySnapshot
             {
                 Edition = _edition, VstId = chosen.VstId, GroupId = chosen.GroupId, PluginIdentifier = chosen.Identifier,
+                Endpoint = chosen.Endpoint,
                 TargetName = chosen.Name, Action = chosenAction.Action, VirtualKey = key.VirtualKey, Modifiers = key.Modifiers
             };
             var proposed = _bindings.ToList();

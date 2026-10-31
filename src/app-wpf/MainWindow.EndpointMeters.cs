@@ -9,7 +9,8 @@ namespace Elka.VoiceMeeterFxHost.App;
 
 public partial class MainWindow
 {
-    private readonly List<(EndpointMeterAddress Address, EndpointMeterView View)> _endpointMeters = [];
+    private readonly List<(EndpointMeterAddress Address, EndpointMeterView View, EndpointPeakState Peak, EndpointPeakIndicator Indicator)> _endpointMeters = [];
+    private readonly Dictionary<(VoicemeeterKind Kind, EndpointMeterAddress Address), EndpointPeakState> _endpointPeakStates = [];
     private readonly float[] _endpointMeterPeaks = new float[8];
     private bool _endpointMetersInitialized;
     private bool _endpointMeterRendering;
@@ -43,7 +44,13 @@ public partial class MainWindow
         _endpointMeterRenderBucket = bucket;
         double now = timestamp / (double)Stopwatch.Frequency;
         for (int i = 0; i < _endpointMeters.Count; i++)
-            _endpointMeters[i].View.Advance(reader.Take(i, _endpointMeterPeaks) ? _endpointMeterPeaks : null, now);
+        {
+            var item = _endpointMeters[i];
+            bool fresh = reader.Take(i, _endpointMeterPeaks, out bool fullScale);
+            item.View.Advance(fresh ? _endpointMeterPeaks : null, now);
+            item.Peak.Observe(fullScale);
+            item.Indicator.Refresh();
+        }
     }
 
     private void StopEndpointMeterRendering()
@@ -51,6 +58,18 @@ public partial class MainWindow
         if (_endpointMeterRendering) CompositionTarget.Rendering -= RenderEndpointMeters;
         _endpointMeterRendering = false;
         _endpointMeterRenderBucket = -1;
+        RetainPendingEndpointPeaks();
+    }
+
+    private void RetainPendingEndpointPeaks()
+    {
+        if (_endpointMeterReader is not { } reader || !reader.Matches(_endpointMeters.Select(item => item.Address).ToArray())) return;
+        for (int i = 0; i < _endpointMeters.Count; i++)
+        {
+            reader.Take(i, _endpointMeterPeaks, out bool fullScale);
+            _endpointMeters[i].Peak.Observe(fullScale);
+            _endpointMeters[i].Indicator.Refresh();
+        }
     }
 
     private void QueueEndpointMeterUpdate()
@@ -87,13 +106,14 @@ public partial class MainWindow
     {
         StopEndpointMeterRendering();
         _endpointMeterReader?.Dispose();
+        RetainPendingEndpointPeaks();
         _endpointMeterReader = null;
         Array.Clear(_endpointMeterPeaks);
         foreach (var item in _endpointMeters) item.View.Clear();
     }
 
     private void DrawEndpointMeters(IoEndpoint endpoint, CallbackMode mode, bool outputSide,
-        int pinCount, double x, double y, List<FrameworkElement> elements)
+        int pinCount, double x, double y, Border card, List<FrameworkElement> elements)
     {
         if (!_settings.NodeVuMetersEnabled) return;
         var view = new EndpointMeterView(pinCount, SignalMonitorHue(mode, endpoint, outputSide))
@@ -106,7 +126,21 @@ public partial class MainWindow
         elements.Add(view);
         int stream = _vstCanvasMode == CallbackMode.Main || IsInputDirectOutputVstView()
             ? 2 : mode == CallbackMode.Output ? 1 : 0;
-        _endpointMeters.Add((new EndpointMeterAddress(stream, outputSide, endpoint.Range.Start, pinCount), view));
+        var address = new EndpointMeterAddress(stream, outputSide, endpoint.Range.Start, endpoint.ChannelCount);
+        var key = (_kind, address);
+        if (!_endpointPeakStates.TryGetValue(key, out var peak))
+            _endpointPeakStates[key] = peak = new EndpointPeakState();
+        var indicator = new EndpointPeakIndicator(peak, card.Background, card.BorderBrush,
+            $"{endpoint.Name} / {(outputSide ? "returned output" : "incoming input")}", () =>
+            {
+                _endpointMeterReader?.ResetPeak(address);
+                peak.Reset();
+            });
+        Canvas.SetLeft(indicator, x + (outputSide ? 5 : VstEndpointCardWidth - EndpointPeakIndicator.Diameter - 5));
+        Canvas.SetTop(indicator, y + 7);
+        RoutingCanvas.Children.Add(indicator);
+        elements.Add(indicator);
+        _endpointMeters.Add((address, view, peak, indicator));
     }
 
     private TextBlock EndpointCardTitle(IoEndpoint endpoint, int pinCount)

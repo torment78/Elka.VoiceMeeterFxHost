@@ -18,6 +18,8 @@ internal static class Program
         CheckBallistics();
         CheckMeterBackground();
         CheckReader();
+        CheckPeakIndicators();
+        CheckPeakReader();
         CheckHotkeys();
         Console.WriteLine($"PASS: {_checks} endpoint-meter and linked-power checks. No audio engine started.");
     }
@@ -271,6 +273,97 @@ internal static class Program
         Console.WriteLine($"Synthetic reader only: {source.ReadCount} reads; allocations {GC.GetTotalAllocatedBytes(false) - beforeBytes:N0} bytes; CPU {100 * (process.TotalProcessorTime - beforeCpu).TotalSeconds / clock.Elapsed.TotalSeconds / Environment.ProcessorCount:F3}%.");
     }
 
+    private static void CheckPeakIndicators()
+    {
+        var input = new EndpointPeakState();
+        var output = new EndpointPeakState();
+        foreach (float value in new[] { 0f, .999f, -.999f, float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+            Check(!EndpointPeakState.ReachedFullScale([value]), "silence, sub-full-scale and invalid samples do not latch");
+        foreach (float value in new[] { 1f, -1f, 1.01f, -1.01f, 20f })
+            Check(EndpointPeakState.ReachedFullScale([value]), "full-scale threshold includes equality and both polarities");
+        Check(EndpointPeakState.ReachedFullScale([0, 0, 0, 0, 0, 0, 0, 1]), "channel eight can trigger the endpoint");
+        input.Observe(true);
+        input.Observe(false);
+        Check(input.IsLatched && !output.IsLatched, "latch survives silence and is independent from the other side");
+        var fill = new SolidColorBrush(Color.FromRgb(29, 48, 35));
+        var outline = new SolidColorBrush(Color.FromRgb(70, 185, 100));
+        var button = new EndpointPeakIndicator(input, fill, outline, "Test input", input.Reset);
+        Check(((SolidColorBrush)button.Background).Color == Color.FromRgb(255, 78, 82), "latched indicator is red");
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!input.IsLatched && ReferenceEquals(button.Background, fill) && ReferenceEquals(button.BorderBrush, outline),
+            "click resets only the indicator and restores the exact node colours");
+        input.Observe(true); button.Refresh();
+        Check(input.IsLatched && !ReferenceEquals(button.Background, fill), "a new measured peak relatches after reset");
+        foreach (double scale in new[] { 1.0, 1.25, 1.5, 1.75, 2.0 })
+        {
+            var canvas = new Canvas { Width = 24, Height = 24, Background = Brushes.Transparent };
+            var indicator = new EndpointPeakIndicator(input, fill, outline, "Test", input.Reset);
+            Canvas.SetLeft(indicator, 6); Canvas.SetTop(indicator, 6);
+            canvas.Children.Add(indicator);
+            canvas.Measure(new Size(24, 24)); canvas.Arrange(new Rect(0, 0, 24, 24)); canvas.UpdateLayout();
+            var image = new RenderTargetBitmap((int)(24 * scale), (int)(24 * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            image.Render(canvas);
+            int stride = image.PixelWidth * 4;
+            var pixels = new byte[stride * image.PixelHeight]; image.CopyPixels(pixels, stride, 0);
+            int center = (int)(12 * scale) * stride + (int)(12 * scale) * 4;
+            Check(indicator.ActualWidth == 12 && indicator.ActualHeight == 12 && pixels[center + 2] == 255,
+                $"round indicator remains bounded and visibly red at {scale}x DPI");
+            Check(pixels[(int)(6 * scale) * stride + (int)(6 * scale) * 4 + 3] == 0,
+                "indicator has no square background at its corner");
+        }
+    }
+
+    private static void CheckPeakReader()
+    {
+        var address = new EndpointMeterAddress(0, false, 10, 8);
+        var source = new QueuedPeakSource();
+        var peaks = new float[8];
+        using var reader = new EndpointMeterReader([address], source);
+        bool Take(out bool fullScale) => reader.Take(0, peaks, out fullScale);
+        void Frame(float value, bool expected)
+        {
+            int target = Volatile.Read(ref source.Delivered) + 1;
+            source.Frames.Enqueue([0, 0, 0, 0, 0, 0, 0, value]);
+            Check(SpinWait.SpinUntil(() => Volatile.Read(ref source.Completed) >= target, 2000), "queued sample reaches the UI reader");
+            Check(Take(out bool fullScale), "completed frame available");
+            Check(fullScale == expected, "reader reports the correct full-scale latch flag");
+        }
+        Frame(1f, true);
+        source.Frames.Enqueue([0, 0, 0, 0, 0, 0, 0, 1]);
+        source.Frames.Enqueue(new float[8]);
+        Check(SpinWait.SpinUntil(() => Volatile.Read(ref source.Completed) >= 3, 2000), "multiple reads can occur before a UI frame");
+        Check(Take(out bool held) && held, "short measured peak is retained even when the UI misses a frame");
+        reader.ResetPeak(address);
+        // The next accumulated snapshot may straddle the reset click; consume it without relatching.
+        Frame(1f, false);
+        Frame(0f, false);
+        Frame(-1f, true);
+        source.Frames.Enqueue([1, 0, 0, 0, 0, 0, 0, 0]);
+        Check(SpinWait.SpinUntil(() => Volatile.Read(ref source.Completed) >= 7, 2000), "pending reset fixture delivered");
+        reader.ResetPeak(address);
+        Take(out held);
+        Check(!held, "reset clears a queued peak without replaying it from meter values");
+        reader.ResetPeak(new EndpointMeterAddress(1, true, 56, 8));
+        Check(reader.Failure is null, "a stale UI reset cannot reset the wrong reader endpoint or throw");
+    }
+
+    private sealed class QueuedPeakSource : IEndpointPeakSource
+    {
+        internal readonly System.Collections.Concurrent.ConcurrentQueue<float[]> Frames = new();
+        internal int Delivered, Completed;
+        public int Open(EndpointMeterAddress address) => 1;
+        public void Close(int handle) { }
+        public int Read(int handle, float[] peaks, out ulong sequence)
+        {
+            Volatile.Write(ref Completed, Volatile.Read(ref Delivered));
+            sequence = (ulong)Volatile.Read(ref Delivered);
+            if (!Frames.TryDequeue(out var frame)) return 1;
+            frame.CopyTo(peaks, 0);
+            sequence = (ulong)Interlocked.Increment(ref Delivered);
+            return 0;
+        }
+    }
+
     private static void Check(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
@@ -320,6 +413,21 @@ internal static class Program
         Check(!manager.TryApply([original with { Action = (EditorHotkeyAction)99 }], out _), "unknown saved action rejected");
         Check(manager.TryApply([original, original with { Action = EditorHotkeyAction.Reload, VirtualKey = 0x44 }], out _),
             "one VST can have different shortcuts for different actions");
+        var endpoint = new EndpointHotkeyTarget(CallbackMode.Input, "Input:VAIO:10:17", false, 0, 8);
+        var endpointBinding = original with { VstId = -1, Endpoint = endpoint };
+        Check(GlobalEditorHotkeys.ActionsFor(false, endpoint).Count == 4, "multichannel endpoints offer monitor and three pin actions");
+        Check(GlobalEditorHotkeys.ActionsFor(false, endpoint with { Channels = 2 }).Count == 1,
+            "stereo hardware only offers signal monitor");
+        foreach (var choice in GlobalEditorHotkeys.ActionsFor(false, endpoint))
+        {
+            var saved = endpointBinding with { Action = choice.Action };
+            Check(manager.TryApply([saved], out _), $"endpoint {choice.Label} registers");
+            Check(JsonSerializer.Deserialize<EditorHotkeySnapshot>(JsonSerializer.Serialize(saved)) == saved,
+                "endpoint identity, side, stream and action survive settings roundtrip");
+        }
+        Check(!manager.TryApply([endpointBinding with { Action = EditorHotkeyAction.Reload }], out _), "endpoint cannot reload plugins");
+        Check(!manager.TryApply([endpointBinding with { Endpoint = endpoint with { Channels = 2 }, Action = EditorHotkeyAction.ExpandPins }], out _),
+            "hardware cannot expand nonexistent pins");
         manager.Dispose();
         Check(active.Count == 0, "shutdown unregisters every shortcut");
         var settings = new FxHostSettings { NodeVuMetersEnabled = false, EditorHotkeys = [original] };

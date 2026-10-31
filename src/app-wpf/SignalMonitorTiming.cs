@@ -10,12 +10,34 @@ internal sealed class SignalMonitorMailbox
     private readonly SignalMonitorHistory _history = new();
     private bool _available;
     private double _firstPendingTime;
+    private readonly int _channels;
+    private float? _maximumPeak;
+    private bool _discardNextPeak;
     internal Action? Updated;
+
+    internal SignalMonitorMailbox(int channels = 8) => _channels = Math.Clamp(channels, 1, 8);
+
+    internal float? MaximumPeak { get { lock (_gate) return _maximumPeak; } }
+
+    internal void ResetPeak()
+    {
+        lock (_gate)
+        {
+            _maximumPeak = null;
+            // The next native snapshot can still include samples from before the click.
+            _discardNextPeak = true;
+        }
+    }
 
     internal void Publish(SignalMonitorFrame frame)
     {
         lock (_gate)
         {
+            if (!_discardNextPeak)
+                for (int i = 0; i < _channels; ++i)
+                    if (float.IsFinite(frame.Peaks[i]))
+                        _maximumPeak = Math.Max(_maximumPeak ?? 0, Math.Abs(frame.Peaks[i]));
+            _discardNextPeak = false;
             _history.Append(frame);
             if (_available && frame.Timestamp - _firstPendingTime > 0.1) _available = false;
             if (!_available) _firstPendingTime = frame.Timestamp;

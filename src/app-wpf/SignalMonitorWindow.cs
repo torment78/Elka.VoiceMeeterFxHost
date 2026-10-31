@@ -16,7 +16,12 @@ namespace Elka.VoiceMeeterFxHost.App;
 internal sealed class SignalMonitorWindow : Window
 {
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly SignalMonitorMailbox _mailbox = new();
+    private readonly SignalMonitorMailbox _mailbox;
+    private readonly TextBlock _peakText = new() { FontSize = 12, Foreground = Brushes.WhiteSmoke };
+    private readonly System.Windows.Shapes.Ellipse _peakDot = new()
+        { Width = 10, Height = 10, StrokeThickness = 1, Margin = new Thickness(7, 0, 0, 0) };
+    private readonly Brush _peakWarning = new SolidColorBrush(Color.FromRgb(255, 78, 82));
+    private float? _displayPeak;
     private readonly SignalMonitorView _view;
     private readonly Border _outline;
     private readonly Task _reader;
@@ -33,6 +38,7 @@ internal sealed class SignalMonitorWindow : Window
     {
         // Do not inherit the main dispatcher's implicit Window style/resources.
         Style = new Style(typeof(Window));
+        _mailbox = new SignalMonitorMailbox(channelCount);
         Title = $"{endpoint} - {side} - Signal Monitor";
         Width = channelCount > 2 ? 760 : 660;
         Height = 510;
@@ -42,10 +48,11 @@ internal sealed class SignalMonitorWindow : Window
         Background = new SolidColorBrush(Color.FromRgb(17, 20, 23));
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Icon = new BitmapImage(new Uri("pack://application:,,,/Assets/VoicemeeterDelay.ico"));
-        _view = new SignalMonitorView(endpoint, side, channelCount, hue);
+        _view = new SignalMonitorView(endpoint, side, channelCount, hue) { HeaderRightInset = 150 };
         var surface = new Grid();
         surface.Children.Add(_view);
         surface.Children.Add(CreateViewControls());
+        surface.Children.Add(CreatePeakControl());
         _outline = new Border { BorderThickness = new Thickness(1), Child = surface, Padding = new Thickness(1) };
         Content = _outline;
         UpdateHue(hue);
@@ -76,6 +83,37 @@ internal sealed class SignalMonitorWindow : Window
             int enabled = 1;
             DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref enabled, sizeof(int));
         };
+    }
+
+    private Button CreatePeakControl()
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        content.Children.Add(_peakText);
+        content.Children.Add(_peakDot);
+        var button = MonitorButton(content);
+        button.HorizontalAlignment = HorizontalAlignment.Right;
+        button.VerticalAlignment = VerticalAlignment.Top;
+        button.Width = 142;
+        button.Margin = new Thickness(0, 7, 10, 0);
+        button.Background = Brushes.Transparent;
+        button.BorderBrush = Brushes.Transparent;
+        button.ToolTip = "Highest captured sample peak since opening or reset. Click to reset. Not a true-peak or clipping detector.";
+        AutomationProperties.SetName(button, "Reset peak");
+        button.Click += (_, _) => { _mailbox.ResetPeak(); RefreshPeakReadout(); };
+        RefreshPeakReadout();
+        return button;
+    }
+
+    internal void RefreshPeakReadout()
+    {
+        float? peak = _mailbox.MaximumPeak;
+        if (peak == _displayPeak && _peakText.Text.Length != 0) return;
+        _displayPeak = peak;
+        string level = peak is null ? "--" : peak == 0 ? "-inf" :
+            (20 * Math.Log10(peak.Value)).ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
+        _peakText.Text = $"Peak {level} dBFS";
+        _peakText.Foreground = peak >= 1 ? _peakWarning : Brushes.WhiteSmoke;
+        _peakDot.Fill = peak >= 1 ? _peakWarning : Brushes.Transparent;
     }
 
     private Grid CreateViewControls()
@@ -200,6 +238,7 @@ internal sealed class SignalMonitorWindow : Window
     internal void UpdateHue(Color hue)
     {
         _outline.BorderBrush = new SolidColorBrush(hue);
+        _peakDot.Stroke = _outline.BorderBrush;
         _view.SetHue(hue);
     }
 
@@ -239,6 +278,7 @@ internal sealed class SignalMonitorWindow : Window
             {
                 bool fresh = _mailbox.Take(_displayFrame, _displayHistory);
                 _view.Advance(fresh ? _displayFrame : null, _displayHistory);
+                RefreshPeakReadout();
             }
         }, DispatcherPriority.Render);
     }
@@ -288,6 +328,7 @@ internal static class NativeSignalMonitor
 
 internal sealed class SignalMonitorView : FrameworkElement
 {
+    internal double HeaderRightInset { get; set; }
     internal long RenderedFrames { get; private set; }
     private static readonly string[] Labels = ["L", "R", "C", "LFE", "SL", "SR", "RL", "RR"];
     private static readonly Brush TextBrush = Frozen(Color.FromRgb(237, 243, 246));
@@ -389,7 +430,7 @@ internal sealed class SignalMonitorView : FrameworkElement
         double width = ActualWidth, height = ActualHeight;
         if (width < 100 || height < 100) return;
         dc.DrawRectangle(_header, null, new Rect(0, 0, width, 61));
-        Text(dc, _endpoint, 16, 11, 15, TextBrush, width - 32, true);
+        Text(dc, _endpoint, 16, 11, 15, TextBrush, Math.Max(40, width - 32 - HeaderRightInset), true);
         Text(dc, $"{_side}  /  {_channels} channels", 16, 35, 11, _hue);
         bool live = SignalMonitorBallistics.Now - _ballistics.LastSignal < 0.4;
         string status = live ? $"{_ballistics.SampleRate:N0} Hz" : "Waiting for audio stream";

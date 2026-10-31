@@ -55,8 +55,8 @@ internal sealed class GlobalEditorHotkeys : IDisposable
         var used = new HashSet<(uint, int)>();
         foreach (var binding in bindings)
         {
-            if (!ActionsFor(!string.IsNullOrEmpty(binding.GroupId)).Any(a => a.Action == binding.Action))
-                return "Choose an action supported by this VST or group.";
+            if (!ActionsFor(!string.IsNullOrEmpty(binding.GroupId), binding.Endpoint).Any(a => a.Action == binding.Action))
+                return "Choose an action supported by this VST, group or endpoint.";
             if (binding.Modifiers == 0 || (binding.Modifiers & ~15u) != 0)
                 return "Choose at least one modifier: Ctrl, Alt, Shift or Win.";
             if (!AllowedKeys.Contains(binding.VirtualKey)) return "Choose a letter, number or function key (except F12).";
@@ -65,7 +65,21 @@ internal sealed class GlobalEditorHotkeys : IDisposable
         return string.Empty;
     }
 
-    internal static IReadOnlyList<EditorHotkeyActionChoice> ActionsFor(bool group) => group ? GroupActions : VstActions;
+    internal static IReadOnlyList<EditorHotkeyActionChoice> ActionsFor(bool group, EndpointHotkeyTarget? endpoint = null) =>
+        endpoint is not null ? endpoint.Channels > 2 ? EndpointActions : StereoEndpointActions : group ? GroupActions : VstActions;
+
+    private static readonly EditorHotkeyActionChoice[] StereoEndpointActions =
+    [
+        new(EditorHotkeyAction.Open, "Signal Monitor Open / Close")
+    ];
+
+    private static readonly EditorHotkeyActionChoice[] EndpointActions =
+    [
+        new(EditorHotkeyAction.Open, "Signal Monitor Open / Close"),
+        new(EditorHotkeyAction.MinimizePins, "Minimize Pins"),
+        new(EditorHotkeyAction.ExpandPins, "Expand Pins"),
+        new(EditorHotkeyAction.TogglePins, "Minimize / Expand Pins")
+    ];
 
     private static readonly EditorHotkeyActionChoice[] VstActions =
     [

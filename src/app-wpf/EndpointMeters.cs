@@ -40,6 +40,8 @@ internal sealed class EndpointMeterReader : IDisposable
     private readonly EndpointMeterAddress[] _addresses;
     private readonly float[][] _pending;
     private readonly bool[] _fresh;
+    private readonly bool[] _pendingFullScale;
+    private readonly bool[] _discardNextFullScale;
     private readonly object _gate = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _reader;
@@ -52,21 +54,40 @@ internal sealed class EndpointMeterReader : IDisposable
         _source = source;
         _pending = addresses.Select(_ => new float[8]).ToArray();
         _fresh = new bool[addresses.Length];
+        _pendingFullScale = new bool[addresses.Length];
+        _discardNextFullScale = new bool[addresses.Length];
         _reader = Task.Factory.StartNew(Read, CancellationToken.None,
             TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     internal bool Matches(IReadOnlyList<EndpointMeterAddress> addresses) => _addresses.SequenceEqual(addresses);
 
-    internal bool Take(int index, float[] peaks)
+    internal bool Take(int index, float[] peaks) => Take(index, peaks, out _);
+
+    internal bool Take(int index, float[] peaks, out bool fullScale)
     {
         lock (_gate)
         {
+            fullScale = false;
             if (!_fresh[index]) return false;
+            fullScale = _pendingFullScale[index];
+            _pendingFullScale[index] = false;
             Array.Copy(_pending[index], peaks, 8);
             Array.Clear(_pending[index]);
             _fresh[index] = false;
             return true;
+        }
+    }
+
+    internal void ResetPeak(EndpointMeterAddress address)
+    {
+        int index = Array.IndexOf(_addresses, address);
+        if (index < 0) return;
+        lock (_gate)
+        {
+            _pendingFullScale[index] = false;
+            // The next snapshot can still contain audio captured before the click.
+            _discardNextFullScale[index] = true;
         }
     }
 
@@ -100,6 +121,8 @@ internal sealed class EndpointMeterReader : IDisposable
                     sequences[i] = sequence;
                     lock (_gate)
                     {
+                        if (_discardNextFullScale[i]) _discardNextFullScale[i] = false;
+                        else _pendingFullScale[i] |= EndpointPeakState.ReachedFullScale(scratch.AsSpan(0, _addresses[i].Channels));
                         for (int channel = 0; channel < 8; channel++)
                             _pending[i][channel] = Math.Max(_pending[i][channel], scratch[channel]);
                         _fresh[i] = true;

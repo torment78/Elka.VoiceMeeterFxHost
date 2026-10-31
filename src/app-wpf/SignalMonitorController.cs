@@ -11,6 +11,7 @@ internal sealed class SignalMonitorController
     private readonly Thread _thread;
     private SignalMonitorWindow? _window;
     private volatile bool _closing;
+    internal bool IsClosing => _closing;
     private Color _hue;
 
     internal SignalMonitorController(Func<SignalMonitorWindow> create, Color hue, Action<Exception?> finished)

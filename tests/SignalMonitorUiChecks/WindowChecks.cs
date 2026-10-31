@@ -18,10 +18,17 @@ internal static class WindowChecks
         }
         foreach (int channels in new[] { 2, 8 })
         {
+            SignalMonitorMailbox? mailbox = null;
+            using var ready = new ManualResetEventSlim();
             var window = new SignalMonitorWindow(channels == 2 ? "Hardware In 1" : "VAIO3", "Source", 0, false, 0, channels,
-                Color.FromRgb(85, 194, 122), (_, cancel) => cancel.WaitHandle.WaitOne());
+                Color.FromRgb(85, 194, 122), (box, cancel) => { mailbox = box; ready.Set(); cancel.WaitHandle.WaitOne(); });
             try
             {
+                Check(ready.Wait(3000), "monitor reader initialized");
+                var peakFrame = new SignalMonitorFrame();
+                peakFrame.Peaks[0] = 2;
+                mailbox!.Publish(peakFrame);
+                window.RefreshPeakReadout();
                 var content = (FrameworkElement)window.Content;
                 var view = Descendants(content).OfType<SignalMonitorView>().Single();
                 var data = new SignalMonitorHistory();
@@ -43,7 +50,8 @@ internal static class WindowChecks
                     content.Measure(size); content.Arrange(new Rect(size)); content.UpdateLayout();
                     var buttons = Descendants(content).OfType<Button>().ToArray();
                     var duration = Descendants(content).OfType<ComboBox>().Single();
-                    Check(buttons.Length == 3 && duration.Items.Count == 3, "History, Spectrum, Pause and three durations available");
+                    Check(buttons.Length == 4 && duration.Items.Count == 3, "History, Spectrum, Pause, Peak reset and three durations available");
+                    Check(Descendants(content).OfType<TextBlock>().Any(t => t.Text == "Peak +6.02 dBFS"), "positive sample peak is visible");
                     foreach (var control in buttons.Cast<FrameworkElement>().Append(duration))
                     {
                         var bounds = control.TransformToAncestor(content).TransformBounds(new Rect(control.RenderSize));
@@ -74,6 +82,11 @@ internal static class WindowChecks
                     pause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Check(!view.HistoryPaused, "Resume returns to live history");
                 }
+                Descendants(content).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "Reset peak")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(Descendants(content).OfType<TextBlock>().Any(t => t.Text == "Peak -- dBFS"), "click resets the visible maximum");
+                Check(Descendants(content).OfType<System.Windows.Shapes.Ellipse>().Single().Fill == Brushes.Transparent,
+                    "click clears the warning dot");
             }
             finally { window.Close(); }
             Check(window.ReaderFailure is null, "Window reader closes without an engine connection");

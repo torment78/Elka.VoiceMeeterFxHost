@@ -597,11 +597,17 @@ internal enum EditorHotkeyAction
     PowerOn = 8,
     PowerOff = 9,
     BypassAndPowerOff = 10,
-    UnbypassAndPowerOn = 11
+    UnbypassAndPowerOn = 11,
+    MinimizePins = 12,
+    ExpandPins = 13,
+    TogglePins = 14
 }
+
+internal sealed record EndpointHotkeyTarget(CallbackMode Mode, string Key, bool OutputSide, int Stream, int Channels);
 
 internal sealed record EditorHotkeySnapshot
 {
+    public EndpointHotkeyTarget? Endpoint { get; set; }
     public VoicemeeterKind Edition { get; set; } = VoicemeeterKind.Potato;
     public int VstId { get; set; } = -1;
     public string GroupId { get; set; } = string.Empty;

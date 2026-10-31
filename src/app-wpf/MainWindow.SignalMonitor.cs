@@ -8,22 +8,31 @@ public partial class MainWindow
     private sealed record EndpointMonitor(CallbackMode Mode, IoEndpoint Endpoint, bool OutputSide,
         VoicemeeterKind Edition, SignalMonitorController Window);
     private readonly Dictionary<string, EndpointMonitor> _signalMonitors = [];
+    private Func<IoEndpoint, bool, int, Color, SignalMonitorWindow> _createSignalMonitorWindow =
+        (endpoint, outputSide, stream, hue) => new SignalMonitorWindow(endpoint.Name,
+            outputSide ? "Destination" : "Source", stream, outputSide, endpoint.Range.Start, endpoint.ChannelCount, hue);
 
-    private void OpenSignalMonitor(CallbackMode mode, IoEndpoint endpoint, bool outputSide)
+    private void OpenSignalMonitor(CallbackMode mode, IoEndpoint endpoint, bool outputSide, int? selectedStream = null, bool toggle = false)
     {
-        int stream = mode == CallbackMode.Output ? 1 : 0;
+        int stream = selectedStream ?? CanvasSignalMonitorStream(mode);
+        if (!EndpointHotkeyStreamAvailable(stream)) return;
         string key = $"{stream}:{endpoint.Key(mode)}:{outputSide}";
         if (_signalMonitors.TryGetValue(key, out var existing))
         {
-            existing.Window.Activate();
-            return;
+            if (!existing.Window.IsClosing && existing.Edition == _kind)
+            {
+                if (toggle) { _signalMonitors.Remove(key); existing.Window.Close(); }
+                else existing.Window.Activate();
+                return;
+            }
+            _signalMonitors.Remove(key);
+            existing.Window.Close();
         }
         try
         {
             Color hue = SignalMonitorHue(mode, endpoint, outputSide);
             SignalMonitorController? window = null;
-            window = new SignalMonitorController(() => new SignalMonitorWindow(endpoint.Name,
-                outputSide ? "Destination" : "Source", stream, outputSide, endpoint.Range.Start, endpoint.ChannelCount, hue),
+            window = new SignalMonitorController(() => _createSignalMonitorWindow(endpoint, outputSide, stream, hue),
                 hue, failure =>
                 {
                     if (Dispatcher.HasShutdownStarted) return;

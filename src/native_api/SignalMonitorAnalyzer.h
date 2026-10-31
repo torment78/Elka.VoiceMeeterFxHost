@@ -19,7 +19,21 @@ public:
     {
         std::fill_n(destination, Bins, -90.0f);
         const int samples = snapshot.sampleRate <= 96000 ? 2048 : SignalMonitorHub::Samples;
-        if (snapshot.validSamples < samples || snapshot.sampleRate <= 0 || snapshot.channelCount <= 0) return;
+        if (snapshot.sampleRate != spectrumRate || snapshot.channelCount != spectrumChannels)
+        {
+            hasSpectrum = false;
+            spectrumRate = snapshot.sampleRate;
+            spectrumChannels = snapshot.channelCount;
+        }
+        if (snapshot.validSamples < samples || snapshot.sampleRate <= 0 || snapshot.channelCount <= 0)
+        {
+            // Bridge only a short monitor-copy gap while a contiguous FFT window refills.
+            // Do not manufacture a spectrum from spliced data or hold stale results indefinitely.
+            if (hasSpectrum && snapshot.endFrame >= spectrumEndFrame &&
+                snapshot.endFrame - spectrumEndFrame <= static_cast<uint64_t>(std::max(0, spectrumRate) / 5))
+                std::copy(lastSpectrum.begin(), lastSpectrum.end(), destination);
+            return;
+        }
         auto& fft = samples == 2048 ? shortFft : longFft;
         auto& window = samples == 2048 ? shortWindow : longWindow;
         power.fill(0);
@@ -46,6 +60,9 @@ public:
             const float amplitude = 2.0f * std::sqrt(maximum / snapshot.channelCount) / samples;
             destination[i] = std::clamp(20.0f * std::log10(std::max(amplitude, 0.000001f)), -90.0f, 6.0f);
         }
+        std::copy_n(destination, Bins, lastSpectrum.begin());
+        spectrumEndFrame = snapshot.endFrame;
+        hasSpectrum = true;
     }
 
 private:
@@ -54,5 +71,9 @@ private:
     juce::dsp::WindowingFunction<float> longWindow{SignalMonitorHub::Samples, juce::dsp::WindowingFunction<float>::hann};
     std::array<float, SignalMonitorHub::Samples * 2> fftData{};
     std::array<float, SignalMonitorHub::Samples / 2 + 1> power{};
+    std::array<float, Bins> lastSpectrum{};
+    uint64_t spectrumEndFrame = 0;
+    int spectrumRate = 0, spectrumChannels = 0;
+    bool hasSpectrum = false;
 };
 }

@@ -24,6 +24,7 @@ public:
         int channelCount = 0;
         int validSamples = 0;
         uint64_t sequence = 0;
+        uint64_t endFrame = 0;
         std::array<float, Channels> peaks{};
         std::array<std::array<float, Samples>, Channels> audio{};
     };
@@ -80,6 +81,7 @@ public:
             result.channelCount = data.channelCount;
             result.validSamples = data.validSamples;
             result.sequence = data.sequence;
+            result.endFrame = data.endFrame;
             result.peaks = data.peaks;
             session.data.peaks.fill(0);
             for (int c = 0; c < data.channelCount; ++c)
@@ -101,7 +103,11 @@ public:
     void capture(int stream, bool output, float* const* channels, int channelCount, int frames, int rate) noexcept
     {
         uint32_t mask = active.load(std::memory_order_acquire);
-        if (!mask || frames <= 0 || rate <= 0) return;
+        if (!mask || frames <= 0 || rate <= 0 || stream < 0 || stream > 2) return;
+        // Advance even when a busy display reader causes a tap copy to be skipped.
+        // Each source/destination stream has its own sample clock; this is metadata only.
+        const auto firstFrame = clocks[static_cast<size_t>(stream * 2 + (output ? 1 : 0))]
+            .fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
         while (mask)
         {
             const int index = std::countr_zero(mask);
@@ -112,12 +118,17 @@ public:
             if (session && session->stream == stream && session->output == output)
             {
                 auto& data = session->data;
-                if (data.sampleRate != rate)
+                const bool changedRate = data.sampleRate != rate;
+                if (changedRate || data.endFrame != firstFrame)
+                {
+                    // An FFT must never join samples from opposite sides of a missed copy.
+                    data.validSamples = 0;
+                    session->position = 0;
+                }
+                if (changedRate)
                 {
                     data.sampleRate = rate;
-                    data.validSamples = 0;
                     data.peaks.fill(0);
-                    session->position = 0;
                 }
                 for (int c = 0; c < data.channelCount; ++c)
                 {
@@ -135,6 +146,7 @@ public:
                 }
                 session->position = (session->position + frames) % Samples;
                 data.validSamples = std::min(Samples, data.validSamples + frames);
+                data.endFrame = firstFrame + static_cast<uint64_t>(frames);
                 ++data.sequence;
             }
             slot.busy.clear(std::memory_order_release);
@@ -144,6 +156,7 @@ public:
     bool hasMonitors() const noexcept { return active.load(std::memory_order_relaxed) != 0; }
 
 private:
+    friend struct SignalMonitorTestAccess;
     struct Session
     {
         int id = 0, stream = 0, first = 0, position = 0;
@@ -160,6 +173,8 @@ private:
         while (slot.busy.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
     }
     std::array<Slot, Capacity> slots;
+    static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    std::array<std::atomic<uint64_t>, 6> clocks{};
     std::atomic<uint32_t> active{0};
     int nextId = 1;
 };

@@ -2245,7 +2245,7 @@ float sanitizePluginSample(float sample) noexcept
     if (!std::isfinite(sample))
         return 0.0f;
 
-    return std::clamp(sample, -8.0f, 8.0f);
+    return sample;
 }
 
 bool processPluginBlockSafely(juce::AudioPluginInstance& plugin, juce::AudioBuffer<float>& block, juce::MidiBuffer& midi) noexcept

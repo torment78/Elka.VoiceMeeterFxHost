@@ -1,0 +1,68 @@
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+
+@sample_helper@
+
+int main()
+{
+    int checks = 0;
+    const auto check = [&](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+        ++checks;
+    };
+    const auto unchanged = [&](float value) {
+        check(std::bit_cast<uint32_t>(sanitizePluginSample(value)) == std::bit_cast<uint32_t>(value),
+              "Finite sample must pass through bit-for-bit");
+    };
+    try
+    {
+        const std::array<float, 24> finiteValues {
+            0.0f, -0.0f, 0.25f, -0.25f, 1.0f, -1.0f, 2.0f, -2.0f,
+            7.999f, -7.999f, 8.0f, -8.0f,
+            std::nextafter(8.0f, 9.0f), std::nextafter(-8.0f, -9.0f),
+            16.0f, -16.0f, 100.0f, -100.0f,
+            std::numeric_limits<float>::min(), -std::numeric_limits<float>::min(),
+            std::numeric_limits<float>::denorm_min(), -std::numeric_limits<float>::denorm_min(),
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::lowest()
+        };
+        for (const float value : finiteValues) unchanged(value);
+        unchanged(std::pow(10.0f, 24.0f / 20.0f));
+        unchanged(-std::pow(10.0f, 24.0f / 20.0f));
+
+        for (uint32_t bits : { 0x7f800000u, 0xff800000u, 0x7fc00000u, 0xffc00000u,
+                               0x7fc12345u, 0xffc12345u, 0x7f800001u })
+        {
+            const float result = sanitizePluginSample(std::bit_cast<float>(bits));
+            check(std::isfinite(result) && result == 0.0f, "NaN and infinity must become zero");
+        }
+
+        for (int i = 0; i < 4096; ++i)
+        {
+            const float source = static_cast<float>(std::sin(i * 0.031));
+            const float boosted = sanitizePluginSample(source * 16.0f);
+            const float restored = sanitizePluginSample(boosted / 16.0f);
+            check(restored == source, "Boost and attenuation must not flatten the waveform");
+        }
+
+        float mixed = sanitizePluginSample(6.0f + 6.0f);
+        check(mixed == 12.0f, "Positive intermediate sum must retain headroom");
+        check(sanitizePluginSample(mixed - 12.0f) == 0.0f, "Opposite paths must cancel after a large sum");
+        mixed = sanitizePluginSample(-6.0f - 6.0f);
+        check(mixed == -12.0f, "Negative intermediate sum must retain headroom");
+        check(sanitizePluginSample(mixed + 12.0f) == 0.0f, "Negative sum must cancel without clipping");
+
+        std::cout << "PASS: " << checks << " production sample sanitizer checks\n";
+        return 0;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "FAIL after " << checks << " checks: " << ex.what() << '\n';
+        return 1;
+    }
+}

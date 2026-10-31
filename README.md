@@ -28,7 +28,18 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.9 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.9).**
+**[0.8.3.10 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.10).**
+Signal Monitor and node-meter reads no longer compete with the general host
+control lock. This fixes missing history points and visual meter dips caused by
+skipped display reads. The spectrum also avoids joining nonconsecutive display
+samples, preventing false side-band jumps while a new FFT window fills.
+
+This build removes the fixed approximately **+18 dBFS sample clamp** from plugin
+sample sanitization, preserving finite floating-point values above that level.
+NaN and infinity protection remains enabled. This is not a limiter: high levels
+can still distort in plugins or clip at the final output. Reduce gain before the
+signal reaches an output device. There is no configurable clamp setting yet.
+
 Endpoint nodes now have horizontal VU meters, with two channels when compact
 and all eight when expanded. **Menu > Settings** can turn them off and opens
 the **Hotkey** window for global VST/group actions: open/close, bypass, power,
@@ -41,7 +52,7 @@ including values above zero. These are sample-level warnings, not confirmed
 clipping or true-peak detection. **Ctrl+right-click** opens an endpoint's monitor;
 endpoint hotkeys can toggle its monitor or expand/minimize multichannel pins. See
 [Settings and hotkeys](docs/UserGuide.md#settings-and-hotkeys) for setup.
-Audio processing and routing are unchanged.
+These meter, peak and hotkey controls do not change audio routing.
 
 This build also includes the earlier WaveShell support and canvas fixes.
 WaveShell scanning lists individual Waves VST2/VST3 plugins, including
@@ -49,7 +60,7 @@ separate mono/stereo variants. Run **Scan** again after updating, then select
 the plugin by name. Its identity is retained for reloads and saved setups.
 Canvas scrolling now follows nodes dragged beyond its edges without shifting
 the other nodes, and dragging the VST-list scrollbar no longer starts a plugin
-drag. Audio processing and callback behavior are unchanged.
+drag. Those earlier scanning and canvas fixes do not change audio processing.
 
 ## DSP Performance In The Dev Build
 

@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.24)
+project(PluginSampleChecks LANGUAGES CXX)
+
+# Compile the production helper without loading JUCE, plugins, or an audio device.
+set(helper_source "${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/PluginHostLayer.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${helper_source}")
+file(READ "${helper_source}" plugin_source)
+string(REGEX MATCH "float sanitizePluginSample\\(float sample\\) noexcept[\r\n ]*\\{[^}]*\\}" sample_helper "${plugin_source}")
+if (NOT sample_helper)
+    message(FATAL_ERROR "Could not locate the production sample sanitizer")
+endif()
+configure_file(main.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/main.cpp" @ONLY)
+add_executable(PluginSampleChecks "${CMAKE_CURRENT_BINARY_DIR}/main.cpp")
+target_compile_features(PluginSampleChecks PRIVATE cxx_std_20)
+enable_testing()
+add_test(NAME PluginSampleChecks COMMAND PluginSampleChecks)

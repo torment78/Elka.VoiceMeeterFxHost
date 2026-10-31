@@ -1,6 +1,5 @@
 #include "engine/RealtimeEngine.h"
-#include "native_api/SignalMonitorAnalyzer.h"
-#include <unordered_map>
+#include "native_api/SignalMonitorReaders.h"
 #include "insert_asio/InsertAsioHost.h"
 #include "plugins/PluginHostLayer.h"
 #include "voicemeeter/VoicemeeterClient.h"
@@ -183,6 +182,8 @@ struct NativeExternalWasapiPingResult
     double latencyMilliseconds = 0.0;
 };
 
+SignalMonitorReaders g_signalMonitorReaders;
+
 class NativeHost
 {
 public:
@@ -192,8 +193,12 @@ public:
     {
     }
 
+    ~NativeHost()
+    {
+        g_signalMonitorReaders.detach(engine.signalMonitors);
+    }
+
     RealtimeEngine engine;
-    std::unordered_map<int, std::shared_ptr<SignalMonitorAnalyzer>> signalAnalyzers;
     InsertAsioHost insertAsio;
     PluginHostLayer plugins;
     VoicemeeterClient client;
@@ -1730,52 +1735,23 @@ __declspec(dllexport) int __cdecl ElkaFx_OpenSignalMonitor(int stream, int outpu
     {
         std::lock_guard lock(g_mutex);
         if (!g_host) return 0;
-        auto analyzer = std::make_shared<SignalMonitorAnalyzer>();
-        const int id = g_host->engine.signalMonitors.open(stream, outputSide != 0, firstChannel, channelCount);
-        if (id > 0)
-        {
-            try { g_host->signalAnalyzers.emplace(id, std::move(analyzer)); }
-            catch (...) { g_host->engine.signalMonitors.close(id); throw; }
-        }
-        return id;
+        return g_signalMonitorReaders.open(g_host->engine.signalMonitors,
+            stream, outputSide != 0, firstChannel, channelCount);
     }
     catch (...) { return 0; }
 }
 
 __declspec(dllexport) void __cdecl ElkaFx_CloseSignalMonitor(int id)
 {
-    std::lock_guard lock(g_mutex);
-    if (!g_host) return;
-    g_host->engine.signalMonitors.close(id);
-    g_host->signalAnalyzers.erase(id);
+    g_signalMonitorReaders.close(id);
 }
 
 __declspec(dllexport) int __cdecl ElkaFx_ReadSignalMonitor(int id, float* peaks, int peakCount,
     float* spectrum, int spectrumCount, int* sampleRate, unsigned long long* sequence)
 {
-    const bool peaksOnly = spectrum == nullptr && spectrumCount == 0;
-    if (!peaks || peakCount != SignalMonitorHub::Channels ||
-        (!peaksOnly && (!spectrum || spectrumCount != SignalMonitorAnalyzer::Bins)) || !sampleRate || !sequence) return -1;
     try
     {
-        std::unique_lock lock(g_mutex, std::try_to_lock);
-        if (!lock.owns_lock()) return 1;
-        if (!g_host) return -1;
-        const auto found = g_host->signalAnalyzers.find(id);
-        if (found == g_host->signalAnalyzers.end()) return -1;
-        auto analyzer = found->second;
-        std::unique_lock readerLock(analyzer->readerMutex, std::try_to_lock);
-        if (!readerLock.owns_lock()) return 1;
-        if (!g_host->engine.signalMonitors.read(id, analyzer->snapshot)) return -1;
-        // Retain the analyzer independently of host lifetime. FFT work must not hold the host control lock.
-        lock.unlock();
-        if (analyzer->snapshot.sequence == analyzer->previousSequence) return 1;
-        analyzer->previousSequence = analyzer->snapshot.sequence;
-        std::copy(analyzer->snapshot.peaks.begin(), analyzer->snapshot.peaks.end(), peaks);
-        *sampleRate = analyzer->snapshot.sampleRate;
-        *sequence = analyzer->snapshot.sequence;
-        if (!peaksOnly) analyzer->spectrum(spectrum);
-        return 0;
+        return g_signalMonitorReaders.read(id, peaks, peakCount, spectrum, spectrumCount, sampleRate, sequence);
     }
     catch (...) { return -1; }
 }

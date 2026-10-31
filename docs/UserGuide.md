@@ -217,7 +217,7 @@ The **Menu** window contains:
 - **Delay Start** with a `0` to `60` second engine startup delay
 - independent automatic stable and beta update checks
 - **Stable** and **Beta** buttons for manual checks and installer downloads
-- **Settings** at the bottom left for node VU meters and editor hotkeys
+- **Settings** at the bottom left for node VU meters and VST/group hotkeys
 - the installed application version centered below the bottom buttons
 - **Donate** at the bottom right, opening the [ElkaSoft Ko-fi page](https://ko-fi.com/msffixit) in your browser
 
@@ -232,27 +232,44 @@ Use it after a sample-rate change or when a plugin has become unresponsive.
 
 ## Settings And Hotkeys
 
-In development version **0.8.3.7**, open **Menu > Settings** to toggle **Node VU
+In development version **0.8.3.8**, open **Menu > Settings** to toggle **Node VU
 Meters**. Hardware inputs show L/R meters; virtual inputs and buses show two
-channels when compact and eight when expanded. The meters stop reading when
-the canvas is hidden, the app is minimized or in the tray, or the setting is off.
+channels when compact and eight when expanded. The meters target 60 Hz with
+immediate attack and smooth decay. Their reader, rendering and monitor taps
+stop when the canvas is hidden, the app is minimized or in the tray, or the
+setting is off. This build does not add peak/clip indicators.
 
 Click **Hotkey** to open the separate assignment window. Click **Add**, choose
-a loaded VST or group on the left, click the field on the right and press the
-desired key combination, then click that row's save icon. Use the delete icon
-to remove an assignment. The same window is available from a VST's **Properties
-> Hotkey** button.
+a loaded VST or group on the left, choose its action in the middle, then click
+the shortcut field on the right and press the desired key combination. Click
+that row's save icon. Use the delete icon to remove an assignment. The same
+window is available from a VST's **Properties > Hotkey** button or a group's
+right-click **Hotkey** command, with that target selected.
 
-Shortcuts open the selected VST editor or group window globally, including
-while FX Host is in the tray. Use Ctrl, Alt, Shift or Win with a letter, number
-or function key other than F12. Conflicting shortcuts are rejected. Assignments
-are saved separately for each VoiceMeeter edition.
+Shortcuts work globally, including while FX Host is in the tray. Use Ctrl,
+Alt, Shift or Win with a letter, number or function key other than F12.
+Conflicting shortcuts are rejected. Assignments are saved separately for each
+VoiceMeeter edition, and a target can have multiple shortcuts.
 
-The VST's adjacent **Bypass** and **Turn Off / Turn On** controls have a chain
+- **Editor Open / Close** or **Group Open / Close** opens the window on the
+  first press and closes it on the next.
+- VSTs also offer **Reload** and **Properties Open / Close**. Closing Properties
+  with its shortcut cancels unapplied changes.
+- **Bypass On**, **Bypass Off** and **Bypass On / Off (Toggle)** set or toggle bypass.
+- **Turn On**, **Turn Off** and **Turn On / Off (Toggle)** set or toggle power.
+- **Bypass On + Turn Off** passes dry audio with processing off;
+  **Bypass Off + Turn On** restores processing. **Bypass + Power (Toggle)**
+  switches between those states.
+
+Explicit On/Off commands keep the requested state when pressed repeatedly;
+Toggle commands change it on every press. Group actions apply to its members.
+
+The VST and group **Bypass** and **Turn Off / Turn On** controls have a chain
 button. When linked, switching off also enables bypass so dry audio can pass;
 switching on restores processing and removes bypass. Unlink them to control
 power and bypass independently. Changing the link itself does not change the
-current audio state.
+current audio state. Group links are saved separately from member links;
+explicit combined hotkey actions do not change either link preference.
 
 ## Application Updates
 

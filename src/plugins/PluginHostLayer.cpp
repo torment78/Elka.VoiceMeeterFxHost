@@ -2807,6 +2807,12 @@ public:
 
     bool isReady() const noexcept { return ready; }
 
+    bool isEditorOpen() const noexcept
+    {
+        return workerProcess && WaitForSingleObject(workerProcess, 0) == WAIT_TIMEOUT &&
+            PluginEditorWindow::isOpenForProcess(GetProcessId(workerProcess));
+    }
+
     bool openEditor(const std::string& windowTitle, std::string& error) noexcept
     {
         error.clear();
@@ -4975,6 +4981,20 @@ bool PluginHostLayer::openPluginEditor(int slot, const std::string& windowTitle)
     error = "JUCE is not available. Put JUCE in external/JUCE and rebuild.";
     return false;
 #endif
+}
+
+bool PluginHostLayer::isPluginEditorOpen(int slot) const
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST && JUCE_WINDOWS
+    if (slot < 0 || slot >= MaxPluginNodes) return false;
+    auto* processor = impl->nodeProcessors[static_cast<size_t>(slot)].get();
+    if (auto* sandboxed = dynamic_cast<SandboxedPluginProcessor*>(processor))
+        return sandboxed->isEditorOpen();
+    if (auto* hosted = dynamic_cast<HostedVst3Processor*>(processor))
+        if (auto* plugin = hosted->pluginInstance())
+            return PluginEditorWindow::isOpenForProcess(GetCurrentProcessId(), plugin);
+#endif
+    return false;
 }
 
 bool PluginHostLayer::closePluginEditor(int slot)

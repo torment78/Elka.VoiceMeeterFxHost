@@ -7613,6 +7613,7 @@ private void RefreshEndpointButtonSelection()
             SidechainInputPins = group.SidechainInputPins,
             SidechainOutputPins = group.SidechainOutputPins,
             PinsCollapsed = group.PinsCollapsed,
+            BypassPowerLinked = group.BypassPowerLinked,
             MemberSlots = group.MemberSlots.ToList()
         };
     }
@@ -8174,7 +8175,7 @@ private void RefreshEndpointButtonSelection()
         _canvasRebuildAfterDrag = false;
         RefreshSignalMonitors();
         RefreshEditorHotkeys();
-        _endpointMeterTimer?.Stop();
+        StopEndpointMeterRendering();
         if (_workspaceView == WorkspaceView.Channels)
         {
             StopEndpointMeters();
@@ -8968,28 +8969,19 @@ private void RefreshEndpointButtonSelection()
         var reload = CreateNodeMenuItem("Reload", () => ReloadPluginGroup(group));
         reload.IsEnabled = members.Any(node => !node.MissingPlugin && node.PluginIndex >= 0);
         menu.Items.Add(reload);
-        var groupBypassed = GroupIsBypassed(members);
-        var bypass = CreateNodeMenuItem(groupBypassed ? "Disable Group Bypass" : "Bypass Group", () => SetGroupBypass(group, !groupBypassed));
-        if (members.Count == 0)
-        {
-            bypass.IsEnabled = false;
-            bypass.ToolTip = "Add VSTs to the group before bypassing it.";
-        }
-        menu.Items.Add(bypass);
+        var activeMembers = members.Where(node => !node.MissingPlugin).ToList();
+        var powerControls = new PluginNodePowerControls(
+            () => (GroupIsEnabled(activeMembers), GroupIsBypassed(activeMembers), group.BypassPowerLinked),
+            bypassed => SetGroupBypass(group, bypassed), enabled => SetGroupEnabled(group, enabled),
+            linked => { group.BypassPowerLinked = linked; QueueSave(); }, group: true)
+            { IsEnabled = activeMembers.Count > 0 };
+        menu.Items.Add(powerControls.AsMenuItem());
+        menu.Items.Add(CreateNodeMenuItem("Hotkey", () => ShowEditorHotkeys(this, selectedGroup: group)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem(group.PinsCollapsed ? "Expand Pins" : "Minimize Pins", () => SetGroupPinsCollapsed(group, !group.PinsCollapsed)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateNodeMenuItem("Auto-Wire Chain", () => AutoWirePluginGroup(group)));
         menu.Items.Add(new Separator());
-        var groupEnabled = GroupIsEnabled(members);
-        var power = CreateNodeMenuItem(groupEnabled ? "Turn Off Group" : "Turn On Group", () => SetGroupEnabled(group, !groupEnabled));
-        if (members.Count == 0)
-        {
-            power.IsEnabled = false;
-            power.ToolTip = "Add VSTs to the group before changing its power state.";
-        }
-        menu.Items.Add(power);
-
         var remove = CreateNodeMenuItem("Remove Group", () => RemovePluginGroup(group));
         remove.Foreground = (Brush)FindResource("DangerBrush");
         menu.Items.Add(remove);
@@ -9042,10 +9034,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        foreach (var member in members)
-        {
-            PluginNodePowerState.SetEnabled(member, enabled, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
-        }
+        PluginGroupPowerState.SetEnabled(group, members, enabled, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
 
         AppendLog($"{group.Name}: turned {members.Count} VST node(s) {(enabled ? "on" : "off")}.");
         RebuildVstNodeList();
@@ -9062,10 +9051,7 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        foreach (var member in members)
-        {
-            PluginNodePowerState.SetBypass(member, bypassed, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
-        }
+        PluginGroupPowerState.SetBypass(group, members, bypassed, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
 
         AppendLog($"{group.Name}: {(bypassed ? "bypassed" : "disabled bypass for")} {members.Count} VST node(s).");
         RebuildVstNodeList();
@@ -9905,7 +9891,8 @@ private void RefreshEndpointButtonSelection()
             SidechainPortsEnabled = group.SidechainPortsEnabled,
             SidechainInputPins = group.SidechainInputPins,
             SidechainOutputPins = group.SidechainOutputPins,
-            PinsCollapsed = group.PinsCollapsed
+            PinsCollapsed = group.PinsCollapsed,
+            BypassPowerLinked = group.BypassPowerLinked
         };
 
         foreach (var member in members)

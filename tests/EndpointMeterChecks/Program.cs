@@ -14,6 +14,7 @@ internal static class Program
     private static void Main()
     {
         CheckPower();
+        CheckGroupPower();
         CheckBallistics();
         CheckMeterBackground();
         CheckReader();
@@ -64,6 +65,67 @@ internal static class Program
         Check(calls.Count == 0, "missing plugin invokes no audio controls");
     }
 
+    private static void CheckGroupPower()
+    {
+        var group = new PluginGroupSnapshot();
+        var members = new[] { new PluginNodeSnapshot { Slot = 1 }, new PluginNodeSnapshot { Slot = 2 } };
+        var calls = new List<string>();
+        void Power(int slot, bool value) => calls.Add($"power:{slot}:{value}");
+        void Bypass(int slot, bool value) => calls.Add($"bypass:{slot}:{value}");
+        var controls = new PluginNodePowerControls(
+            () => (members.All(n => n.Enabled), members.All(n => n.Bypassed), group.BypassPowerLinked),
+            b => PluginGroupPowerState.SetBypass(group, members, b, Power, Bypass),
+            e => PluginGroupPowerState.SetEnabled(group, members, e, Power, Bypass),
+            l => group.BypassPowerLinked = l, group: true);
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Click(controls.BypassButton);
+        Check(members.All(n => n.Enabled && n.Bypassed), "unlinked group bypass leaves members on");
+        Click(controls.BypassButton);
+        Click(controls.PowerButton);
+        Check(members.All(n => !n.Enabled && !n.Bypassed), "unlinked group power leaves bypass unchanged");
+        Click(controls.PowerButton);
+        calls.Clear();
+        Click(controls.LinkButton);
+        Check(group.BypassPowerLinked && calls.Count == 0 && members.All(n => !n.BypassPowerLinked),
+            "group link is state-neutral and leaves individual links intact");
+        Click(controls.PowerButton);
+        Check(members.All(n => !n.Enabled && n.Bypassed), "linked group power off bypasses every member");
+        Check(calls.SequenceEqual(new[] { "bypass:1:True", "power:1:False", "bypass:2:True", "power:2:False" }),
+            "each member gets a dry path before group power off");
+        calls.Clear();
+        Click(controls.BypassButton);
+        Check(members.All(n => n.Enabled && !n.Bypassed), "linked group unbypass restores every member");
+        Check(calls.SequenceEqual(new[] { "power:1:True", "bypass:1:False", "power:2:True", "bypass:2:False" }),
+            "each member powers on before wet output is restored");
+        Click(controls.LinkButton);
+        members[0].BypassPowerLinked = true;
+        PluginGroupPowerState.SetEnabled(group, members, false, Power, Bypass);
+        Check(members[0].Bypassed && !members[1].Bypassed, "unlinked group respects existing individual link choices");
+        foreach (var node in members) PluginNodePowerState.SetCombined(node, true, Power, Bypass);
+        Check(members.All(n => !n.Enabled && n.Bypassed), "explicit combined action works regardless of link choices");
+        foreach (var node in members) PluginNodePowerState.SetCombined(node, false, Power, Bypass);
+        Check(members.All(n => n.Enabled && !n.Bypassed) && members[0].BypassPowerLinked && !members[1].BypassPowerLinked,
+            "combined restore does not change link settings");
+        foreach (bool enabled in new[] { false, true })
+        foreach (bool bypassed in new[] { false, true })
+        foreach (bool linked in new[] { false, true })
+        {
+            var node = new PluginNodeSnapshot { Enabled = enabled, Bypassed = bypassed, BypassPowerLinked = linked };
+            bool deactivate = !(!node.Enabled && node.Bypassed);
+            PluginNodePowerState.SetCombined(node, deactivate, Power, Bypass);
+            Check(node.Enabled == !deactivate && node.Bypassed == deactivate && node.BypassPowerLinked == linked,
+                "combined toggle handles every initial power/bypass/link combination");
+        }
+        group.BypassPowerLinked = true;
+        Check(JsonSerializer.Deserialize<PluginGroupSnapshot>(JsonSerializer.Serialize(group))!.BypassPowerLinked,
+            "group link survives save roundtrip");
+        Check(!JsonSerializer.Deserialize<PluginGroupSnapshot>("{}")!.BypassPowerLinked, "older group saves stay unlinked");
+        members[1].MissingPlugin = true;
+        calls.Clear();
+        PluginGroupPowerState.SetEnabled(group, members, false, Power, Bypass);
+        Check(!calls.Any(c => c.Contains(":2:")), "group operations skip missing members");
+    }
+
     private static void CheckBallistics()
     {
         foreach (int channels in new[] { 2, 8 })
@@ -75,13 +137,26 @@ internal static class Program
             Check(view.LitSegments(0) > view.LitSegments(1), "independent channel levels");
             if (channels == 8) Check(view.LitSegments(7) == EndpointMeterView.Segments && view.LitSegments(2) == 0, "all eight channels and silence");
             int initial = view.LitSegments(0);
-            view.Advance(null, 1.1);
+            view.Advance(null, 1.2);
             Check(view.LitSegments(0) > 0 && view.LitSegments(0) < initial, "release is time-based and gradual");
             for (int i = 2; i < 10; i++) view.Advance(null, i);
             Check(view.LitSegments(0) == 0, "stale input decays to silence");
             view.Advance(peaks, 11);
             view.Clear();
             Check(view.LitSegments(0) == 0, "hiding clears meter state");
+            view.Advance([0.01f, 0, 0, 0, 0, 0, 0, 0], 12);
+            view.Advance([1, 0, 0, 0, 0, 0, 0, 0], 12 + 1.0 / 60);
+            Check(view.DisplayLevel(0) == 1, "attack reaches the new peak in one display frame");
+            view.Advance(null, 12 + 2.0 / 60);
+            Check(view.DisplayLevel(0) == 1, "a frame between reader updates does not falsely decay a steady signal");
+            double last = 1;
+            for (int i = 3; i < 30; i++)
+            {
+                view.Advance(new float[8], 12 + i / 60.0);
+                Check(Math.Abs(last - view.DisplayLevel(0) - .65 / 60) < 0.00001,
+                    "release advances smoothly each 60 Hz frame with its original falloff speed");
+                last = view.DisplayLevel(0);
+            }
         }
     }
 
@@ -225,6 +300,26 @@ internal static class Program
         var group = original with { VstId = -1, GroupId = "group-42", VirtualKey = 0x43 };
         Check(manager.TryApply([original, group], out _), "VST and group shortcuts coexist");
         Check(manager.TryGet(active.Keys.Max(), out target) && target.GroupId == "group-42", "group uses persistent group ID");
+        Check(GlobalEditorHotkeys.ActionsFor(false).Count == 12 && GlobalEditorHotkeys.ActionsFor(true).Count == 10,
+            "twelve VST actions and ten group actions");
+        Check(JsonSerializer.Deserialize<EditorHotkeySnapshot>("{\"VstId\":7}")!.Action == EditorHotkeyAction.Open,
+            "existing hotkeys without an action still open the editor");
+        foreach (var choice in GlobalEditorHotkeys.ActionsFor(false))
+        {
+            var binding = original with { Action = choice.Action };
+            Check(manager.TryApply([binding], out _), $"register {choice.Label}");
+            Check(manager.TryGet(active.Single().Key, out target) && target.Action == choice.Action,
+                $"WM_HOTKEY retains {choice.Label} action");
+            Check(JsonSerializer.Deserialize<EditorHotkeySnapshot>(JsonSerializer.Serialize(binding)) == binding,
+                $"{choice.Label} saves and loads unchanged");
+        }
+        foreach (var choice in GlobalEditorHotkeys.ActionsFor(true))
+            Check(manager.TryApply([group with { Action = choice.Action }], out _), $"register {choice.Label}");
+        Check(!manager.TryApply([group with { Action = EditorHotkeyAction.Reload }], out _), "group rejects VST-only reload action");
+        Check(!manager.TryApply([group with { Action = EditorHotkeyAction.Properties }], out _), "group uses Open Group instead of separate Properties");
+        Check(!manager.TryApply([original with { Action = (EditorHotkeyAction)99 }], out _), "unknown saved action rejected");
+        Check(manager.TryApply([original, original with { Action = EditorHotkeyAction.Reload, VirtualKey = 0x44 }], out _),
+            "one VST can have different shortcuts for different actions");
         manager.Dispose();
         Check(active.Count == 0, "shutdown unregisters every shortcut");
         var settings = new FxHostSettings { NodeVuMetersEnabled = false, EditorHotkeys = [original] };

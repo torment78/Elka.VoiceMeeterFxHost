@@ -61,7 +61,7 @@ internal sealed class EditorHotkeysWindow : Window
 
     internal EditorHotkeysWindow(EditorHotkeyTarget[] targets, VoicemeeterKind edition,
         IEnumerable<EditorHotkeySnapshot> bindings, Func<IReadOnlyList<EditorHotkeySnapshot>, string> commit,
-        int? selectedVstId = null)
+        int? selectedVstId = null, string? selectedGroupId = null)
     {
         _targets = targets;
         _edition = edition;
@@ -69,7 +69,7 @@ internal sealed class EditorHotkeysWindow : Window
         _commit = commit;
         Title = "Hotkeys";
         SetResourceReference(StyleProperty, typeof(Window));
-        Width = 760; Height = 410; MinWidth = 580; MinHeight = 260;
+        Width = 1000; Height = 410; MinWidth = 860; MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         SetResourceReference(BackgroundProperty, "PanelBrush");
         _error.SetResourceReference(TextBlock.ForegroundProperty, "DangerBrush");
@@ -83,11 +83,12 @@ internal sealed class EditorHotkeysWindow : Window
         add.Click += (_, _) => AddRow(null, null, true);
         root.Children.Add(add);
         var headers = RowGrid();
-        var vstLabel = new TextBlock { Text = "VST / Group", Margin = new Thickness(0, 0, 0, 6) };
-        var keyLabel = new TextBlock { Text = "Hotkey", Margin = new Thickness(0, 0, 0, 6) };
-        vstLabel.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
-        keyLabel.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
-        headers.Children.Add(vstLabel); Grid.SetColumn(keyLabel, 1); headers.Children.Add(keyLabel);
+        foreach (var (label, column) in new[] { ("VST / Group", 0), ("Action", 1), ("Hotkey", 2) })
+        {
+            var heading = new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 6) };
+            heading.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
+            Grid.SetColumn(heading, column); headers.Children.Add(heading);
+        }
         Grid.SetRow(headers, 1); root.Children.Add(headers);
         var scroll = new ScrollViewer { Content = _rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new Thickness(0, 0, 3, 0) };
@@ -99,12 +100,14 @@ internal sealed class EditorHotkeysWindow : Window
         foreach (var binding in _bindings.ToArray()) AddRow(binding, null, false);
         if (selectedVstId is { } id && !_bindings.Any(b => b.VstId == id && b.GroupId.Length == 0))
             AddRow(null, _targets.FirstOrDefault(t => t.VstId == id && t.GroupId.Length == 0), false);
+        if (selectedGroupId is not null && !_bindings.Any(b => b.GroupId == selectedGroupId))
+            AddRow(null, _targets.FirstOrDefault(t => t.GroupId == selectedGroupId), false);
     }
 
     private static Grid RowGrid()
     {
         var grid = new Grid();
-        foreach (var width in new[] { new GridLength(3, GridUnitType.Star), new GridLength(2, GridUnitType.Star), new GridLength(40), new GridLength(36) })
+        foreach (var width in new[] { new GridLength(3, GridUnitType.Star), new GridLength(240), new GridLength(2, GridUnitType.Star), new GridLength(40), new GridLength(36) })
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
         return grid;
     }
@@ -128,23 +131,40 @@ internal sealed class EditorHotkeysWindow : Window
         text.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Label"));
         text.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
         target.ItemTemplate = new DataTemplate { VisualTree = text };
+        var action = new ComboBox { Height = 34, Margin = new Thickness(0, 0, 10, 0),
+            ItemTemplate = target.ItemTemplate, ToolTip = "Action for this hotkey" };
+        System.Windows.Automation.AutomationProperties.SetName(target, "VST or group");
+        System.Windows.Automation.AutomationProperties.SetName(action, "Hotkey action");
+        void UpdateActions(EditorHotkeyAction preferred)
+        {
+            action.IsEnabled = target.SelectedItem is EditorHotkeyTarget;
+            var options = GlobalEditorHotkeys.ActionsFor(target.SelectedItem is EditorHotkeyTarget { GroupId.Length: > 0 });
+            action.ItemsSource = options;
+            action.SelectedItem = options.FirstOrDefault(a => a.Action == preferred) ?? options[0];
+        }
+        UpdateActions(saved?.Action ?? EditorHotkeyAction.Open);
         var key = new HotkeyCaptureBox { Height = 34, Margin = new Thickness(0, 0, 10, 0) };
         if (saved is not null) key.SetShortcut(saved.VirtualKey, saved.Modifiers);
         var save = IconButton("\uE74E", "Save hotkey");
         var remove = IconButton("\uE74D", "Remove hotkey");
         save.SetResourceReference(StyleProperty, "RouteButton");
         void Dirty() { save.IsEnabled = true; save.ToolTip = "Save hotkey"; _error.Text = string.Empty; }
-        target.SelectionChanged += (_, _) => Dirty();
+        target.SelectionChanged += (_, _) =>
+        {
+            UpdateActions((action.SelectedItem as EditorHotkeyActionChoice)?.Action ?? EditorHotkeyAction.Open);
+            Dirty();
+        };
+        action.SelectionChanged += (_, _) => Dirty();
         key.ShortcutChanged += Dirty;
         save.IsEnabled = saved is null;
         save.Click += (_, _) =>
         {
-            if (target.SelectedItem is not EditorHotkeyTarget chosen || key.VirtualKey == 0)
-            { _error.Text = "Choose a VST or group and press a key combination."; return; }
+            if (target.SelectedItem is not EditorHotkeyTarget chosen || action.SelectedItem is not EditorHotkeyActionChoice chosenAction || key.VirtualKey == 0)
+            { _error.Text = "Choose a VST or group, an action and a key combination."; return; }
             var binding = new EditorHotkeySnapshot
             {
                 Edition = _edition, VstId = chosen.VstId, GroupId = chosen.GroupId, PluginIdentifier = chosen.Identifier,
-                TargetName = chosen.Name, VirtualKey = key.VirtualKey, Modifiers = key.Modifiers
+                TargetName = chosen.Name, Action = chosenAction.Action, VirtualKey = key.VirtualKey, Modifiers = key.Modifiers
             };
             var proposed = _bindings.ToList();
             if (saved is not null) proposed.Remove(saved);
@@ -170,9 +190,10 @@ internal sealed class EditorHotkeysWindow : Window
             _rows.Children.Remove(row);
         };
         row.Children.Add(target);
-        Grid.SetColumn(key, 1); row.Children.Add(key);
-        Grid.SetColumn(save, 2); row.Children.Add(save);
-        Grid.SetColumn(remove, 3); row.Children.Add(remove);
+        Grid.SetColumn(action, 1); row.Children.Add(action);
+        Grid.SetColumn(key, 2); row.Children.Add(key);
+        Grid.SetColumn(save, 3); row.Children.Add(save);
+        Grid.SetColumn(remove, 4); row.Children.Add(remove);
         _rows.Children.Add(row);
         if (openSelector) row.Loaded += (_, _) => { row.BringIntoView(); target.Focus(); target.IsDropDownOpen = true; };
     }

@@ -123,18 +123,26 @@ void checkOwnerLifecycle()
 
     open();
     check(plugin.getActiveEditor() != nullptr && counts.created == 1, "Editor is active on open");
+    check(elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId(), &plugin), "Editor query finds the selected plugin window");
+    check(elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId()), "Worker-style query finds its editor without audio IPC");
+    TestPlugin other(counts);
+    check(!elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId(), &other), "Another plugin cannot match the editor");
+    check(!elka::PluginEditorWindow::isOpenForProcess(0), "Invalid process cannot match an editor");
     checkAudio(plugin);
     editor->closeButtonPressed();
     check(editor != nullptr && counts.destroyed == 0, "Destruction waits until close handler returns");
     check(!editor->isVisible(), "X hides the editor immediately");
+    check(!elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId(), &plugin), "Manual X is reflected before deferred destruction");
     editor->closeButtonPressed();
     drainMessages();
     check(!editor && counts.destroyed == 1 && closeCalls == 1, "Repeated X closes release the editor exactly once");
     check(plugin.getActiveEditor() == nullptr, "Processor no longer retains an active editor");
+    check(!elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId()), "No editor remains after close");
     checkAudio(plugin);
 
     open();
     check(counts.created == 2 && plugin.getActiveEditor() != nullptr, "Closed editor can be recreated");
+    check(elka::PluginEditorWindow::isOpenForProcess(GetCurrentProcessId(), &plugin), "Reopened editor is detected again");
     checkAudio(plugin);
     editor->closeButtonPressed();
     editor.reset();

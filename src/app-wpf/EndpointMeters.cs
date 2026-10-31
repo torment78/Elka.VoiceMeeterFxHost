@@ -35,7 +35,7 @@ internal sealed class NativeEndpointPeakSource : IEndpointPeakSource
 // One reader for the visible canvas. No FFT, history, UI calls, or per-frame buffers.
 internal sealed class EndpointMeterReader : IDisposable
 {
-    internal const int RefreshHz = 30;
+    internal const int RefreshHz = 60;
     private readonly IEndpointPeakSource _source;
     private readonly EndpointMeterAddress[] _addresses;
     private readonly float[][] _pending;
@@ -79,6 +79,7 @@ internal sealed class EndpointMeterReader : IDisposable
         double nextOpen = 0;
         try
         {
+            using var cadence = new SignalMonitorCadence(_lifetime.Token, RefreshHz);
             while (!_lifetime.IsCancellationRequested)
             {
                 bool retry = clock.Elapsed.TotalSeconds >= nextOpen;
@@ -104,7 +105,7 @@ internal sealed class EndpointMeterReader : IDisposable
                         _fresh[i] = true;
                     }
                 }
-                if (_lifetime.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(1.0 / RefreshHz))) break;
+                if (!cadence.WaitNext()) break;
             }
         }
         catch (Exception ex) { Failure = ex; }
@@ -136,6 +137,8 @@ internal sealed class EndpointMeterView : FrameworkElement
     internal const int Segments = 18;
     private readonly int _channels;
     private readonly double[] _levels = new double[8];
+    private readonly double[] _targets = new double[8];
+    private readonly int[] _fills = new int[8];
     private readonly double[] _holds = new double[8];
     private readonly double[] _holdUntil = new double[8];
     private readonly int[] _lit = new int[8];
@@ -149,6 +152,7 @@ internal sealed class EndpointMeterView : FrameworkElement
     private static readonly Brush DimOrange = Dimmed(0xff, 0x9a, 0x24);
     private static readonly Brush DimRed = Dimmed(0xff, 0x4e, 0x52);
     private double _lastTime;
+    private double _lastSignal = double.NegativeInfinity;
 
     internal EndpointMeterView(int channels, Color hue)
     {
@@ -163,22 +167,30 @@ internal sealed class EndpointMeterView : FrameworkElement
 
     internal int Channels => _channels;
     internal int LitSegments(int channel) => _lit[channel];
+    internal double DisplayLevel(int channel) => _levels[channel];
 
     internal void Advance(float[]? peaks, double now)
     {
         double elapsed = _lastTime > 0 ? Math.Clamp(now - _lastTime, 0, 1) : 0;
         _lastTime = now;
+        if (peaks is not null) _lastSignal = now;
         bool changed = false;
         for (int c = 0; c < _channels; c++)
         {
-            double value = peaks is not null && float.IsFinite(peaks[c]) ? Math.Abs(peaks[c]) : 0;
-            double level = value > 0 ? Math.Clamp((20 * Math.Log10(value) + 60) / 60, 0, 1) : 0;
+            if (peaks is not null)
+            {
+                double value = float.IsFinite(peaks[c]) ? Math.Abs(peaks[c]) : 0;
+                _targets[c] = value > 0 ? Math.Clamp((20 * Math.Log10(value) + 60) / 60, 0, 1) : 0;
+            }
+            double level = now - _lastSignal < 0.1 ? _targets[c] : 0;
             _levels[c] = Math.Max(level, _levels[c] - elapsed * 0.65);
             if (level >= _holds[c]) { _holds[c] = level; _holdUntil[c] = now + 0.75; }
             else if (now > _holdUntil[c]) _holds[c] = Math.Max(_levels[c], _holds[c] - elapsed * 0.30);
             int lit = (int)Math.Ceiling(_levels[c] * Segments);
             int marker = (int)Math.Ceiling(_holds[c] * Segments);
-            changed |= lit != _lit[c] || marker != _markers[c];
+            int fill = (int)Math.Round(_levels[c] * Segments * 256);
+            changed |= fill != _fills[c] || marker != _markers[c];
+            _fills[c] = fill;
             _lit[c] = lit;
             _markers[c] = marker;
         }
@@ -187,9 +199,10 @@ internal sealed class EndpointMeterView : FrameworkElement
 
     internal void Clear()
     {
-        Array.Clear(_levels); Array.Clear(_holds); Array.Clear(_holdUntil);
+        Array.Clear(_levels); Array.Clear(_targets); Array.Clear(_fills); Array.Clear(_holds); Array.Clear(_holdUntil);
         Array.Clear(_lit); Array.Clear(_markers);
         _lastTime = 0;
+        _lastSignal = double.NegativeInfinity;
         InvalidateVisual();
     }
 
@@ -221,13 +234,20 @@ internal sealed class EndpointMeterView : FrameworkElement
             for (int segment = 0; segment < Segments; segment++)
             {
                 double db = -60 + (segment + 1) * 60.0 / Segments;
-                bool lit = segment < _lit[c];
-                Brush color = db >= -6 ? (lit ? Red : DimRed) : db >= -12 ? (lit ? Orange : DimOrange) :
-                    db >= -20 ? (lit ? Green : DimGreen) : (lit ? _hue : _dimHue);
+                Brush bright = db >= -6 ? Red : db >= -12 ? Orange : db >= -20 ? Green : _hue;
+                Brush dim = db >= -6 ? DimRed : db >= -12 ? DimOrange : db >= -20 ? DimGreen : _dimHue;
                 double cellLeft = left + segment * step + px;
                 double cellWidth = (pitchPixels - 1) / sx;
                 double cellHeight = (heightPixels - 2) / sy;
-                dc.DrawRectangle(color, null, new Rect(cellLeft, top + py, cellWidth, cellHeight));
+                var cell = new Rect(cellLeft, top + py, cellWidth, cellHeight);
+                double intensity = Math.Clamp(_fills[c] / 256.0 - segment, 0, 1);
+                dc.DrawRectangle(dim, null, cell);
+                if (intensity > 0)
+                {
+                    dc.PushOpacity(intensity);
+                    dc.DrawRectangle(bright, null, cell);
+                    dc.Pop();
+                }
                 if (_markers[c] > _lit[c] && segment == _markers[c] - 1)
                     dc.DrawRectangle(_hue, null, new Rect(cellLeft + cellWidth - px, top + py, px, cellHeight));
             }

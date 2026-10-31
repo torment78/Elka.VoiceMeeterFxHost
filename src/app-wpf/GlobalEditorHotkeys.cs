@@ -51,10 +51,12 @@ internal sealed class GlobalEditorHotkeys : IDisposable
 
     internal static string Validate(IReadOnlyList<EditorHotkeySnapshot> bindings)
     {
-        if (bindings.Count > 200) return "A maximum of 200 editor hotkeys can be assigned.";
+        if (bindings.Count > 200) return "A maximum of 200 hotkeys can be assigned.";
         var used = new HashSet<(uint, int)>();
         foreach (var binding in bindings)
         {
+            if (!ActionsFor(!string.IsNullOrEmpty(binding.GroupId)).Any(a => a.Action == binding.Action))
+                return "Choose an action supported by this VST or group.";
             if (binding.Modifiers == 0 || (binding.Modifiers & ~15u) != 0)
                 return "Choose at least one modifier: Ctrl, Alt, Shift or Win.";
             if (!AllowedKeys.Contains(binding.VirtualKey)) return "Choose a letter, number or function key (except F12).";
@@ -62,6 +64,38 @@ internal sealed class GlobalEditorHotkeys : IDisposable
         }
         return string.Empty;
     }
+
+    internal static IReadOnlyList<EditorHotkeyActionChoice> ActionsFor(bool group) => group ? GroupActions : VstActions;
+
+    private static readonly EditorHotkeyActionChoice[] VstActions =
+    [
+        new(EditorHotkeyAction.Open, "Editor Open / Close"),
+        new(EditorHotkeyAction.Reload, "Reload"),
+        new(EditorHotkeyAction.Properties, "Properties Open / Close"),
+        new(EditorHotkeyAction.BypassOn, "Bypass On"),
+        new(EditorHotkeyAction.BypassOff, "Bypass Off"),
+        new(EditorHotkeyAction.ToggleBypass, "Bypass On / Off (Toggle)"),
+        new(EditorHotkeyAction.PowerOn, "Turn On"),
+        new(EditorHotkeyAction.PowerOff, "Turn Off"),
+        new(EditorHotkeyAction.TogglePower, "Turn On / Off (Toggle)"),
+        new(EditorHotkeyAction.ToggleBypassAndPower, "Bypass + Power (Toggle)"),
+        new(EditorHotkeyAction.BypassAndPowerOff, "Bypass On + Turn Off"),
+        new(EditorHotkeyAction.UnbypassAndPowerOn, "Bypass Off + Turn On")
+    ];
+
+    private static readonly EditorHotkeyActionChoice[] GroupActions =
+    [
+        new(EditorHotkeyAction.Open, "Group Open / Close"),
+        new(EditorHotkeyAction.BypassOn, "Bypass On"),
+        new(EditorHotkeyAction.BypassOff, "Bypass Off"),
+        new(EditorHotkeyAction.ToggleBypass, "Bypass On / Off (Toggle)"),
+        new(EditorHotkeyAction.PowerOn, "Turn On"),
+        new(EditorHotkeyAction.PowerOff, "Turn Off"),
+        new(EditorHotkeyAction.TogglePower, "Turn On / Off (Toggle)"),
+        new(EditorHotkeyAction.ToggleBypassAndPower, "Bypass + Power (Toggle)"),
+        new(EditorHotkeyAction.BypassAndPowerOff, "Bypass On + Turn Off"),
+        new(EditorHotkeyAction.UnbypassAndPowerOn, "Bypass Off + Turn On")
+    ];
 
     internal static readonly int[] AllowedKeys = Enumerable.Range(0x30, 10).Concat(Enumerable.Range(0x41, 26))
         .Concat(Enumerable.Range(0x70, 24).Where(key => key != 0x7b)).ToArray();
@@ -94,4 +128,9 @@ internal sealed class GlobalEditorHotkeys : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+}
+
+internal sealed record EditorHotkeyActionChoice(EditorHotkeyAction Action, string Label)
+{
+    public override string ToString() => Label;
 }

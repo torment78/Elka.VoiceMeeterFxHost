@@ -3314,6 +3314,12 @@ __declspec(dllexport) int __cdecl ElkaFx_OpenPluginEditor(int slot, const wchar_
     return 0;
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_IsPluginEditorOpen(int slot)
+{
+    std::lock_guard lock(g_mutex);
+    return host().plugins.isPluginEditorOpen(slot) ? 1 : 0;
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_ClosePluginEditor(int slot, wchar_t* status, int statusChars)
 {
     std::lock_guard lock(g_mutex);

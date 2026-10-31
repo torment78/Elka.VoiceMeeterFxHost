@@ -10,6 +10,7 @@ public partial class MainWindow
     private Window? _hostSettingsWindow;
     private EditorHotkeysWindow? _editorHotkeysWindow;
     private string _lastHotkeyError = string.Empty;
+    private bool _hotkeyActionRunning;
 
     private void RefreshEditorHotkeys()
     {
@@ -18,7 +19,7 @@ public partial class MainWindow
         var active = _settings.EditorHotkeys.Where(h => h.Edition == _kind).ToArray();
         if (_editorHotkeys.Matches(active)) return;
         _editorHotkeys.TryApply(active, out string error);
-        if (error.Length != 0 && error != _lastHotkeyError) AppendLog($"Editor hotkeys: {error}");
+        if (error.Length != 0 && error != _lastHotkeyError) AppendLog($"Hotkeys: {error}");
         _lastHotkeyError = error;
     }
 
@@ -27,7 +28,7 @@ public partial class MainWindow
         if (message == 0x0312 && _editorHotkeys?.TryGet(unchecked((int)wParam.ToInt64()), out var hotkey) == true)
         {
             handled = true;
-            if (!_isShuttingDown) Dispatcher.BeginInvoke(() => OpenHotkeyEditor(hotkey));
+            if (!_isShuttingDown) Dispatcher.BeginInvoke(() => RunHotkeyAction(hotkey));
         }
         return IntPtr.Zero;
     }
@@ -37,27 +38,92 @@ public partial class MainWindow
         if (_settings.EditorHotkeys.RemoveAll(h => h.Edition == _kind && match(h)) > 0) RefreshEditorHotkeys();
     }
 
-    private void OpenHotkeyEditor(EditorHotkeySnapshot hotkey)
+    private void RunHotkeyAction(EditorHotkeySnapshot hotkey)
     {
         if (_isShuttingDown || _hostSettingsWindow is not null || _editorHotkeysWindow is not null || hotkey.Edition != _kind) return;
+        if (!GlobalEditorHotkeys.ActionsFor(!string.IsNullOrEmpty(hotkey.GroupId)).Any(a => a.Action == hotkey.Action)) return;
+        // Properties is modal, but its own shortcut must still be able to close it.
+        if (hotkey.Action == EditorHotkeyAction.Properties && HotkeyNode(hotkey) is { } node)
+        {
+            var properties = OwnedWindows.OfType<PluginNodePropertiesWindow>().FirstOrDefault(w => ReferenceEquals(w.Node, node));
+            if (properties is not null) { properties.Close(); return; }
+        }
+        if (_hotkeyActionRunning) return;
+        _hotkeyActionRunning = true;
+        try { ExecuteHotkeyAction(hotkey); }
+        catch (Exception ex) { AppendLog($"Hotkey for {hotkey.TargetName}: {ex.Message}"); }
+        finally { _hotkeyActionRunning = false; }
+    }
+
+    private void ExecuteHotkeyAction(EditorHotkeySnapshot hotkey)
+    {
         if (!string.IsNullOrEmpty(hotkey.GroupId))
         {
             var group = GroupById(hotkey.GroupId);
             if (group is null) { AppendLog($"Hotkey target is unavailable: {hotkey.TargetName}."); return; }
-            var existing = OwnedWindows.OfType<PluginGroupPropertiesWindow>().FirstOrDefault(w => w.GroupId == group.Id);
-            if (existing is not null)
+            var members = GroupMembers(group).Where(node => !node.MissingPlugin).ToList();
+            switch (hotkey.Action)
             {
-                if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
-                existing.Show();
-                existing.Activate();
+                case EditorHotkeyAction.Open:
+                    var existing = OwnedWindows.OfType<PluginGroupPropertiesWindow>().FirstOrDefault(w => w.GroupId == group.Id);
+                    if (existing is not null) existing.Close();
+                    else ShowGroupProperties(group);
+                    break;
+                case EditorHotkeyAction.ToggleBypass:
+                    SetGroupBypass(group, !GroupIsBypassed(members));
+                    break;
+                case EditorHotkeyAction.TogglePower:
+                    SetGroupEnabled(group, !GroupIsEnabled(members));
+                    break;
+                case EditorHotkeyAction.ToggleBypassAndPower:
+                    ToggleCombinedBypassAndPower(members);
+                    break;
+                case EditorHotkeyAction.BypassOn: SetGroupBypass(group, true); break;
+                case EditorHotkeyAction.BypassOff: SetGroupBypass(group, false); break;
+                case EditorHotkeyAction.PowerOn: SetGroupEnabled(group, true); break;
+                case EditorHotkeyAction.PowerOff: SetGroupEnabled(group, false); break;
+                case EditorHotkeyAction.BypassAndPowerOff: SetCombinedBypassAndPower(members, true); break;
+                case EditorHotkeyAction.UnbypassAndPowerOn: SetCombinedBypassAndPower(members, false); break;
             }
-            else ShowGroupProperties(group);
             return;
         }
-        var node = _settings.PluginNodes.FirstOrDefault(n => n.InstanceId == hotkey.VstId && !n.MissingPlugin &&
+        var node = HotkeyNode(hotkey);
+        if (node is null) { AppendLog($"Hotkey target is unavailable: {hotkey.TargetName} / ID {hotkey.VstId}."); return; }
+        switch (hotkey.Action)
+        {
+            case EditorHotkeyAction.Open:
+                if (_engine.IsPluginEditorOpen(node.Slot)) AppendLog(_engine.ClosePluginEditor(node.Slot));
+                else OpenPluginEditorWithSavedData(node);
+                break;
+            case EditorHotkeyAction.Reload: ReloadPluginNode(node); break;
+            case EditorHotkeyAction.Properties: ShowNodeProperties(node); break;
+            case EditorHotkeyAction.ToggleBypass: SetNodeBypass(node, !node.Bypassed); break;
+            case EditorHotkeyAction.TogglePower: SetNodeEnabled(node, !node.Enabled); break;
+            case EditorHotkeyAction.ToggleBypassAndPower: ToggleCombinedBypassAndPower([node]); break;
+            case EditorHotkeyAction.BypassOn: SetNodeBypass(node, true); break;
+            case EditorHotkeyAction.BypassOff: SetNodeBypass(node, false); break;
+            case EditorHotkeyAction.PowerOn: SetNodeEnabled(node, true); break;
+            case EditorHotkeyAction.PowerOff: SetNodeEnabled(node, false); break;
+            case EditorHotkeyAction.BypassAndPowerOff: SetCombinedBypassAndPower([node], true); break;
+            case EditorHotkeyAction.UnbypassAndPowerOn: SetCombinedBypassAndPower([node], false); break;
+        }
+    }
+
+    private PluginNodeSnapshot? HotkeyNode(EditorHotkeySnapshot hotkey) =>
+        _settings.PluginNodes.FirstOrDefault(n => n.InstanceId == hotkey.VstId && !n.MissingPlugin &&
             string.Equals(PluginIdentity.Canonical(n.PluginIdentifier), PluginIdentity.Canonical(hotkey.PluginIdentifier), StringComparison.OrdinalIgnoreCase));
-        if (node is not null) OpenPluginEditorWithSavedData(node);
-        else AppendLog($"Hotkey target is unavailable: {hotkey.TargetName} / ID {hotkey.VstId}.");
+
+    private void ToggleCombinedBypassAndPower(IReadOnlyCollection<PluginNodeSnapshot> nodes) =>
+        SetCombinedBypassAndPower(nodes, !nodes.All(node => !node.Enabled && node.Bypassed));
+
+    private void SetCombinedBypassAndPower(IReadOnlyCollection<PluginNodeSnapshot> nodes, bool deactivate)
+    {
+        if (nodes.Count == 0) return;
+        foreach (var node in nodes)
+            PluginNodePowerState.SetCombined(node, deactivate, _engine.SetPluginNodePowered, _engine.SetPluginNodeBypassed);
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
     }
 
     private void SetNodeMetersEnabled(bool enabled)
@@ -101,7 +167,7 @@ public partial class MainWindow
         finally { _hostSettingsWindow = null; }
     }
 
-    private void ShowEditorHotkeys(Window owner, PluginNodeSnapshot? selectedNode = null)
+    private void ShowEditorHotkeys(Window owner, PluginNodeSnapshot? selectedNode = null, PluginGroupSnapshot? selectedGroup = null)
     {
         if (_editorHotkeysWindow is { } existing) { existing.Activate(); return; }
         var targets = _settings.PluginNodes.Where(n => !n.MissingPlugin).OrderBy(n => n.InstanceId)
@@ -121,7 +187,7 @@ public partial class MainWindow
             return string.Empty;
         }
         var window = new EditorHotkeysWindow(targets, _kind, _settings.EditorHotkeys.Where(h => h.Edition == _kind), Commit,
-            selectedNode?.InstanceId) { Owner = owner };
+            selectedNode?.InstanceId, selectedGroup?.Id) { Owner = owner };
         _editorHotkeysWindow = window;
         try { window.ShowDialog(); }
         finally

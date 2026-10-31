@@ -2,7 +2,7 @@
 
 Both sections are above the normal Log in the sidebar and start collapsed.
 Click a section heading to open or close it. These diagnostics are included in
-the [unsigned 0.8.3.7 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.7).
+the [unsigned 0.8.3.8 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.8).
 
 ![DSP Performance with individual VST usage and DSP Overrun Log](images/dsp-performance-dev.png)
 
@@ -89,7 +89,7 @@ An overrun is a timing warning, not proof of an audible glitch. A low measured
 time also cannot rule out a driver, device, or callback-delivery problem.
 
 Intermittent clicks in normal callback mode remain under investigation, including
-reports with no increasing DSP overrun counts. Version 0.8.3.7 does not include
+reports with no increasing DSP overrun counts. Version 0.8.3.8 does not include
 a confirmed fix for those clicks. The counters measure processing after callback
 delivery, not late delivery or audio-sample continuity.
 

@@ -8,9 +8,11 @@ internal sealed class PluginNodePropertiesWindow : Window
     private readonly ComboBox _mainInputLayoutCombo = new();
     private readonly ComboBox _sidechainPinsCombo = new();
     private readonly ComboBox _outputLayoutCombo = new();
+    internal PluginNodeSnapshot Node { get; }
 
     public PluginNodePropertiesWindow(PluginNodeSnapshot node, Action<Window>? showHotkeys = null)
     {
+        Node = node;
         Title = $"{node.Name} Properties";
         Width = 380;
         Height = showHotkeys is null ? 250 : 292;

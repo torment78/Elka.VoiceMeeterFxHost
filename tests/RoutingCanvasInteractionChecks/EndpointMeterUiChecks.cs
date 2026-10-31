@@ -48,14 +48,18 @@ public partial class MainWindow
         InitializeEndpointMeters();
         Assert(WaitFor(() => source.Opens >= 16), "visible canvas opens its taps");
         Hide();
-        Assert(_endpointMeterReader is null && !_endpointMeterTimer!.IsEnabled && source.Opens == source.Closes, "tray hide releases every meter tap and stops timer");
+        Assert(_endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "tray hide releases every meter tap and detaches rendering");
+        int stoppedReads = source.Reads;
+        Thread.Sleep(100);
+        RenderEndpointMeters(this, EventArgs.Empty);
+        Assert(source.Reads == stoppedReads && _endpointMeterPeaks.All(p => p == 0), "hidden meters have no data reads, rendering or cached peaks");
         Show();
         Assert(WaitFor(() => source.Opens >= 32), "restore reopens taps");
         WindowState = WindowState.Minimized;
-        Assert(_endpointMeterReader is null && source.Opens == source.Closes, "taskbar minimize releases taps too");
+        Assert(_endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "taskbar minimize releases taps and render subscription too");
         WindowState = WindowState.Normal;
         SetNodeMetersEnabled(false);
-        Assert(_endpointMeters.Count == 0 && _endpointMeterReader is null && source.Opens == source.Closes, "settings-off removes meters and releases taps");
+        Assert(_endpointMeters.Count == 0 && _endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "settings-off removes meters and releases taps");
         SetNodeMetersEnabled(true);
         Assert(_endpointMeters.Count == 16, "settings-on restores meter visuals");
         _vstCanvasMode = CallbackMode.Output;
@@ -132,6 +136,9 @@ public partial class MainWindow
     private void CheckSettingsWindow()
     {
         _settings.PluginNodes[0].MissingPlugin = false;
+        var testGroup = new PluginGroupSnapshot { Name = "Hotkey Test Group", MemberSlots = [_settings.PluginNodes[0].Slot] };
+        _settings.PluginGroups.Add(testGroup);
+        static IEnumerable<ComboBox> Targets(Window window) => Descendants(window).OfType<ComboBox>().Where(c => Grid.GetColumn(c) == 0);
         _editorHotkeys = new GlobalEditorHotkeys(new IntPtr(1), (_, _, _, _) => true, (_, _) => { });
         var previousHandle = _voicemeeterCommandWindow;
         _voicemeeterCommandWindow = new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
@@ -149,11 +156,15 @@ public partial class MainWindow
                     var add = Descendants(window).OfType<Button>().Single(b => b.Content as string == "Add");
                     add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     window.UpdateLayout();
-                    var target = Descendants(window).OfType<ComboBox>().Single();
+                    var target = Targets(window).Single();
+                    var action = Descendants(window).OfType<ComboBox>().Single(c => Grid.GetColumn(c) == 1);
                     target.IsDropDownOpen = false;
                     Assert(target.SelectedItem is null && _settings.EditorHotkeys.Count == 0,
                         "Add creates an uncommitted row with a VST dropdown");
                     target.SelectedIndex = 0;
+                    Assert(action.Items.Count == 12 && ((EditorHotkeyActionChoice)action.SelectedItem).Action == EditorHotkeyAction.Open,
+                        "VST row defaults to editor and offers explicit and toggle actions");
+                    action.SelectedItem = action.Items.Cast<EditorHotkeyActionChoice>().Single(a => a.Action == EditorHotkeyAction.Reload);
                     var key = Descendants(window).OfType<HotkeyCaptureBox>().Single();
                     key.Capture(System.Windows.Input.Key.A, System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Alt);
                     Assert(key.Text == "Ctrl + Alt + A", "field captures the pressed combination");
@@ -161,14 +172,15 @@ public partial class MainWindow
                         .Single(b => System.Windows.Automation.AutomationProperties.GetName(b) == name);
                     RowButton(key, "Save hotkey").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert(_settings.EditorHotkeys.Count == 1 && _settings.EditorHotkeys[0].VirtualKey == 0x41 &&
-                        _settings.EditorHotkeys[0].Modifiers == 3, "row save persists target and combination");
+                        _settings.EditorHotkeys[0].Modifiers == 3 && _settings.EditorHotkeys[0].Action == EditorHotkeyAction.Reload,
+                        "row save persists target, action and combination");
                     Assert(_editorHotkeys.Matches([]), "global registrations stay suspended while capturing");
                     key.Capture(System.Windows.Input.Key.C, System.Windows.Input.ModifierKeys.Control);
                     Assert(_settings.EditorHotkeys.Single().VirtualKey == 0x41, "editing a row does not change the saved hotkey before Save");
                     RowButton(key, "Save hotkey").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert(_settings.EditorHotkeys.Single().VirtualKey == 0x43, "save edits one assignment without duplication");
                     add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
-                    var secondTarget = Descendants(window).OfType<ComboBox>().Last();
+                    var secondTarget = Targets(window).Last();
                     secondTarget.IsDropDownOpen = false; secondTarget.SelectedIndex = 0;
                     var secondKey = Descendants(window).OfType<HotkeyCaptureBox>().Last();
                     secondKey.Capture(System.Windows.Input.Key.C, System.Windows.Input.ModifierKeys.Control);
@@ -178,15 +190,35 @@ public partial class MainWindow
                     RowButton(secondKey, "Save hotkey").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert(_settings.EditorHotkeys.Count == 2, "second row saves independently");
                     Assert(Math.Abs(target.TranslatePoint(new Point(), window).Y - key.TranslatePoint(new Point(), window).Y) < .1 &&
-                        target.ActualHeight == key.ActualHeight, "target and capture field align on the same row");
+                        Math.Abs(action.TranslatePoint(new Point(), window).Y - key.TranslatePoint(new Point(), window).Y) < .1 &&
+                        target.ActualHeight == key.ActualHeight && action.ActualHeight == key.ActualHeight,
+                        "target, action and capture field align on the same row");
                     window.Width = window.MinWidth; window.UpdateLayout();
-                    Assert(key.ActualWidth >= 150 && target.ActualWidth >= 220, "rows fit the minimum resizable window width");
-                    window.Width = 760; window.UpdateLayout();
+                    Assert(key.ActualWidth >= 150 && target.ActualWidth >= 220 && action.ActualWidth >= 220,
+                        "three sections fit the minimum resizable window width");
+                    window.Width = 1000; window.UpdateLayout();
+                    secondTarget.SelectedItem = secondTarget.Items.Cast<EditorHotkeyTarget>().Single(t => t.GroupId == testGroup.Id);
+                    var secondAction = ((Grid)secondKey.Parent).Children.OfType<ComboBox>().Single(c => Grid.GetColumn(c) == 1);
+                    Assert(secondAction.Items.Count == 10 && secondAction.Items.Cast<EditorHotkeyActionChoice>().All(a =>
+                        a.Action != EditorHotkeyAction.Reload && a.Action != EditorHotkeyAction.Properties), "group shows only supported actions");
+                    secondAction.SelectedItem = secondAction.Items.Cast<EditorHotkeyActionChoice>().Single(a => a.Action == EditorHotkeyAction.ToggleBypassAndPower);
+                    RowButton(secondKey, "Save hotkey").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert(_settings.EditorHotkeys.Single(h => h.GroupId == testGroup.Id).Action == EditorHotkeyAction.ToggleBypassAndPower,
+                        "group combined action is saved");
+                    target.SelectedItem = target.Items.Cast<EditorHotkeyTarget>().Single(t => t.GroupId == testGroup.Id);
+                    Assert(((EditorHotkeyActionChoice)action.SelectedItem).Action == EditorHotkeyAction.Open,
+                        "switching Reload from VST to group resets unsupported action to Open Group");
+                    Assert(_settings.EditorHotkeys.Single(h => h.GroupId.Length == 0).Action == EditorHotkeyAction.Reload,
+                        "target/action edits are not committed before Save");
+                    target.SelectedIndex = 0;
+                    action.SelectedItem = action.Items.Cast<EditorHotkeyActionChoice>().Single(a => a.Action == EditorHotkeyAction.Reload);
+                    window.UpdateLayout();
+                    Assert(Descendants(action).OfType<TextBlock>().Any(t => t.Text == "Reload"), "selected action text is visible");
                     RenderWindow(window, "hotkeys-preview.png");
                     RowButton(secondKey, "Remove hotkey").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert(_settings.EditorHotkeys.Count == 1, "delete removes only its own assignment");
                     add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
-                    Descendants(window).OfType<ComboBox>().Last().IsDropDownOpen = false;
+                    Targets(window).Last().IsDropDownOpen = false;
                 });
                 Assert(_settings.EditorHotkeys.Count == 1 && _editorHotkeys.Matches(_settings.EditorHotkeys),
                     "closing drops an unsaved row and restores global hotkeys");
@@ -194,9 +226,11 @@ public partial class MainWindow
             });
             InspectDialog(() => ShowEditorHotkeys(this, _settings.PluginNodes[0]), () => _editorHotkeysWindow, window =>
             {
-                var target = Descendants(window).OfType<ComboBox>().First();
+                var target = Targets(window).First();
                 Assert(target.SelectedItem is EditorHotkeyTarget selected && selected.VstId == _settings.PluginNodes[0].InstanceId,
                     "Properties opens the separate window with its VST selected");
+                var action = Descendants(window).OfType<ComboBox>().First(c => Grid.GetColumn(c) == 1);
+                Assert(((EditorHotkeyActionChoice)action.SelectedItem).Action == EditorHotkeyAction.Reload, "reopening restores the saved action");
                 Descendants(window).OfType<Button>().Single(b =>
                     System.Windows.Automation.AutomationProperties.GetName(b) == "Remove hotkey")
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -206,12 +240,31 @@ public partial class MainWindow
                 "VST Properties contains Hotkey button");
             properties.Close();
             CheckMenuTheme();
+            var groupControls = BuildGroupContextMenu(testGroup).Items.OfType<MenuItem>().Select(m => m.Header).OfType<PluginNodePowerControls>().Single();
+            Assert(groupControls.IsEnabled, "group context menu includes adjacent bypass, power and link controls");
+            groupControls.LinkButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(testGroup.BypassPowerLinked && _settings.PluginNodes[0].Enabled && !_settings.PluginNodes[0].Bypassed,
+                "group link click changes preference only, without native calls");
+            Assert(ClonePluginGroupSnapshot(testGroup).BypassPowerLinked, "group clone retains its link preference");
+            var groupMenu = BuildGroupContextMenu(testGroup);
+            var hotkeyItem = groupMenu.Items.OfType<MenuItem>().Single(m => m.Header as string == "Hotkey");
+            Assert(groupMenu.Items[groupMenu.Items.IndexOf(hotkeyItem) - 1] is MenuItem { Header: PluginNodePowerControls },
+                "group Hotkey is directly underneath bypass/power controls");
+            InspectDialog(() => hotkeyItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)), () => _editorHotkeysWindow, window =>
+            {
+                Assert(Targets(window).Any(c => c.SelectedItem is EditorHotkeyTarget t && t.GroupId == testGroup.Id),
+                    "group menu opens hotkeys with that group preselected");
+            });
+            var emptyControls = BuildGroupContextMenu(new PluginGroupSnapshot()).Items.OfType<MenuItem>()
+                .Select(m => m.Header).OfType<PluginNodePowerControls>().Single();
+            Assert(!emptyControls.IsEnabled, "empty group power controls are disabled");
         }
         finally
         {
             _voicemeeterCommandWindow = previousHandle;
             _editorHotkeys.Dispose();
             _editorHotkeys = null;
+            _settings.PluginGroups.Remove(testGroup);
         }
     }
 
@@ -242,6 +295,7 @@ public partial class MainWindow
 
     private static void RenderWindow(Window window, string filename)
     {
+        window.UpdateLayout();
         var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(window);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -279,9 +333,9 @@ public partial class MainWindow
 
     private sealed class MeterTestSource : IEndpointPeakSource
     {
-        internal int Opens, Closes;
+        internal int Opens, Closes, Reads;
         public int Open(EndpointMeterAddress address) => Interlocked.Increment(ref Opens);
         public void Close(int handle) => Interlocked.Increment(ref Closes);
-        public int Read(int handle, float[] peaks, out ulong sequence) { sequence = 0; return 1; }
+        public int Read(int handle, float[] peaks, out ulong sequence) { Interlocked.Increment(ref Reads); sequence = 0; return 1; }
     }
 }

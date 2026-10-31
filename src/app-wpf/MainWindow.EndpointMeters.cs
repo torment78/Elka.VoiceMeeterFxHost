@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Elka.VoiceMeeterFxHost.App;
@@ -10,39 +11,51 @@ public partial class MainWindow
 {
     private readonly List<(EndpointMeterAddress Address, EndpointMeterView View)> _endpointMeters = [];
     private readonly float[] _endpointMeterPeaks = new float[8];
-    private DispatcherTimer? _endpointMeterTimer;
+    private bool _endpointMetersInitialized;
+    private bool _endpointMeterRendering;
+    private long _endpointMeterRenderBucket = -1;
     private EndpointMeterReader? _endpointMeterReader;
     private IEndpointPeakSource _endpointPeakSource = new NativeEndpointPeakSource();
     private bool _endpointMeterUpdateQueued;
 
     private void InitializeEndpointMeters()
     {
-        _endpointMeterTimer = new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromSeconds(1.0 / EndpointMeterReader.RefreshHz)
-        };
-        _endpointMeterTimer.Tick += (_, _) =>
-        {
-            if (_endpointMeterReader is not { } reader) return;
-            if (reader.Failure is { } failure)
-            {
-                StopEndpointMeters();
-                AppendLog($"Endpoint meters unavailable: {failure.Message}");
-                return;
-            }
-            double now = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
-            for (int i = 0; i < _endpointMeters.Count; i++)
-                _endpointMeters[i].View.Advance(reader.Take(i, _endpointMeterPeaks) ? _endpointMeterPeaks : null, now);
-        };
+        if (_endpointMetersInitialized) return;
+        _endpointMetersInitialized = true;
         IsVisibleChanged += (_, _) => UpdateEndpointMeterActivity();
         StateChanged += (_, _) => UpdateEndpointMeterActivity();
         RoutingCanvas.IsVisibleChanged += (_, _) => QueueEndpointMeterUpdate();
         UpdateEndpointMeterActivity();
     }
 
+    private void RenderEndpointMeters(object? sender, EventArgs args)
+    {
+        if (!_endpointMeterRendering || _endpointMeterReader is not { } reader) return;
+        if (reader.Failure is { } failure)
+        {
+            StopEndpointMeters();
+            AppendLog($"Endpoint meters unavailable: {failure.Message}");
+            return;
+        }
+        long timestamp = Stopwatch.GetTimestamp();
+        long bucket = timestamp / Math.Max(1, Stopwatch.Frequency / EndpointMeterReader.RefreshHz);
+        if (bucket == _endpointMeterRenderBucket) return;
+        _endpointMeterRenderBucket = bucket;
+        double now = timestamp / (double)Stopwatch.Frequency;
+        for (int i = 0; i < _endpointMeters.Count; i++)
+            _endpointMeters[i].View.Advance(reader.Take(i, _endpointMeterPeaks) ? _endpointMeterPeaks : null, now);
+    }
+
+    private void StopEndpointMeterRendering()
+    {
+        if (_endpointMeterRendering) CompositionTarget.Rendering -= RenderEndpointMeters;
+        _endpointMeterRendering = false;
+        _endpointMeterRenderBucket = -1;
+    }
+
     private void QueueEndpointMeterUpdate()
     {
-        if (_endpointMeterTimer is null || _endpointMeterUpdateQueued || _isShuttingDown) return;
+        if (!_endpointMetersInitialized || _endpointMeterUpdateQueued || _isShuttingDown) return;
         _endpointMeterUpdateQueued = true;
         Dispatcher.BeginInvoke(() =>
         {
@@ -53,7 +66,7 @@ public partial class MainWindow
 
     private void UpdateEndpointMeterActivity()
     {
-        if (_endpointMeterTimer is null) return;
+        if (!_endpointMetersInitialized) return;
         bool active = _settings.NodeVuMetersEnabled && !_isShuttingDown && IsVisible && WindowState != WindowState.Minimized &&
             RoutingCanvas.IsVisible && _workspaceView == WorkspaceView.Vst && _endpointMeters.Count > 0;
         if (!active) { StopEndpointMeters(); return; }
@@ -63,14 +76,19 @@ public partial class MainWindow
             StopEndpointMeters();
             _endpointMeterReader = new EndpointMeterReader(addresses, _endpointPeakSource);
         }
-        _endpointMeterTimer.Start();
+        if (!_endpointMeterRendering)
+        {
+            CompositionTarget.Rendering += RenderEndpointMeters;
+            _endpointMeterRendering = true;
+        }
     }
 
     private void StopEndpointMeters()
     {
-        _endpointMeterTimer?.Stop();
+        StopEndpointMeterRendering();
         _endpointMeterReader?.Dispose();
         _endpointMeterReader = null;
+        Array.Clear(_endpointMeterPeaks);
         foreach (var item in _endpointMeters) item.View.Clear();
     }
 

@@ -121,6 +121,7 @@ public:
     void clearPluginNodes() noexcept;
     bool openPluginEditor(int slot, const std::string& windowTitle);
     bool closePluginEditor(int slot);
+    bool isPluginEditorOpen(int slot) const;
     std::string pluginNodeStateBase64(int slot);
     bool setPluginNodeStateBase64(int slot, const std::string& stateBase64);
     std::string pluginNodePresetBase64(int slot);

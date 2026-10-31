@@ -15,6 +15,10 @@ internal static class PluginNodePowerState
         Action<int, bool> power, Action<int, bool> bypass) =>
         Apply(node, node.BypassPowerLinked ? !bypassed : node.Enabled, bypassed, power, bypass);
 
+    internal static void SetCombined(PluginNodeSnapshot node, bool deactivated,
+        Action<int, bool> power, Action<int, bool> bypass) =>
+        Apply(node, !deactivated, deactivated, power, bypass);
+
     private static void Apply(PluginNodeSnapshot node, bool enabled, bool bypassed,
         Action<int, bool> power, Action<int, bool> bypass)
     {
@@ -26,17 +30,44 @@ internal static class PluginNodePowerState
     }
 }
 
+internal static class PluginGroupPowerState
+{
+    internal static void SetEnabled(PluginGroupSnapshot group, IEnumerable<PluginNodeSnapshot> members, bool enabled,
+        Action<int, bool> power, Action<int, bool> bypass)
+    {
+        foreach (var node in members)
+            if (group.BypassPowerLinked) PluginNodePowerState.SetCombined(node, !enabled, power, bypass);
+            else PluginNodePowerState.SetEnabled(node, enabled, power, bypass);
+    }
+
+    internal static void SetBypass(PluginGroupSnapshot group, IEnumerable<PluginNodeSnapshot> members, bool bypassed,
+        Action<int, bool> power, Action<int, bool> bypass)
+    {
+        foreach (var node in members)
+            if (group.BypassPowerLinked) PluginNodePowerState.SetCombined(node, bypassed, power, bypass);
+            else PluginNodePowerState.SetBypass(node, bypassed, power, bypass);
+    }
+}
+
 internal sealed class PluginNodePowerControls : StackPanel
 {
     internal Button BypassButton { get; }
     internal Button PowerButton { get; }
     internal Button LinkButton { get; }
-    private readonly PluginNodeSnapshot _node;
+    private readonly Func<(bool Enabled, bool Bypassed, bool Linked)> _state;
+    private readonly bool _group;
 
     internal PluginNodePowerControls(PluginNodeSnapshot node, Action<bool> setBypass,
         Action<bool> setEnabled, Action<bool> setLinked)
+        : this(() => (node.Enabled, node.Bypassed, node.BypassPowerLinked), setBypass, setEnabled, setLinked)
     {
-        _node = node;
+    }
+
+    internal PluginNodePowerControls(Func<(bool Enabled, bool Bypassed, bool Linked)> state, Action<bool> setBypass,
+        Action<bool> setEnabled, Action<bool> setLinked, bool group = false)
+    {
+        _state = state;
+        _group = group;
         Orientation = Orientation.Horizontal;
         Margin = new Thickness(0, 4, 0, 4);
         BypassButton = MakeButton("Bypass", 72);
@@ -44,12 +75,11 @@ internal sealed class PluginNodePowerControls : StackPanel
         LinkButton = MakeButton("\uE71B", 30);
         LinkButton.FontFamily = new FontFamily("Segoe MDL2 Assets");
         LinkButton.FontSize = 14;
-        AutomationProperties.SetName(LinkButton, "Link Bypass and Turn Off");
-        BypassButton.ToolTip = "Bypass this VST";
-        PowerButton.ToolTip = "Turn this VST on or off";
-        BypassButton.Click += (_, e) => { setBypass(!node.Bypassed); Refresh(); e.Handled = true; };
-        PowerButton.Click += (_, e) => { setEnabled(!node.Enabled); Refresh(); e.Handled = true; };
-        LinkButton.Click += (_, e) => { setLinked(!node.BypassPowerLinked); Refresh(); e.Handled = true; };
+        AutomationProperties.SetName(LinkButton, group ? "Link Group Bypass and Turn Off" : "Link Bypass and Turn Off");
+        PowerButton.ToolTip = group ? "Turn all VSTs in this group on or off" : "Turn this VST on or off";
+        BypassButton.Click += (_, e) => { setBypass(!_state().Bypassed); Refresh(); e.Handled = true; };
+        PowerButton.Click += (_, e) => { setEnabled(!_state().Enabled); Refresh(); e.Handled = true; };
+        LinkButton.Click += (_, e) => { setLinked(!_state().Linked); Refresh(); e.Handled = true; };
         Children.Add(BypassButton);
         Children.Add(PowerButton);
         Children.Add(LinkButton);
@@ -60,12 +90,13 @@ internal sealed class PluginNodePowerControls : StackPanel
 
     private void Refresh()
     {
-        PowerButton.Content = _node.Enabled ? "Turn Off" : "Turn On";
-        BypassButton.ToolTip = _node.Bypassed ? "Disable bypass" : "Bypass this VST";
-        Paint(BypassButton, _node.Bypassed, "#F0A33A");
-        Paint(PowerButton, !_node.Enabled, "#E15F5F");
-        Paint(LinkButton, _node.BypassPowerLinked, "#55C27A");
-        LinkButton.ToolTip = _node.BypassPowerLinked
+        var state = _state();
+        PowerButton.Content = state.Enabled ? "Turn Off" : "Turn On";
+        BypassButton.ToolTip = state.Bypassed ? "Disable bypass" : _group ? "Bypass all VSTs in this group" : "Bypass this VST";
+        Paint(BypassButton, state.Bypassed, "#F0A33A");
+        Paint(PowerButton, !state.Enabled, "#E15F5F");
+        Paint(LinkButton, state.Linked, "#55C27A");
+        LinkButton.ToolTip = state.Linked
             ? "Linked: bypass and power switch together. Click to unlink."
             : "Independent: click to link bypass and power. Linking alone does not change audio.";
     }

@@ -537,6 +537,7 @@ internal sealed class PluginGroupSnapshot
     public int SidechainInputPins { get; set; } = 2;
     public int SidechainOutputPins { get; set; }
     public bool PinsCollapsed { get; set; }
+    public bool BypassPowerLinked { get; set; }
     public List<int> MemberSlots { get; set; } = [];
 }
 
@@ -583,6 +584,22 @@ internal sealed class VoicemeeterEditionWorkspace
     public Dictionary<string, string> EndpointRouteHues { get; set; } = [];
 }
 
+internal enum EditorHotkeyAction
+{
+    Open = 0,
+    Reload = 1,
+    Properties = 2,
+    ToggleBypass = 3,
+    TogglePower = 4,
+    ToggleBypassAndPower = 5,
+    BypassOn = 6,
+    BypassOff = 7,
+    PowerOn = 8,
+    PowerOff = 9,
+    BypassAndPowerOff = 10,
+    UnbypassAndPowerOn = 11
+}
+
 internal sealed record EditorHotkeySnapshot
 {
     public VoicemeeterKind Edition { get; set; } = VoicemeeterKind.Potato;
@@ -590,6 +607,7 @@ internal sealed record EditorHotkeySnapshot
     public string GroupId { get; set; } = string.Empty;
     public string PluginIdentifier { get; set; } = string.Empty;
     public string TargetName { get; set; } = string.Empty;
+    public EditorHotkeyAction Action { get; set; } = EditorHotkeyAction.Open;
     public int VirtualKey { get; set; }
     public uint Modifiers { get; set; }
 }
@@ -1960,6 +1978,8 @@ internal sealed class NativeEngineClient : IDisposable
         return _lastStatus;
     }
 
+    public bool IsPluginEditorOpen(int slot) => _attached && ElkaFx_IsPluginEditorOpen(slot) == 1;
+
     public string GetPluginNodeState(int slot)
     {
         return TryGetPluginNodeState(slot, out var state) ? state : string.Empty;
@@ -2612,6 +2632,9 @@ internal sealed class NativeEngineClient : IDisposable
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_ClosePluginEditor(int slot, StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_IsPluginEditorOpen(int slot);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginNodeStateLength(int slot);

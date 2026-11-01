@@ -27,7 +27,7 @@ function Invoke-Check {
 
 Copy-Item -LiteralPath $LegacyBridge -Destination (Join-Path $fixture 'ElkaVoiceMeeterFxHost.Native.dll') -Force
 $stale = Invoke-Check
-if ($stale.Code -eq 0 -or $stale.Output -notmatch 'ElkaFx_OpenSignalMonitor') {
+if ($stale.Code -eq 0 -or $stale.Output -notmatch 'ElkaFx_(IsVoicemeeterRemoteReady|OpenSignalMonitor)') {
     throw "Expected the legacy sidecar to reproduce the missing monitor export: $($stale.Output)"
 }
 Write-Output 'PASS: reproduced the installed-app error with the legacy sidecar.'

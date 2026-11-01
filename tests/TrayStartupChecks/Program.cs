@@ -162,6 +162,10 @@ internal static class Program
 
 namespace Elka.VoiceMeeterFxHost.App
 {
+    // Placement excludes these independently managed windows; no widget UI is needed here.
+    internal sealed class FloatingPluginPanel : Window;
+    internal sealed class FloatingGroupDrawer : Window;
+
     public sealed partial class MainWindow : Window
     {
         private HwndSource? _source;

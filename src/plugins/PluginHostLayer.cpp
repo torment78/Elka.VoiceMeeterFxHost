@@ -3596,7 +3596,8 @@ bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::str
                     windowTitle.empty()
                         ? (juce::String(plugin->getName()).isNotEmpty() ? plugin->getName() : "Sandboxed VST")
                         : juce::String::fromUTF8(windowTitle.c_str()),
-                    [session] { session->editorWindow.reset(); });
+                    [session] { session->editorWindow.reset(); },
+                    PluginEditorWindow::placementFileFor(*plugin, juce::String::fromUTF8(windowTitle.c_str())));
             }
             else
             {
@@ -4949,7 +4950,8 @@ bool PluginHostLayer::openPluginEditor(int slot, const std::string& windowTitle)
                     windowTitle.empty()
                         ? juce::String::fromUTF8(impl->nodeSummaries[index].name.c_str())
                         : juce::String::fromUTF8(windowTitle.c_str()),
-                    [this, index] { impl->nodeEditors[index].reset(); });
+                    [this, index] { impl->nodeEditors[index].reset(); },
+                    PluginEditorWindow::placementFileFor(*processor->pluginInstance(), juce::String::fromUTF8(windowTitle.c_str())));
             }
             else
             {

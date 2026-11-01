@@ -16,13 +16,13 @@ class PluginEditorWindow final : public juce::DocumentWindow
 {
 public:
     PluginEditorWindow(juce::AudioPluginInstance& plugin, const juce::String& title,
-                       std::function<void()> closeEditor)
+                       std::function<void()> closeEditor, juce::File savedPlacement = {})
         : juce::DocumentWindow(
               title,
               juce::Colours::black,
               juce::DocumentWindow::closeButton | juce::DocumentWindow::minimiseButton,
               true),
-          onClose(std::move(closeEditor))
+          onClose(std::move(closeEditor)), placementFile(std::move(savedPlacement))
     {
         auto* editor = plugin.createEditorAndMakeActive();
         if (editor == nullptr)
@@ -35,6 +35,8 @@ public:
         const int width = std::max(420, editor->getWidth());
         const int height = std::max(280, editor->getHeight());
         centreWithSize(width, height);
+        if (placementFile.existsAsFile())
+            restoreWindowStateFromString(placementFile.loadFileAsString());
         setVisible(true);
        #if JUCE_WINDOWS
         SetPropW(static_cast<HWND>(getWindowHandle()), EditorProperty, reinterpret_cast<HANDLE>(&plugin));
@@ -44,9 +46,25 @@ public:
 
     ~PluginEditorWindow() override
     {
+        // UI state only. Audio callbacks never access this file or editor bounds.
+        if (placementFile != juce::File())
+        {
+            const auto state = getWindowStateAsString();
+            if (state.isNotEmpty() && placementFile.getParentDirectory().createDirectory().wasOk())
+                placementFile.replaceWithText(state);
+        }
        #if JUCE_WINDOWS
         if (auto hwnd = static_cast<HWND>(getWindowHandle())) RemovePropW(hwnd, EditorProperty);
        #endif
+    }
+
+    static juce::File placementFileFor(const juce::AudioPluginInstance& plugin, const juce::String& title)
+    {
+        const auto local = juce::SystemStats::getEnvironmentVariable("LOCALAPPDATA", {});
+        if (local.isEmpty()) return {};
+        const auto identity = plugin.getPluginDescription().createIdentifierString() + "|" + title;
+        return juce::File(local).getChildFile("ElkaSoft/VoiceMeeterFxHost/EditorWindows")
+            .getChildFile(juce::String::toHexString(identity.hashCode64()) + ".bounds");
     }
 
    #if JUCE_WINDOWS
@@ -107,5 +125,6 @@ private:
     inline static constexpr auto EditorProperty = L"ElkaFxHost.PluginEditor";
    #endif
     std::function<void()> onClose;
+    juce::File placementFile;
 };
 }

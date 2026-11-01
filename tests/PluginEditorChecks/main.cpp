@@ -167,6 +167,55 @@ void checkOwnerLifecycle()
     }
     checkAudio(plugin);
 }
+
+void checkPlacement()
+{
+    EditorCounts counts;
+    TestPlugin plugin(counts);
+    const auto directory = juce::File::getCurrentWorkingDirectory().getChildFile("artifacts/verification")
+        .getNonexistentChildFile("ElkaEditorPlacementChecks", {}, false);
+    check(directory.createDirectory().wasOk(), "Placement test directory is writable");
+    const auto file = directory.getChildFile("editor.bounds");
+    const auto other = directory.getChildFile("other.bounds");
+    juce::Rectangle<int> expected;
+    {
+        elka::PluginEditorWindow window(plugin, "First", [] {}, file);
+        window.setBounds(110, 140, 620, 430);
+        expected = window.getBounds();
+        check(!file.exists(), "Placement is not written continuously while the editor is open");
+        checkAudio(plugin);
+    }
+    check(file.existsAsFile(), "Closing the editor saves its position and size");
+    {
+        elka::PluginEditorWindow window(plugin, "First", [] {}, file);
+        check(window.getBounds() == expected, "Recreated editor restores the exact position and size");
+        window.setBounds(160, 180, 720, 480);
+        expected = window.getBounds();
+        window.closeButtonPressed();
+    }
+    drainMessages();
+    {
+        elka::PluginEditorWindow window(plugin, "First", [] {}, file);
+        check(window.getBounds() == expected, "X-close also saves the latest geometry");
+        check(!other.exists(), "Separate editor placements are independent");
+    }
+    file.replaceWithText("100000 100000 620 430");
+    {
+        elka::PluginEditorWindow window(plugin, "First", [] {}, file);
+        auto screens = juce::Desktop::getInstance().getDisplays().getRectangleList(true);
+        screens.clipTo(window.getBounds());
+        check(!screens.isEmpty(), "Off-screen editor is restored to a connected monitor");
+    }
+    file.replaceWithText("invalid bounds");
+    {
+        elka::PluginEditorWindow window(plugin, "First", [] {}, file);
+        check(window.getWidth() >= 420 && window.getHeight() >= 280, "Invalid geometry retains default editor dimensions");
+    }
+    check(elka::PluginEditorWindow::placementFileFor(plugin, "ID 1") !=
+        elka::PluginEditorWindow::placementFileFor(plugin, "ID 2"), "Each VST instance has a separate placement key");
+    checkAudio(plugin);
+    check(directory.deleteRecursively(), "Temporary placement test data removed");
+}
 }
 
 int main()
@@ -175,6 +224,7 @@ int main()
     {
         juce::ScopedJuceInitialiser_GUI gui;
         checkOwnerLifecycle();
+        checkPlacement();
         std::cout << checks << " plugin editor checks passed\n";
         return 0;
     }

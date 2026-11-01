@@ -1,6 +1,6 @@
 namespace Elka.VoiceMeeterFxHost.App;
 
-// Grouping changes the visual boundary, not the underlying audio connections.
+// Explicit regrouping preserves cables; drag-to-group appends a serial chain.
 internal static class PluginGroupRouting
 {
     private const int SidechainBase = 100;
@@ -10,7 +10,7 @@ internal static class PluginGroupRouting
 
     public static void AddMembers(PluginGroupSnapshot target, IEnumerable<PluginNodeSnapshot> additions,
         IReadOnlyList<PluginNodeSnapshot> nodes, IList<PluginGroupSnapshot> groups,
-        List<CanvasConnectionSnapshot> connections)
+        List<CanvasConnectionSnapshot> connections, bool appendChain = false)
     {
         var added = additions.DistinctBy(node => node.Slot).ToList();
         if (added.Any(node => node.Mode != target.Mode))
@@ -28,6 +28,50 @@ internal static class PluginGroupRouting
         var mappings = allEdges.Where(IsMapping).ToList();
         var edges = allEdges.Where(edge => !IsMapping(edge))
             .Select(edge => Expand(edge, mappings, affectedIds)).Distinct().ToList();
+
+        if (appendChain)
+        {
+            var chain = target.MemberSlots.ToList();
+            var targetSlots = members[target.Id].ToHashSet();
+            foreach (var node in added.Where(node => !target.MemberSlots.Contains(node.Slot)))
+            {
+                if (chain.Count > 0)
+                {
+                    var tail = nodes.First(candidate => candidate.Slot == chain[^1]);
+                    // The old exit moves to the new tail; existing upstream and sidechain cables stay intact.
+                    edges.RemoveAll(edge => edge.From.Kind == "node-output" && edge.From.Slot == tail.Slot &&
+                        !(edge.To.Kind == "node-input" && targetSlots.Contains(edge.To.Slot)) && edge.From.Pin >= node.OutputPins);
+                    mappings.RemoveAll(edge => edge.To.Kind == "group-output" && edge.To.Group == target.Id &&
+                        edge.From.Slot == tail.Slot && edge.From.Pin >= node.OutputPins);
+                    edges = edges.Where(edge => !(edge.From.Kind == "node-output" && edge.To.Kind == "node-input" &&
+                        targetSlots.Contains(edge.From.Slot) && targetSlots.Contains(edge.To.Slot) &&
+                        (edge.From.Slot == node.Slot || edge.To.Slot == node.Slot) &&
+                        edge.To.Pin >= nodes.First(candidate => candidate.Slot == edge.To.Slot).SidechainInputPins))
+                        .Select(edge => edge.From.Kind == "node-output" && edge.From.Slot == tail.Slot &&
+                            !(edge.To.Kind == "node-input" && targetSlots.Contains(edge.To.Slot)) && edge.From.Pin < node.OutputPins
+                                ? edge with { From = edge.From with { Slot = node.Slot } } : edge).ToList();
+                    mappings = mappings.Select(edge => edge.To.Kind == "group-output" && edge.To.Group == target.Id &&
+                        edge.From.Slot == tail.Slot && edge.From.Pin < node.OutputPins
+                            ? edge with { From = edge.From with { Slot = node.Slot } } : edge).ToList();
+                    for (var pin = 0; pin < Math.Min(tail.OutputPins, node.MainInputPins); pin++)
+                        edges.Add(new Edge(new Port("node-output", tail.Mode, tail.Slot, pin),
+                            new Port("node-input", node.Mode, node.Slot, node.SidechainInputPins + pin)));
+                }
+                chain.Add(node.Slot);
+            }
+            // Repair missing adjacent links in an older, partially wired chain as part of the append.
+            for (var index = 0; index < chain.Count - 1; index++)
+            {
+                var source = nodes.First(node => node.Slot == chain[index]);
+                var destination = nodes.First(node => node.Slot == chain[index + 1]);
+                for (var pin = 0; pin < Math.Min(source.OutputPins, destination.MainInputPins); pin++)
+                {
+                    var link = new Edge(new Port("node-output", source.Mode, source.Slot, pin),
+                        new Port("node-input", destination.Mode, destination.Slot, destination.SidechainInputPins + pin));
+                    if (!edges.Contains(link)) edges.Add(link);
+                }
+            }
+        }
 
         string? Owner(Port port) => port.Kind is "node-input" or "node-output" && owners.TryGetValue(port.Slot, out var id) ? id : null;
         bool IsBoundary(Edge edge, bool input, string id) =>
@@ -85,10 +129,10 @@ internal static class PluginGroupRouting
                 toOwner is null ? edge.To : Expose(edge.To, toOwner, true)));
         }
 
-        var ordered = OrderMembers(members[target.Id], edges.Select(edge => Expand(edge, mappings, null)).ToList());
+        var ordered = appendChain ? members[target.Id] : OrderMembers(members[target.Id], edges.Select(edge => Expand(edge, mappings, null)).ToList());
         // An empty pre-wired group may receive its first VST. Free default ports
         // also let a newly-created group be wired later without inventing a chain.
-        if (target.MemberSlots.Count == 0 && ordered.Count > 0)
+        if ((target.MemberSlots.Count == 0 || appendChain) && ordered.Count > 0)
         {
             var first = nodes.First(node => node.Slot == ordered[0]);
             var last = nodes.First(node => node.Slot == ordered[^1]);
@@ -125,6 +169,34 @@ internal static class PluginGroupRouting
         connections.Clear();
         connections.AddRange(result);
         ArrangeMembers(ordered.Select(slot => nodes.First(node => node.Slot == slot)).ToList());
+    }
+
+    public static void AutoWireChain(PluginGroupSnapshot group, IReadOnlyList<PluginNodeSnapshot> members,
+        IList<CanvasConnectionSnapshot> connections)
+    {
+        if (members.Count == 0) return;
+        var slots = members.Select(node => node.Slot).ToHashSet();
+        // Auto-Wire deliberately replaces main-chain links, but never sidechain or external cables.
+        foreach (var cable in connections.Where(cable =>
+            cable.Kind == "node-to-node" && slots.Contains(cable.FromSlot) && slots.Contains(cable.ToSlot) &&
+                cable.ToPin >= members.First(node => node.Slot == cable.ToSlot).SidechainInputPins ||
+            cable.Kind == "group-input-to-node" && cable.FromGroupId == group.Id && cable.FromPin < SidechainBase ||
+            cable.Kind == "node-to-group-output" && cable.ToGroupId == group.Id).ToList())
+            connections.Remove(cable);
+        for (var index = 0; index < members.Count - 1; index++)
+        {
+            var source = members[index]; var destination = members[index + 1];
+            for (var pin = 0; pin < Math.Min(source.OutputPins, destination.MainInputPins); pin++)
+                connections.Add(WriteEdge(new Edge(new Port("node-output", source.Mode, source.Slot, pin),
+                    new Port("node-input", destination.Mode, destination.Slot, destination.SidechainInputPins + pin))));
+        }
+        var first = members[0]; var last = members[^1];
+        for (var pin = 0; pin < Math.Min(group.InputPins, first.MainInputPins); pin++)
+            connections.Add(WriteEdge(new Edge(new Port("group-input", group.Mode, Pin: pin, Group: group.Id),
+                new Port("node-input", first.Mode, first.Slot, first.SidechainInputPins + pin))));
+        for (var pin = 0; pin < Math.Min(group.OutputPins, last.OutputPins); pin++)
+            connections.Add(WriteEdge(new Edge(new Port("node-output", last.Mode, last.Slot, pin),
+                new Port("group-output", group.Mode, Pin: pin, Group: group.Id))));
     }
 
     public static void ArrangeMembers(IReadOnlyList<PluginNodeSnapshot> members)

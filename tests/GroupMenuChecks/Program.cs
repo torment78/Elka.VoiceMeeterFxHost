@@ -15,6 +15,8 @@ internal static class Program
         CheckReloadAndCancel();
         CheckLayoutAndCancel();
         CheckMissingPlugin();
+        CheckAutoWireAndExternalAppend();
+        CheckImmediateSelection();
         Console.WriteLine($"PASS: {_checks} group menu, pin, reload, and cancel checks. No audio engine started.");
     }
 
@@ -139,6 +141,56 @@ internal static class Program
 
     private static object? Invoke(object instance, string method, params object[] args) =>
         instance.GetType().GetMethod(method, PrivateInstance)!.Invoke(instance, args);
+
+    private static void CheckAutoWireAndExternalAppend()
+    {
+        var fixture = new Fixture();
+        var third = new PluginNodeSnapshot { Slot = 3, Name = "Third", InstanceId = 3 };
+        fixture.Nodes.Add(third);
+        var before = fixture.Cables.ToList();
+        PluginGroupRouting.AddMembers(fixture.Group, [third], fixture.Nodes, new List<PluginGroupSnapshot> { fixture.Group },
+            fixture.Cables, appendChain: true);
+        fixture.Window.OnGroupRoutingChanged(fixture.Nodes, before);
+        Check(fixture.Window.MemberSlots.SequenceEqual(new[] { 1, 2, 3 }), "open editor receives appended member immediately");
+        Check(Field<System.Collections.IDictionary>(fixture.Window, "_nodeVisualElements").Count == 3, "new group member is drawn while editor is open");
+        var appended = Graph(fixture);
+        fixture.Window.Close();
+        Check(Graph(fixture) == appended && fixture.RouteCalls == 0, "closing an older editor cannot undo externally appended cables");
+
+        fixture = new Fixture();
+        fixture.Group.MemberSlots.Add(3); fixture.Nodes.Add(third);
+        before = fixture.Cables.ToList();
+        fixture.Window.OnGroupRoutingChanged(fixture.Nodes, before);
+        Invoke(fixture.Window, "AutoWireMembers");
+        Check(fixture.Cables.Where(c => c.Kind == "node-to-group-output").All(c => c.FromSlot == 3),
+            "editor Auto-Wire moves the exits from the former tail");
+        Check(fixture.Cables.Count(c => c.Kind == "node-to-node" && c.FromSlot == 2 && c.ToSlot == 3) == 2,
+            "editor Auto-Wire connects the appended VST");
+        int calls = fixture.RouteCalls;
+        Invoke(fixture.Window, "AutoWireMembers");
+        Check(fixture.RouteCalls == calls, "repeated Auto-Wire does not toggle any unchanged module route");
+        var wired = Graph(fixture);
+        Invoke(fixture.Window, "ApplyAndClose");
+        Check(Graph(fixture) == wired && fixture.Window.MemberSlots.SequenceEqual(new[] { 1, 2, 3 }), "Apply keeps the full serial chain and current membership");
+    }
+
+    private static void CheckImmediateSelection()
+    {
+        var fixture = new Fixture();
+        var elements = Field<Dictionary<int, List<FrameworkElement>>>(fixture.Window, "_nodeVisualElements");
+        var first = elements[1].OfType<Border>().First();
+        var second = elements[2].OfType<Border>().First();
+        var down = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonDownEvent };
+        Invoke(fixture.Window, "Node_MouseLeftButtonDown", first, down);
+        Check(first.BorderThickness.Left == 2 && Panel.GetZIndex(first) > Panel.GetZIndex(second), "group member highlights and moves in front on mouse-down");
+        Invoke(fixture.Window, "Node_MouseLeftButtonUp", first, new System.Windows.Input.MouseButtonEventArgs(
+            System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+        elements = Field<Dictionary<int, List<FrameworkElement>>>(fixture.Window, "_nodeVisualElements");
+        Check(elements[1].All(e => Panel.GetZIndex(e) > Panel.GetZIndex(elements[2][0])), "group member labels and pins retain foreground order after redraw");
+        Check(fixture.RouteCalls == 0, "selection and stacking never touch routes");
+        fixture.Window.Close();
+    }
 
     private static T Field<T>(object instance, string name) =>
         (T)instance.GetType().GetField(name, PrivateInstance)!.GetValue(instance)!;

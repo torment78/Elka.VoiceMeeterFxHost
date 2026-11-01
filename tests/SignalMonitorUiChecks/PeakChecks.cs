@@ -41,6 +41,37 @@ internal static class PeakChecks
         output.ResetPeak(); output.Publish(frame);
         Array.Clear(frame.Peaks); output.Publish(frame);
         Check(output.MaximumPeak == 0, "silence has a real zero-amplitude maximum");
+        var channels = new float?[8];
+        output.CopyMaximumPeaks(channels);
+        Check(channels.All(p => p == 0), "all silent channels have their own zero-amplitude maximum");
+        for (int i = 0; i < 8; ++i) frame.Peaks[i] = (float)Math.Pow(10, (i - 4) / 20.0);
+        output.Publish(frame);
+        output.Publish(new SignalMonitorFrame());
+        output.CopyMaximumPeaks(channels);
+        Check(channels.Select((value, i) => Math.Abs(20 * Math.Log10(value!.Value) - (i - 4)) < .0001).All(ok => ok),
+            "per-channel maxima survive display stalls without collapsing into the overall maximum");
+        input.CopyMaximumPeaks(channels);
+        Check(channels.Skip(2).All(p => p is null), "stereo ignores nonexistent channels");
+        output.ResetPeak();
+        output.CopyMaximumPeaks(channels);
+        Check(channels.All(p => p is null), "reset clears every channel maximum with the overall peak");
+        output.Publish(frame); output.CopyMaximumPeaks(channels);
+        Check(channels.All(p => p is null), "per-channel reset also rejects the stale first snapshot");
+        var live = new SignalMonitorBallistics();
+        Check(live.LiveLevels.All(double.IsNaN), "live readouts start with no invented sample");
+        frame.Timestamp = 1;
+        for (int c = 0; c < 8; ++c) frame.Peaks[c] = (float)Math.Pow(10, (3 - c * 3) / 20.0);
+        live.Advance(frame, 1);
+        Check(live.LiveLevels.Select((value, c) => Math.Abs(value - (3 - c * 3)) < .0001).All(ok => ok),
+            "live readouts cover all channels and retain above-zero values");
+        Check(live.Levels[0] == 0 && live.LiveLevels[0] > 0, "the numeric value can exceed the visible meter scale");
+        frame.Timestamp = 1.1;
+        Array.Fill(frame.Peaks, .001f);
+        live.Advance(frame, 1.1);
+        Check(live.LiveLevels[0] == live.Levels[0] && live.LiveLevels[0] < 0 && live.LiveLevels[0] > -6,
+            "white readout releases with the live meter rather than retaining the peak");
+        for (int step = 0; step < 400; ++step) live.Advance(null, 1.1 + step / 60.0);
+        Check(live.LiveLevels.All(double.IsNegativeInfinity), "stopped streams clear the live readout after release");
         Console.WriteLine($"{checks} sample-peak capture and reset checks passed.");
         return checks;
     }

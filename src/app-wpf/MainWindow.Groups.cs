@@ -2,13 +2,14 @@ namespace Elka.VoiceMeeterFxHost.App;
 
 public partial class MainWindow
 {
-    private bool GroupNodesPreservingConnections(PluginGroupSnapshot group, IEnumerable<PluginNodeSnapshot> members)
+    private bool GroupNodesPreservingConnections(PluginGroupSnapshot group, IEnumerable<PluginNodeSnapshot> members, bool appendChain = false)
     {
         var previous = EffectivePluginRoutes().ToHashSet();
+        var previousConnections = _settings.CanvasConnections.ToList();
         try
         {
             PluginGroupRouting.AddMembers(group, members, _settings.PluginNodes,
-                _settings.PluginGroups, _settings.CanvasConnections);
+                _settings.PluginGroups, _settings.CanvasConnections, appendChain);
         }
         catch (InvalidOperationException ex)
         {
@@ -16,14 +17,26 @@ public partial class MainWindow
             return false;
         }
 
+        ReconcilePluginRoutes(previous);
+        RefreshOpenGroupEditors(previousConnections);
+        return true;
+    }
+
+    private void ReconcilePluginRoutes(HashSet<EffectiveGroupRoute> previous)
+    {
         var current = EffectivePluginRoutes().ToHashSet();
-        // Usually identical: do not toggle live audio routes for a visual regroup.
-        // The exception is adding the first VST to an already-wired empty group.
+        // Update only the actual graph difference; untouched module routes are not toggled.
         foreach (var route in previous.Except(current))
             SetEffectiveGroupRouteActive(route, active: false);
         foreach (var route in current.Except(previous))
             SetEffectiveGroupRouteActive(route, active: true);
-        return true;
+    }
+
+    private void RefreshOpenGroupEditors(IReadOnlyList<CanvasConnectionSnapshot> previousConnections)
+    {
+        foreach (var editor in OwnedWindows.OfType<PluginGroupPropertiesWindow>().ToArray())
+            if (GroupById(editor.GroupId) is { } group)
+                editor.OnGroupRoutingChanged(GroupMembers(group).ToList(), previousConnections);
     }
 
     private IEnumerable<EffectiveGroupRoute> EffectivePluginRoutes()

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Media;
@@ -25,6 +26,8 @@ internal static class CanvasInteractionChecks
         {
             Source = new Uri("/RoutingCanvasInteractionChecks;component/Themes/ElkaTheme.xaml", UriKind.Relative)
         });
+        if (args.Contains("--widget-memory")) return WidgetMemoryChecks.Run(args.Contains("--stress") ? 100 : 20);
+        if (args.Contains("--window-placement")) { WindowPlacementChecks.Run(); return 0; }
         var window = new MainWindow(new CanvasTestSession());
         if (args.Contains("--profile-layout"))
         {
@@ -39,16 +42,24 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--widget-states")) { window.CheckWidgetTileStates(); return 0; }
             window.ShowActivated = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.Left = -20000;
             window.Top = -20000;
             window.Show();
+            if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
             window.CheckCanvasInteraction();
             window.CheckEndpointMeterUi();
             window.CheckEndpointPeakUi();
             window.CheckHotkeyActions();
             window.CheckEndpointHotkeys();
+            window.CheckGroupChainUi();
+            window.CheckTrayMenuTheme();
+            window.CheckFloatingPanel();
+            window.CheckWidgetTileStates();
+            window.CheckCanvasStateVisuals();
+            WindowPlacementChecks.Run();
             Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, no user settings loaded or saved.");
             return 0;
         }
@@ -132,6 +143,7 @@ namespace Elka.VoiceMeeterFxHost.App
 
         internal void CheckCanvasInteraction()
         {
+            CheckCanvasTextContextMenus();
             CheckPluginContainerRestore();
             void Layout()
             {
@@ -237,6 +249,35 @@ namespace Elka.VoiceMeeterFxHost.App
             }
             _pluginScanInProgress = false;
             Console.WriteLine($"{_interactionChecks} real-window checks passed.");
+        }
+
+        private void CheckCanvasTextContextMenus()
+        {
+            var run = new Run("Node label");
+            var span = new Span(run);
+            var label = new TextBlock(); label.Inlines.Add(span);
+            var card = new Border { Child = label, ContextMenu = new ContextMenu() };
+            var previousView = _workspaceView;
+            RoutingCanvas.Children.Add(card);
+            try
+            {
+                _workspaceView = WorkspaceView.Vst;
+                Assert(CanvasChildHasContextMenu(run), "Run inside a Span reaches the node context menu without a visual-tree exception");
+                Assert(CanvasChildHasContextMenu(label), "Visual label still reaches its node menu");
+                var click = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+                    { RoutedEvent = Mouse.MouseDownEvent, Source = run };
+                Assert(ReferenceEquals(click.OriginalSource, run), "Regression event starts at the text Run");
+                RoutingCanvas_MouseRightButtonDown(RoutingCanvas, click);
+                Assert(!click.Handled, "Right-click on node text leaves the node menu in control");
+                card.ContextMenu = null;
+                Assert(!CanvasChildHasContextMenu(run), "Text without a node menu permits the canvas menu");
+                run.ContextMenu = new ContextMenu();
+                Assert(CanvasChildHasContextMenu(run), "An inline's own context menu is recognized");
+                Assert(!CanvasChildHasContextMenu(new Run("Detached")), "Detached text safely reaches the end of its parents");
+                Assert(!CanvasChildHasContextMenu(new DependencyObject()), "Other nonvisual sources do not throw");
+                Assert(!CanvasChildHasContextMenu(null) && !CanvasChildHasContextMenu(RoutingCanvas), "Empty canvas keeps its existing context-menu behavior");
+            }
+            finally { RoutingCanvas.Children.Remove(card); _workspaceView = previousView; }
         }
 
         private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

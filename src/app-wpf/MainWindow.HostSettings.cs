@@ -97,8 +97,7 @@ public partial class MainWindow
         switch (hotkey.Action)
         {
             case EditorHotkeyAction.Open:
-                if (_engine.IsPluginEditorOpen(node.Slot)) AppendLog(_engine.ClosePluginEditor(node.Slot));
-                else OpenPluginEditorWithSavedData(node);
+                TogglePluginEditor(node);
                 break;
             case EditorHotkeyAction.Reload: ReloadPluginNode(node); break;
             case EditorHotkeyAction.Properties: ShowNodeProperties(node); break;
@@ -112,6 +111,12 @@ public partial class MainWindow
             case EditorHotkeyAction.BypassAndPowerOff: SetCombinedBypassAndPower([node], true); break;
             case EditorHotkeyAction.UnbypassAndPowerOn: SetCombinedBypassAndPower([node], false); break;
         }
+    }
+
+    private void TogglePluginEditor(PluginNodeSnapshot node)
+    {
+        if (_engine.IsPluginEditorOpen(node.Slot)) AppendLog(_engine.ClosePluginEditor(node.Slot));
+        else OpenPluginEditorWithSavedData(node);
     }
 
     private PluginNodeSnapshot? HotkeyNode(EditorHotkeySnapshot hotkey) =>
@@ -164,6 +169,11 @@ public partial class MainWindow
         hotkeys.Margin = new Thickness(0, 10, 0, 18);
         hotkeys.Click += (_, _) => ShowEditorHotkeys(window);
         root.Children.Add(hotkeys);
+        var floatingPanel = CreateSaveManagerButton("Widget");
+        floatingPanel.Style = (Style)FindResource("RouteButton");
+        floatingPanel.Margin = new Thickness(0, 0, 0, 18);
+        floatingPanel.Click += (_, _) => { ShowFloatingPluginPanel(); _floatingPluginPanel?.ShowPicker(); };
+        root.Children.Add(floatingPanel);
         var close = CreateSaveManagerButton("Close");
         close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Click += (_, _) => window.Close();

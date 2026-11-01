@@ -46,6 +46,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Dictionary<string, Point> _pinPositions = [];
     private readonly Dictionary<string, CanvasPin> _pinInfos = [];
     private readonly Dictionary<int, List<FrameworkElement>> _nodeVisualElements = [];
+    private readonly Dictionary<int, int> _nodeStacking = [];
     private readonly Dictionary<string, Path> _connectionPaths = [];
     private readonly Dictionary<FrameworkElement, Point> _dragOrigins = [];
     private CanvasPin? _wireStart;
@@ -59,6 +60,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private bool _restored;
 
     public event EventHandler? Applied;
+    internal event EventHandler? RoutingRefreshed;
 
     public PluginGroupPropertiesWindow(
         PluginGroupSnapshot group,
@@ -121,6 +123,31 @@ internal sealed class PluginGroupPropertiesWindow : Window
     public int SidechainInputPins { get; private set; }
     public int SidechainOutputPins { get; private set; }
     public List<int> MemberSlots { get; private set; }
+
+    internal void OnGroupRoutingChanged(IReadOnlyList<PluginNodeSnapshot> members,
+        IReadOnlyList<CanvasConnectionSnapshot> previousConnections)
+    {
+        var previousKeys = previousConnections.Select(ConnectionKey).ToHashSet(StringComparer.Ordinal);
+        var currentKeys = _connections.Select(ConnectionKey).ToHashSet(StringComparer.Ordinal);
+        bool membershipChanged = !_members.Select(node => node.Slot).SequenceEqual(members.Select(node => node.Slot));
+        _members.Clear(); _members.AddRange(members);
+        MemberSlots = members.Select(node => node.Slot).ToList();
+        // Rebase only changes made outside this editor, so Cancel cannot undo a later drop or Auto-Wire.
+        _originalConnections.RemoveAll(connection => previousKeys.Contains(ConnectionKey(connection)) && !currentKeys.Contains(ConnectionKey(connection)));
+        var baselineKeys = _originalConnections.Select(ConnectionKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var connection in GroupConnections().Where(connection => !previousKeys.Contains(ConnectionKey(connection))))
+            if (baselineKeys.Add(ConnectionKey(connection))) _originalConnections.Add(CloneConnection(connection));
+        if (membershipChanged)
+        {
+            _originalNodePositions.Clear();
+            foreach (var node in members) _originalNodePositions[node.Slot] = new Point(node.X, node.Y);
+            InputPins = _group.InputPins; OutputPins = _group.OutputPins;
+            _inputPinsCombo.SelectedItem = InputPins; _outputPinsCombo.SelectedItem = OutputPins;
+            _draggingNode = null; _dragOrigins.Clear();
+        }
+        RebuildCanvas();
+        RoutingRefreshed?.Invoke(this, EventArgs.Empty);
+    }
 
     public void OnNodeReconfigured(PluginNodeSnapshot node, int oldSlot, int oldMainInputs, int oldSidechainInputs)
     {
@@ -354,6 +381,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             DrawNode(node);
         }
+        RefreshNodeSelection();
 
         foreach (var connection in GroupConnections())
         {
@@ -463,7 +491,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             Width = NodeWidth,
             Height = nodeHeight,
             Background = NodeBrush(node),
-            BorderBrush = selected ? BrushFrom("#E2B84A") : node.MissingPlugin ? BrushFrom("#E15F5F") : BrushFrom("#55C27A"),
+            BorderBrush = selected ? BrushFrom("#E2B84A") : NodeOutlineBrush(node),
             BorderThickness = selected ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8, 10, 8),
@@ -894,6 +922,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         _selectedNodeSlot = node.Slot;
         _selectedConnectionKey = null;
+        _nodeStacking[node.Slot] = _nodeStacking.Values.DefaultIfEmpty(0).Max() + 1;
+        RefreshNodeSelection();
 
         if (e.ClickCount > 1)
         {
@@ -914,6 +944,19 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private void Node_MouseMove(object sender, MouseEventArgs e)
     {
         Canvas_MouseMove(sender, e);
+    }
+
+    private void RefreshNodeSelection()
+    {
+        foreach (var node in _members)
+        {
+            if (!_nodeVisualElements.TryGetValue(node.Slot, out var elements)) continue;
+            foreach (var element in elements) Panel.SetZIndex(element, _nodeStacking.GetValueOrDefault(node.Slot));
+            if (elements.OfType<Border>().FirstOrDefault() is not { } border) continue;
+            bool selected = _selectedNodeSlot == node.Slot;
+            border.BorderBrush = selected ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
+            border.BorderThickness = new Thickness(selected ? 2 : 1);
+        }
     }
 
     private void Node_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1147,43 +1190,19 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void AutoWireMembers()
     {
-        for (var index = 0; index < _members.Count - 1; index++)
+        var previous = GroupConnections().Where(connection => connection.Kind == ConnectionNodeToNode).ToList();
+        PluginGroupRouting.AutoWireChain(new PluginGroupSnapshot
         {
-            var source = _members[index];
-            var destination = _members[index + 1];
-            var pinCount = Math.Min(source.OutputPins, destination.MainInputPins);
-
-            for (var pin = 0; pin < pinCount; pin++)
-            {
-                var destinationPin = destination.SidechainInputPins + pin;
-                if (FindNodeToNodeConnection(source.Slot, pin, destination.Slot, destinationPin) is not null)
-                {
-                    continue;
-                }
-
-                var nativePin = NativeInputPinForVisualPin(destination, destinationPin);
-                if (nativePin < 0 || !_toggleModuleRoute(source.Slot, pin, destination.Slot, nativePin))
-                {
-                    continue;
-                }
-
-                _connections.Add(new CanvasConnectionSnapshot
-                {
-                    Kind = ConnectionNodeToNode,
-                    FromKind = PinNodeOutput,
-                    FromMode = source.Mode,
-                    FromSlot = source.Slot,
-                    FromPin = pin,
-                    ToKind = PinNodeInput,
-                    ToMode = destination.Mode,
-                    ToSlot = destination.Slot,
-                    ToPin = destinationPin,
-                    From = NodeOutputKey(source.Slot, pin),
-                    To = NodeInputKey(destination.Slot, destinationPin)
-                });
-            }
-        }
-
+            Id = _group.Id, Mode = _group.Mode,
+            InputPins = SelectedPinCount(_inputPinsCombo, InputPins), OutputPins = SelectedPinCount(_outputPinsCombo, OutputPins)
+        }, _members, _connections);
+        var current = GroupConnections().Where(connection => connection.Kind == ConnectionNodeToNode).ToList();
+        var currentKeys = current.Select(ConnectionKey).ToHashSet(StringComparer.Ordinal);
+        var previousKeys = previous.Select(ConnectionKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var connection in previous.Where(connection => !currentKeys.Contains(ConnectionKey(connection))))
+            SetConnectionActive(connection, active: false);
+        foreach (var connection in current.Where(connection => !previousKeys.Contains(ConnectionKey(connection))))
+            SetConnectionActive(connection, active: true);
         RebuildCanvas();
     }
 
@@ -1607,55 +1626,12 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private static Brush NodeBrush(PluginNodeSnapshot node)
     {
-        if (!node.MissingPlugin)
-        {
-            if (node.Bypassed)
-                return StateStripeBrush(BrushFrom("#102327"), Color.FromArgb(170, 240, 138, 62));
-
-            if (!node.Enabled)
-                return StateStripeBrush(BrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
-
-            return BrushFrom("#102327");
-        }
-
-        var group = new DrawingGroup();
-        group.Children.Add(new GeometryDrawing(
-            BrushFrom("#4B151B"),
-            null,
-            new RectangleGeometry(new Rect(0, 0, 12, 12))));
-        group.Children.Add(new GeometryDrawing(
-            null,
-            new Pen(BrushFrom("#E15F5F"), 3),
-            new LineGeometry(new Point(-2, 12), new Point(12, -2))));
-        return new DrawingBrush(group)
-        {
-            TileMode = TileMode.Tile,
-            Viewport = new Rect(0, 0, 12, 12),
-            ViewportUnits = BrushMappingMode.Absolute
-        };
+        return node.MissingPlugin ? PluginStateVisuals.MissingBackground :
+            PluginStateVisuals.Background(BrushFrom("#102327"), PluginStateVisuals.State(node.Enabled, node.Bypassed));
     }
 
-    private static Brush StateStripeBrush(Brush background, Color stripeColor)
-    {
-        const double tileSize = 18.0;
-        var group = new DrawingGroup();
-        group.Children.Add(new GeometryDrawing(
-            background,
-            null,
-            new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
-        group.Children.Add(new GeometryDrawing(
-            null,
-            new Pen(new SolidColorBrush(stripeColor), 6.0),
-            new LineGeometry(new Point(0, tileSize), new Point(tileSize, 0))));
-        return new DrawingBrush(group)
-        {
-            TileMode = TileMode.Tile,
-            Viewbox = new Rect(0, 0, tileSize, tileSize),
-            ViewboxUnits = BrushMappingMode.Absolute,
-            Viewport = new Rect(0, 0, tileSize, tileSize),
-            ViewportUnits = BrushMappingMode.Absolute
-        };
-    }
+    private static Brush NodeOutlineBrush(PluginNodeSnapshot node) => node.MissingPlugin ? BrushFrom("#E15F5F") :
+        PluginStateVisuals.Outline(BrushFrom("#55C27A"), PluginStateVisuals.State(node.Enabled, node.Bypassed));
 
     private static SolidColorBrush BrushFrom(string hex)
     {

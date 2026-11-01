@@ -26,11 +26,19 @@ internal static class WindowChecks
             {
                 Check(ready.Wait(3000), "monitor reader initialized");
                 var peakFrame = new SignalMonitorFrame();
+                for (int c = 0; c < channels; ++c) peakFrame.Peaks[c] = (float)Math.Pow(10, -(c + 1) * 3 / 20.0);
                 peakFrame.Peaks[0] = 2;
                 mailbox!.Publish(peakFrame);
                 window.RefreshPeakReadout();
                 var content = (FrameworkElement)window.Content;
                 var view = Descendants(content).OfType<SignalMonitorView>().Single();
+                Check(view.ChannelPeakText(0) == "+6.02" && view.ChannelPeakText(channels - 1) == $"-{channels * 3}.00",
+                    "each channel shows its own retained dBFS peak, including above-zero levels");
+                view.Advance(peakFrame);
+                Check(view.ChannelLiveText(0) == "+6.02" && view.ChannelLiveText(channels - 1) == $"-{channels * 3}.00",
+                    "each channel has an independent live readout with real above-zero values");
+                Check(view.ChannelPeakMarkerDb(0) == 0 && Math.Abs(view.ChannelPeakMarkerDb(channels - 1)!.Value + channels * 3) < .0001,
+                    "held marker uses the channel peak's dB position, capped only at the meter edge");
                 var data = new SignalMonitorHistory();
                 var snapshot = new SignalMonitorHistorySnapshot();
                 var frame = new SignalMonitorFrame { SampleRate = 48000 };
@@ -77,14 +85,20 @@ internal static class WindowChecks
                     duration.SelectedIndex = 2;
                     buttons.Single(b => Equals(b.Content, "Spectrum")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Check(!view.ShowHistory, "Spectrum view remains available");
+                    content.UpdateLayout();
+                    Save(Render(content, size), Path.Combine(output, $"window-spectrum-peaks-{channels}ch-{size.Width}x{size.Height}.png"));
                     buttons.Single(b => Equals(b.Content, "History")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Check(view.ShowHistory && view.HistorySeconds == 30, "Switching views retains history duration");
                     pause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Check(!view.HistoryPaused, "Resume returns to live history");
                 }
+                var liveBeforeReset = Enumerable.Range(0, channels).Select(view.ChannelLiveText).ToArray();
                 Descendants(content).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "Reset peak")
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Check(Descendants(content).OfType<TextBlock>().Any(t => t.Text == "Peak -- dBFS"), "click resets the visible maximum");
+                Check(Enumerable.Range(0, channels).All(c => view.ChannelPeakText(c) == "--"), "top reset clears all channel peak readouts");
+                Check(Enumerable.Range(0, channels).All(c => view.ChannelPeakMarkerDb(c) is null), "reset clears every held red marker");
+                Check(liveBeforeReset.SequenceEqual(Enumerable.Range(0, channels).Select(view.ChannelLiveText)), "reset does not interrupt the white live values");
                 Check(Descendants(content).OfType<System.Windows.Shapes.Ellipse>().Single().Fill == Brushes.Transparent,
                     "click clears the warning dot");
             }

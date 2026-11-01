@@ -618,6 +618,34 @@ internal sealed record EditorHotkeySnapshot
     public uint Modifiers { get; set; }
 }
 
+internal sealed class FloatingPanelTile
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public CallbackMode? Mode { get; set; }
+    public bool? IsGroup { get; set; }
+}
+
+internal enum WidgetFlyoutDirection { Down = 0, Up = 1, Left = 2, Right = 3 }
+
+internal sealed class FloatingPanelSettings
+{
+    public bool Visible { get; set; }
+    public bool AlwaysOnTop { get; set; } = true;
+    public bool LockPosition { get; set; }
+    public bool ToolbarVisible { get; set; } = true;
+    public bool GrowHorizontally { get; set; } = true;
+    public int TileRows { get; set; } = 1;
+    public WidgetFlyoutDirection FlyoutDirection { get; set; } = WidgetFlyoutDirection.Down;
+    public Dictionary<string, WidgetFlyoutDirection> GroupFlyoutDirections { get; set; } = [];
+    public double? Left { get; set; }
+    public double? Top { get; set; }
+    public double Width { get; set; } = 460;
+    public double Height { get; set; } = 190;
+    public List<FloatingPanelTile> Tiles { get; set; } = [];
+}
+
 internal sealed class FxHostSettings
 {
     public VoicemeeterKind Kind { get; set; } = VoicemeeterKind.Potato;
@@ -637,6 +665,7 @@ internal sealed class FxHostSettings
     public bool CloseToTray { get; set; } = true;
     public bool NodeVuMetersEnabled { get; set; } = true;
     public List<EditorHotkeySnapshot> EditorHotkeys { get; set; } = [];
+    public FloatingPanelSettings FloatingPanel { get; set; } = new();
     public bool AdvancedModeEnabled { get; set; }
     public bool CheckStableUpdatesAutomatically { get; set; }
     public bool CheckBetaUpdatesAutomatically { get; set; }

@@ -177,4 +177,90 @@ foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output, CallbackMo
     }
     Check(true, "80 generated branched graphs preserve exact routing through incremental grouping");
 }
+foreach (var mode in new[] { CallbackMode.Input, CallbackMode.Output, CallbackMode.Main })
+{
+    var a = Node(12, mode); var b = Node(3, mode); var c = Node(7, mode); var d = Node(1, mode);
+    List<PluginNodeSnapshot> nodes = [d, b, c, a]; List<PluginGroupSnapshot> groups = [];
+    var group = new PluginGroupSnapshot { Mode = mode };
+    List<CanvasConnectionSnapshot> cables = [];
+    PluginGroupRouting.AddMembers(group, [a, b], nodes, groups, cables, appendChain: true);
+    Check(group.MemberSlots.SequenceEqual(new[] { 12, 3 }), $"{mode}: drop order overrides plugin creation/ID order");
+    Check(Routes(cables).SetEquals(Routes([Link(a, 0, b, 0), Link(a, 1, b, 1)])), $"{mode}: dropping an unwired pair automatically connects it");
+    Check(cables.Count(edge => edge.Kind == "group-input-to-node" && edge.ToSlot == a.Slot) == 2 &&
+        cables.Count(edge => edge.Kind == "node-to-group-output" && edge.FromSlot == b.Slot) == 2, $"{mode}: first and last members map to the group walls");
+    // Same external cables created by Ctrl-click/Enter; no internal routes may disappear.
+    for (int pin = 0; pin < 2; pin++)
+    {
+        cables.Add(new() { Kind = "endpoint-to-group-input", FromKind = "endpoint-source", FromMode = mode, FromChannel = pin,
+            FromPin = pin, ToKind = "group-input", ToMode = mode, ToGroupId = group.Id, ToPin = pin });
+        cables.Add(new() { Kind = "group-output-to-endpoint", FromKind = "group-output", FromMode = mode, FromGroupId = group.Id, FromPin = pin,
+            ToKind = "endpoint-destination", ToMode = mode, ToChannel = pin, ToPin = pin });
+    }
+    Check(Routes(cables).SetEquals(Routes(Chain(a, b))), $"{mode}: attaching outside endpoints keeps the internal pair wired");
+    foreach (var addition in new[] { c, d })
+    {
+        PluginGroupRouting.AddMembers(group, [addition], nodes, groups, cables, appendChain: true);
+        var ordered = group.MemberSlots.Select(slot => nodes.Single(node => node.Slot == slot)).ToArray();
+        Check(Routes(cables).SetEquals(Routes(Chain(ordered))), $"{mode}: appending {addition.Slot} moves exits without losing upstream links");
+        Check(cables.Where(edge => edge.Kind == "node-to-group-output").All(edge => edge.FromSlot == addition.Slot),
+            $"{mode}: no group exit bypasses the newest VST");
+    }
+    PluginGroupRouting.AddMembers(group, [d], nodes, groups, cables, appendChain: true);
+    Check(group.MemberSlots.SequenceEqual(new[] { 12, 3, 7, 1 }) && Routes(cables).SetEquals(Routes(Chain(a, b, c, d))),
+        $"{mode}: re-adding a member does not reorder or duplicate the chain");
+    var restored = JsonSerializer.Deserialize<FxHostSettings>(JsonSerializer.Serialize(new FxHostSettings
+        { PluginNodes = nodes, PluginGroups = groups, CanvasConnections = cables }))!;
+    Check(Routes(restored.CanvasConnections).SetEquals(Routes(Chain(a, b, c, d))) && restored.PluginGroups[0].MemberSlots.SequenceEqual(group.MemberSlots),
+        $"{mode}: serial order and exit mappings survive save/load");
+}
+{
+    var a = Node(1); var b = Node(2); var c = Node(3); var unrelated = Node(4);
+    c.SidechainInputPins = 2; c.MainInputPins = 2; c.InputPins = 4;
+    List<PluginNodeSnapshot> nodes = [a, b, c, unrelated]; List<PluginGroupSnapshot> groups = [];
+    var cables = Chain(a, b); cables.Add(Input(unrelated, 6, 0)); cables.Add(Output(unrelated, 0, 6));
+    cables.Add(Input(c, 4, 0));
+    var group = new PluginGroupSnapshot();
+    PluginGroupRouting.AddMembers(group, [a, b], nodes, groups, cables, appendChain: true);
+    PluginGroupRouting.AddMembers(group, [c], nodes, groups, cables, appendChain: true);
+    var effective = PluginGroupRouting.EffectiveConnections(cables);
+    Check(effective.Any(edge => edge.FromSlot == 2 && edge.ToSlot == 3 && edge.ToPin == 2) &&
+        effective.Any(edge => edge.FromSlot == 2 && edge.ToSlot == 3 && edge.ToPin == 3), "append uses main inputs, not sidechain pins");
+    Check(effective.Any(edge => edge.Kind == "endpoint-to-node" && edge.FromChannel == 4 && edge.ToSlot == 3 && edge.ToPin == 0),
+        "append preserves a separately wired sidechain");
+    Check(effective.Any(edge => edge.Kind == "node-to-endpoint" && edge.FromSlot == 4 && edge.ToChannel == 6),
+        "append leaves unrelated parallel chains alone");
+    // Simulate an older saved group whose exit still points at the middle VST.
+    foreach (var edge in cables.Where(edge => edge.Kind == "node-to-group-output" && edge.ToGroupId == group.Id))
+    { edge.FromSlot = b.Slot; edge.From = $"node-output:{b.Slot}:{edge.FromPin}"; }
+    PluginGroupRouting.AutoWireChain(group, [a, b, c], cables);
+    Check(cables.Where(edge => edge.Kind == "node-to-group-output").All(edge => edge.FromSlot == c.Slot),
+        "Auto-Wire repairs stale group outputs instead of leaving an earlier VST connected");
+    var stable = Routes(cables);
+    PluginGroupRouting.AutoWireChain(group, [a, b, c], cables);
+    Check(stable.SetEquals(Routes(cables)), "Auto-Wire is idempotent");
+    Check(PluginGroupRouting.EffectiveConnections(cables).Any(edge => edge.Kind == "endpoint-to-node" && edge.FromChannel == 4 && edge.ToSlot == 3 && edge.ToPin == 0),
+        "Auto-Wire leaves sidechain routing intact");
+}
+{
+    var a = Node(1); var b = Node(2); b.MainInputPins = b.InputPins = b.OutputPins = 1;
+    List<PluginNodeSnapshot> nodes = [a, b]; List<PluginGroupSnapshot> groups = []; var cables = Chain(a);
+    var group = new PluginGroupSnapshot();
+    PluginGroupRouting.AddMembers(group, [a], nodes, groups, cables, appendChain: true);
+    PluginGroupRouting.AddMembers(group, [b], nodes, groups, cables, appendChain: true);
+    var effective = PluginGroupRouting.EffectiveConnections(cables);
+    Check(!effective.Any(edge => edge.Kind == "node-to-endpoint" && edge.FromSlot == a.Slot) &&
+        effective.Where(edge => edge.Kind == "node-to-endpoint").All(edge => edge.FromSlot == b.Slot && edge.FromPin == 0),
+        "narrower tail cannot leave an old output bypass cable or invent unsupported pins");
+}
+{
+    var a = Node(1); var b = Node(2); var c = Node(3);
+    List<PluginNodeSnapshot> nodes = [a, b, c]; List<PluginGroupSnapshot> groups = [];
+    List<CanvasConnectionSnapshot> cables = [];
+    var group = new PluginGroupSnapshot();
+    PluginGroupRouting.AddMembers(group, [a, b], nodes, groups, cables);
+    Check(!cables.Any(edge => edge.Kind == "node-to-node"), "legacy unwired group reproduction");
+    PluginGroupRouting.AddMembers(group, [c], nodes, groups, cables, appendChain: true);
+    Check(cables.Count(edge => edge.Kind == "node-to-node") == 4 && cables.Where(edge => edge.Kind == "node-to-group-output").All(edge => edge.FromSlot == 3),
+        "appending to a legacy unwired pair fills its missing internal links and moves the exits");
+}
 Console.WriteLine($"{passed} group routing checks passed. No audio engine was started.");

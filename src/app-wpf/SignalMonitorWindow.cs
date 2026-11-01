@@ -106,7 +106,7 @@ internal sealed class SignalMonitorWindow : Window
 
     internal void RefreshPeakReadout()
     {
-        float? peak = _mailbox.MaximumPeak;
+        float? peak = _view.RefreshChannelPeaks(_mailbox);
         if (peak == _displayPeak && _peakText.Text.Length != 0) return;
         _displayPeak = peak;
         string level = peak is null ? "--" : peak == 0 ? "-inf" :
@@ -341,6 +341,7 @@ internal sealed class SignalMonitorView : FrameworkElement
     private readonly string _side;
     private readonly int _channels;
     private readonly SignalMonitorBallistics _ballistics = new();
+    private readonly float?[] _channelMaximumPeaks = new float?[8];
     private readonly SignalMonitorHistory _localHistory = new();
     private readonly SignalMonitorHistorySnapshot _history = new();
     private readonly SignalMonitorHistoryRenderer _historyRenderer;
@@ -423,6 +424,23 @@ internal sealed class SignalMonitorView : FrameworkElement
 
     internal void ReleaseHistory() => _historyRenderer.Clear();
 
+    internal float? RefreshChannelPeaks(SignalMonitorMailbox mailbox)
+    {
+        var maximum = mailbox.CopyMaximumPeaks(_channelMaximumPeaks);
+        InvalidateVisual();
+        return maximum;
+    }
+
+    internal string ChannelPeakText(int channel) => _channelMaximumPeaks[channel] is not { } value ? "--" :
+        value == 0 ? "-inf" : (20 * Math.Log10(value)).ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
+
+    internal string ChannelLiveText(int channel) => double.IsNaN(_ballistics.LiveLevels[channel]) ? "--" :
+        double.IsNegativeInfinity(_ballistics.LiveLevels[channel]) ? "-inf" :
+        _ballistics.LiveLevels[channel].ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
+
+    internal double? ChannelPeakMarkerDb(int channel) => _channelMaximumPeaks[channel] is { } peak && peak > 0
+        ? Math.Clamp(20 * Math.Log10(peak), -60, 0) : null;
+
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
@@ -443,12 +461,12 @@ internal sealed class SignalMonitorView : FrameworkElement
             Text(dc, state, width - 16, height - 23, 10, MutedBrush, 110, rightAligned: true);
             return;
         }
-        double meterWidth = _channels == 2 ? 95 : 245;
+        double meterWidth = _channels == 2 ? 104 : 304;
         bool stacked = width < meterWidth + 260;
         double contentHeight = Math.Max(70, height - 148);
         if (stacked)
         {
-            double meterHeight = Math.Max(80, contentHeight * 0.57);
+            double meterHeight = Math.Max(98, contentHeight * 0.57);
             Meters(dc, new Rect((width - meterWidth) / 2, 115, meterWidth, meterHeight));
             Spectrum(dc, new Rect(16, 115 + meterHeight + 16, width - 32, Math.Max(30, contentHeight - meterHeight - 16)));
         }
@@ -462,13 +480,13 @@ internal sealed class SignalMonitorView : FrameworkElement
     private void Meters(DrawingContext dc, Rect area)
     {
         const double barWidth = 11;
-        double top = area.Y + 6, barHeight = Math.Max(40, area.Height - 30);
-        double start = area.X + (_channels == 2 ? 14 : 3);
+        double top = area.Y + 6, barHeight = Math.Max(30, area.Height - 68);
+        double start = area.X + 14;
         bool resized = area != _meterBounds;
         _meterBounds = area;
         for (int c = 0; c < _channels; ++c)
         {
-            double x = start + (c == 0 ? 0 : 44 + (c - 1) * 29);
+            double x = start + (c == 0 ? 0 : 44 + (c - 1) * 36);
             if (resized || _meterSegments[c] is null)
             {
                 var segments = new GeometryGroup();
@@ -492,14 +510,23 @@ internal sealed class SignalMonitorView : FrameworkElement
                 if (!red.IsEmpty) dc.DrawRectangle(RedBrush, null, red);
             }
             dc.Pop();
-            if (_ballistics.Peaks[c] > -60)
+            if (ChannelPeakMarkerDb(c) is { } peakDb)
             {
-                double y = top + (-_ballistics.Peaks[c] / 60) * barHeight;
+                double y = top + (-peakDb / 60) * barHeight;
+                dc.DrawRectangle(RedBrush, null, new Rect(x - 3, y, barWidth + 6, 2));
+            }
+            if (_ballistics.Levels[c] > -60)
+            {
+                double y = top + (-_ballistics.Levels[c] / 60) * barHeight;
                 dc.DrawRectangle(TextBrush, null, new Rect(x - 1, y, barWidth + 2, 1.5));
             }
             Text(dc, Labels[c], x + barWidth / 2, top + barHeight + 7, 9, MutedBrush, centered: true);
+            Text(dc, ChannelLiveText(c), x + barWidth / 2, top + barHeight + 20, 8.5, TextBrush, 36, centered: true);
+            Text(dc, ChannelPeakText(c), x + barWidth / 2, top + barHeight + 32, 8.5, RedBrush, 36, centered: true);
+            Text(dc, "dBFS", x + barWidth / 2, top + barHeight + 44, 7.5, MutedBrush, centered: true);
         }
-        for (int db = 0; db <= 60; db += 6)
+        int labelStep = barHeight >= 120 ? 6 : barHeight >= 60 ? 12 : 30;
+        for (int db = 0; db <= 60; db += labelStep)
             Text(dc, db.ToString(CultureInfo.InvariantCulture), start + 27.5, top + db / 60.0 * barHeight - 6, 9, MutedBrush, centered: true);
     }
 

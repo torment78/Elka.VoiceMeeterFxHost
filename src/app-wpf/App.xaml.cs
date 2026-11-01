@@ -10,6 +10,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         StartupCrashLogger.InstallDispatcherHandler(this);
+        AuxiliaryWindowPlacement.Install(Path.Combine(AppDataPaths.LocalRoot, "window-placements.json"));
         base.OnStartup(e);
 
         var window = new MainWindow();

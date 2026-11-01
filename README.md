@@ -28,8 +28,24 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.10 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.10).**
-Signal Monitor and node-meter reads no longer compete with the general host
+**[0.8.3.11 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.11).**
+**Menu > Settings > Widget** selects the VSTs and groups for a movable floating
+panel titled **FX Host**. Toggle it from the tray's **Widget** command, optionally
+keep it on top, lock its position, or hide its toolbar. Group drawers can open
+in two directions without moving the main widget. Click a VST to open or close
+its editor; right-click for its controls and **Close** to dismiss only the menu.
+
+Plugin editors and auxiliary windows now remember their size and position.
+Signal Monitor adds live and resettable maximum dBFS readings for each channel,
+with red latched peak markers. Canvas selection highlights immediately and brings
+the selected node forward. Dropping VSTs into a group appends them in order,
+preserving the chain and moving its output connections to the new last member.
+Widget, canvas and VST-list state graphics now match: orange for bypass, gray for
+off, and gray with red diagonal stripes for off plus bypass. This update does
+not change audio sample processing.
+
+The monitoring fixes from 0.8.3.10 remain: Signal Monitor and node-meter reads
+no longer compete with the general host
 control lock. This fixes missing history points and visual meter dips caused by
 skipped display reads. The spectrum also avoids joining nonconsecutive display
 samples, preventing false side-band jumps while a new FFT window fills.

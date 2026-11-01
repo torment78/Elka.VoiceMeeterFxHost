@@ -325,6 +325,8 @@ public partial class MainWindow : Window
         InitializeEndpointMeters();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
         _ = CheckStartupUpdatesAsync();
+        if (_settings.FloatingPanel.Visible)
+            Dispatcher.BeginInvoke(new Action(ShowFloatingPluginPanel));
     }
 
     private void InitializeTrayIcon()
@@ -338,6 +340,7 @@ public partial class MainWindow : Window
         var menu = new Forms.ContextMenuStrip();
         TrayMenuTheme.Apply(menu);
         menu.Items.Add("Open", null, (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray)));
+        menu.Items.Add("Widget", null, (_, _) => Dispatcher.BeginInvoke(new Action(ToggleFloatingPluginPanel)));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Shutdown", null, (_, _) => Dispatcher.BeginInvoke(new Action(ShutdownFromTray)));
 
@@ -1878,12 +1881,18 @@ public partial class MainWindow : Window
     {
         while (source is not null && source != RoutingCanvas)
         {
-            if (source is FrameworkElement { ContextMenu: not null })
+            if (ContextMenuService.GetContextMenu(source) is not null)
             {
                 return true;
             }
 
-            source = VisualTreeHelper.GetParent(source);
+            // Inline text can be the mouse source, but is not part of the visual tree.
+            source = source switch
+            {
+                Visual or System.Windows.Media.Media3D.Visual3D => VisualTreeHelper.GetParent(source),
+                ContentElement content => ContentOperations.GetParent(content) ?? LogicalTreeHelper.GetParent(content),
+                _ => LogicalTreeHelper.GetParent(source)
+            };
         }
 
         return false;
@@ -1929,6 +1938,7 @@ public partial class MainWindow : Window
 
     private void ApplyLoadedSettings(FxHostSettings settings)
     {
+        CloseFloatingPluginPanel();
         _settings = settings ?? new FxHostSettings();
         _settings.Endpoints ??= [];
         _settings.PluginNodes ??= [];
@@ -1939,6 +1949,8 @@ public partial class MainWindow : Window
         _settings.EndpointRouteHues ??= [];
         _settings.CustomRouteColors = RouteHueColor.NormalizePalette(_settings.CustomRouteColors);
         _settings.EditorHotkeys ??= [];
+        _settings.FloatingPanel ??= new();
+        _settings.FloatingPanel.Tiles ??= [];
         _settings.EditionWorkspaces ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
@@ -2002,6 +2014,8 @@ public partial class MainWindow : Window
         }
 
         _normalizedEndpointLayout = NormalizeOverlappingEndpointCanvasOffsets();
+        if (IsLoaded && _settings.FloatingPanel.Visible)
+            Dispatcher.BeginInvoke(new Action(ShowFloatingPluginPanel));
         MigratePlainInputOutputCanvasRoutesToSharedChannelRoutes();
     }
 
@@ -4621,59 +4635,16 @@ private void RefreshEndpointButtonSelection()
 
         var normalBackground = HueFillBrush(SourceHueKeyForNode(node.Slot, []))
             ?? ThemeBrushOr("RouteActiveBrush", "#14392F");
-        if (node.Bypassed)
-        {
-            return StateStripeBrush(normalBackground, Color.FromArgb(170, 240, 138, 62));
-        }
-
-        if (!node.Enabled)
-        {
-            return StateStripeBrush(SolidBrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
-        }
-
-        return normalBackground;
+        return PluginStateVisuals.Background(normalBackground, PluginStateVisuals.State(node.Enabled, node.Bypassed));
     }
 
-    private static Brush StateStripeBrush(Brush background, Color stripeColor)
+    private Brush NodeOutlineBrush(PluginNodeSnapshot node)
     {
-        const double tileSize = 18.0;
-        var group = new DrawingGroup();
-        group.Children.Add(new GeometryDrawing(
-            background,
-            null,
-            new RectangleGeometry(new Rect(0, 0, tileSize, tileSize))));
-        group.Children.Add(new GeometryDrawing(
-            null,
-            new Pen(new SolidColorBrush(stripeColor), 6.0),
-            new LineGeometry(new Point(0, tileSize), new Point(tileSize, 0))));
-        return new DrawingBrush(group)
-        {
-            TileMode = TileMode.Tile,
-            Viewbox = new Rect(0, 0, tileSize, tileSize),
-            ViewboxUnits = BrushMappingMode.Absolute,
-            Viewport = new Rect(0, 0, tileSize, tileSize),
-            ViewportUnits = BrushMappingMode.Absolute
-        };
+        var normal = (Brush)FindResource("RouteAccentBrush");
+        return node.MissingPlugin ? normal : PluginStateVisuals.Outline(normal, PluginStateVisuals.State(node.Enabled, node.Bypassed));
     }
 
-    private static Brush MissingPluginBrush()
-    {
-        var group = new DrawingGroup();
-        group.Children.Add(new GeometryDrawing(
-            BrushFromHex("#4B151B"),
-            null,
-            new RectangleGeometry(new Rect(0, 0, 12, 12))));
-        group.Children.Add(new GeometryDrawing(
-            null,
-            new Pen(BrushFromHex("#E15F5F"), 3),
-            new LineGeometry(new Point(-2, 12), new Point(12, -2))));
-        return new DrawingBrush(group)
-        {
-            TileMode = TileMode.Tile,
-            Viewport = new Rect(0, 0, 12, 12),
-            ViewportUnits = BrushMappingMode.Absolute
-        };
-    }
+    private static Brush MissingPluginBrush() => PluginStateVisuals.MissingBackground;
 
     private static SolidColorBrush BrushFromHex(string hex)
     {
@@ -7659,6 +7630,8 @@ private void RefreshEndpointButtonSelection()
     {
         _selectedPluginNodeSlot = slot;
         _selectedPluginGroupId = null;
+        BringCanvasCardToFront($"node:{slot}");
+        RefreshVstCanvasSelection();
         ClearSelectedConnectionKeys();
         FocusRoutingCanvasForShortcuts();
         RebuildVstNodeList();
@@ -7673,6 +7646,8 @@ private void RefreshEndpointButtonSelection()
     {
         _selectedPluginGroupId = id;
         _selectedPluginNodeSlot = null;
+        BringCanvasCardToFront($"group:{id}");
+        RefreshVstCanvasSelection();
         ClearSelectedConnectionKeys();
         FocusRoutingCanvasForShortcuts();
         RebuildVstNodeList();
@@ -7710,7 +7685,7 @@ private void RefreshEndpointButtonSelection()
                 Background = NodeBackgroundBrush(node),
                 BorderBrush = selected
                     ? (Brush)FindResource("VolumeAccentBrush")
-                    : (Brush)FindResource("RouteAccentBrush"),
+                    : NodeOutlineBrush(node),
                 BorderThickness = selected ? new Thickness(2) : new Thickness(1),
                 CornerRadius = new CornerRadius(5),
                 Padding = new Thickness(8),
@@ -8177,6 +8152,7 @@ private void RefreshEndpointButtonSelection()
         _canvasRebuildAfterDrag = false;
         RefreshSignalMonitors();
         RefreshEditorHotkeys();
+        RefreshFloatingPluginPanel();
         StopEndpointMeterRendering();
         if (_workspaceView == WorkspaceView.Channels)
         {
@@ -8201,6 +8177,7 @@ private void RefreshEndpointButtonSelection()
         DrawCanvasCards();
         DrawPluginGroups();
         DrawPluginNodes();
+        ApplyCanvasCardStacking();
         DrawDefaultPassthroughConnections();
         DrawMirroredChannelRoutes();
         DrawCanvasConnections();
@@ -8268,7 +8245,8 @@ private void RefreshEndpointButtonSelection()
             var border = elements.OfType<Border>().FirstOrDefault();
             if (border is null) continue;
             var selected = _selectedPluginNodeSlot == slot || _quickGroupNodeSlots.Contains(slot);
-            border.BorderBrush = (Brush)FindResource(selected ? "VolumeAccentBrush" : "RouteAccentBrush");
+            var node = _settings.PluginNodes.FirstOrDefault(candidate => candidate.Slot == slot);
+            border.BorderBrush = selected || node is null ? (Brush)FindResource(selected ? "VolumeAccentBrush" : "RouteAccentBrush") : NodeOutlineBrush(node);
             border.BorderThickness = new Thickness(selected ? 2 : 1);
         }
         foreach (var group in _settings.PluginGroups.Where(GroupBelongsToCurrentCanvas))
@@ -8278,7 +8256,8 @@ private void RefreshEndpointButtonSelection()
             if (border is null) continue;
             var selected = _selectedPluginGroupId == group.Id || _quickGroupIds.Contains(group.Id);
             border.BorderBrush = selected ? (Brush)FindResource("VolumeAccentBrush") :
-                HueStrokeBrush(GroupDisplayHue(group)) ?? (Brush)FindResource("RouteAccentBrush");
+                PluginStateVisuals.Outline(HueStrokeBrush(GroupDisplayHue(group)) ?? (Brush)FindResource("RouteAccentBrush"),
+                    PluginStateVisuals.GroupState(GroupMembers(group).Select(node => (node.Enabled, node.Bypassed))));
             border.BorderThickness = new Thickness(selected ? 2 : 1);
         }
     }
@@ -8773,7 +8752,8 @@ private void RefreshEndpointButtonSelection()
             Background = GroupBackgroundBrush(members, HueFillBrush(groupHue)),
             BorderBrush = selected
                 ? (Brush)FindResource("VolumeAccentBrush")
-                : HueStrokeBrush(groupHue) ?? (Brush)FindResource("RouteAccentBrush"),
+                : PluginStateVisuals.Outline(HueStrokeBrush(groupHue) ?? (Brush)FindResource("RouteAccentBrush"),
+                    PluginStateVisuals.GroupState(members.Select(node => (node.Enabled, node.Bypassed)))),
             BorderThickness = selected ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8, 10, 8),
@@ -8807,7 +8787,8 @@ private void RefreshEndpointButtonSelection()
             Text = GroupStatusText(members),
             Style = (Style)FindResource("MutedText"),
             FontSize = 10,
-            Margin = new Thickness(34, 2, 34, 0),
+            LineHeight = 11,
+            Margin = new Thickness(24, 2, 24, 0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
@@ -9008,17 +8989,7 @@ private void RefreshEndpointButtonSelection()
     private Brush GroupBackgroundBrush(IReadOnlyCollection<PluginNodeSnapshot> members, Brush? routeBackground = null)
     {
         var background = routeBackground ?? ThemeBrushOr("PanelBrush", "#1A2025");
-        if (GroupIsBypassed(members))
-        {
-            return StateStripeBrush(background, Color.FromArgb(170, 240, 138, 62));
-        }
-
-        if (members.Count > 0 && !GroupIsEnabled(members))
-        {
-            return StateStripeBrush(SolidBrushFrom("#555B60"), Color.FromArgb(165, 0, 0, 0));
-        }
-
-        return background;
+        return PluginStateVisuals.Background(background, PluginStateVisuals.GroupState(members.Select(node => (node.Enabled, node.Bypassed))));
     }
 
     private static bool GroupIsBypassed(IReadOnlyCollection<PluginNodeSnapshot> members)
@@ -9034,12 +9005,8 @@ private void RefreshEndpointButtonSelection()
     private static string GroupStatusText(IReadOnlyCollection<PluginNodeSnapshot> members)
     {
         var label = members.Count == 1 ? "1 VST" : $"{members.Count} VSTs";
-        if (!GroupIsEnabled(members))
-        {
-            return $"{label} off";
-        }
-
-        return GroupIsBypassed(members) ? $"{label} bypassed" : label;
+        var state = PluginStateVisuals.GroupState(members.Select(node => (node.Enabled, node.Bypassed)));
+        return state == PluginVisualState.On ? label : $"{label}\n{PluginStateVisuals.Label(state)}";
     }
 
     private void SetGroupEnabled(PluginGroupSnapshot group, bool enabled)
@@ -9502,7 +9469,7 @@ private void RefreshEndpointButtonSelection()
                 Background = NodeBackgroundBrush(node),
                 BorderBrush = selected
                     ? (Brush)FindResource("VolumeAccentBrush")
-                    : (Brush)FindResource("RouteAccentBrush"),
+                    : NodeOutlineBrush(node),
                 BorderThickness = selected ? new Thickness(2) : new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 8, 10, 8),
@@ -9633,7 +9600,7 @@ private void RefreshEndpointButtonSelection()
 
     private void AddNodeToGroup(PluginNodeSnapshot node, PluginGroupSnapshot group)
     {
-        if (!GroupNodesPreservingConnections(group, [node]))
+        if (!GroupNodesPreservingConnections(group, [node], appendChain: true))
         {
             RebuildRoutingCanvas();
             return;
@@ -9686,6 +9653,7 @@ private void RefreshEndpointButtonSelection()
         {
             Owner = this
         };
+        AuxiliaryWindowPlacement.SetKey(editor, $"NodeProperties:{_kind}:{node.InstanceId}:{node.PluginIdentifier}");
 
         if (editor.ShowDialog() == true)
         {
@@ -9702,6 +9670,12 @@ private void RefreshEndpointButtonSelection()
 
     private void ShowGroupProperties(PluginGroupSnapshot group)
     {
+        if (OwnedWindows.OfType<PluginGroupPropertiesWindow>().FirstOrDefault(window => window.GroupId == group.Id) is { } existing)
+        {
+            if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+            existing.Activate();
+            return;
+        }
         var previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
         var editor = new PluginGroupPropertiesWindow(
             group,
@@ -9722,6 +9696,7 @@ private void RefreshEndpointButtonSelection()
             Owner = this
         };
 
+        AuxiliaryWindowPlacement.SetKey(editor, $"GroupEditor:{_kind}:{group.Id}");
         void OnNodeReconfigured(PluginNodeSnapshot node, int oldSlot, int oldMainInputs, int oldSidechainInputs)
         {
             editor.OnNodeReconfigured(node, oldSlot, oldMainInputs, oldSidechainInputs);
@@ -9729,6 +9704,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         PluginNodeReconfigured += OnNodeReconfigured;
+        editor.RoutingRefreshed += (_, _) => previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
         editor.Closed += (_, _) => PluginNodeReconfigured -= OnNodeReconfigured;
         editor.Applied += (_, _) =>
         {
@@ -9757,10 +9733,11 @@ private void RefreshEndpointButtonSelection()
 
     private void AutoWirePluginGroup(PluginGroupSnapshot group)
     {
-        var previousGroupRoutes = EffectiveGroupExternalRoutes(group).ToList();
-        EnsureGroupInternalConnections(group);
-        EnsureGroupPortMappings(group);
-        ReconcileGroupExternalRoutes(group, previousGroupRoutes);
+        var previous = EffectivePluginRoutes().ToHashSet();
+        var previousConnections = _settings.CanvasConnections.ToList();
+        PluginGroupRouting.AutoWireChain(group, GroupMembers(group).ToList(), _settings.CanvasConnections);
+        ReconcilePluginRoutes(previous);
+        RefreshOpenGroupEditors(previousConnections);
         AppendLog($"{group.Name}: auto-wired adjacent VSTs by matching pins.");
         RefreshEngineCallbackMode();
         RebuildRoutingCanvas();
@@ -12892,6 +12869,7 @@ private void RefreshEndpointButtonSelection()
         return _settings.PluginGroups
             .Where(group => group.Mode == mode && GroupBelongsToCurrentCanvas(group))
             .Reverse()
+            .OrderByDescending(group => _canvasCardStacking.GetValueOrDefault($"group:{group.Id}"))
             .FirstOrDefault(group =>
                 point.X >= group.X &&
                 point.X <= group.X + VstGroupWidth &&
@@ -12908,6 +12886,7 @@ private void RefreshEndpointButtonSelection()
                 NodeBelongsToCurrentCanvas(node) &&
                 GroupForNode(node.Slot) is null)
             .Reverse()
+            .OrderByDescending(node => _canvasCardStacking.GetValueOrDefault($"node:{node.Slot}"))
             .FirstOrDefault(node =>
                 point.X >= node.X &&
                 point.X <= node.X + VstNodeWidth &&
@@ -12928,7 +12907,7 @@ private void RefreshEndpointButtonSelection()
             InputPins = Math.Min(2, Math.Max(1, firstNode.MainInputPins)),
             OutputPins = Math.Min(2, Math.Max(1, secondNode.OutputPins))
         };
-        if (!GroupNodesPreservingConnections(group, members))
+        if (!GroupNodesPreservingConnections(group, members, appendChain: true))
         {
             RebuildRoutingCanvas();
             return;
@@ -13240,6 +13219,7 @@ private void RefreshEndpointButtonSelection()
 
     private bool CompleteQuickGroupConnections()
     {
+        var previousConnections = _settings.CanvasConnections.ToList();
         var groups = _quickGroupIds
             .Select(id => _settings.PluginGroups.FirstOrDefault(group => group.Id == id))
             .Where(static group => group is not null)
@@ -13261,6 +13241,8 @@ private void RefreshEndpointButtonSelection()
             inputCables += ConnectQuickGroupSources(group, _quickConnectSourceEndpoints);
             outputCables += ConnectQuickGroupDestinations(group, _quickConnectDestinationEndpoints);
         }
+
+        RefreshOpenGroupEditors(previousConnections);
 
         ClearQuickGroupChain(log: false);
         AppendLog($"Quick-connected VST group cables: {inputCables} input cable(s), {outputCables} output cable(s).");
@@ -13862,6 +13844,7 @@ private void RefreshEndpointButtonSelection()
         _statusTimer.Stop();
         _saveTimer.Stop();
         _startupDelayTimer?.Stop();
+        CloseFloatingPluginPanel();
         SaveSettings();
         _vbanTextListener?.Dispose();
         _vfxCommandsWindow?.Close();

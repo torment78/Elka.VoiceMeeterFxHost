@@ -12,6 +12,7 @@ internal sealed class SignalMonitorMailbox
     private double _firstPendingTime;
     private readonly int _channels;
     private float? _maximumPeak;
+    private readonly float?[] _channelMaximumPeaks = new float?[8];
     private bool _discardNextPeak;
     internal Action? Updated;
 
@@ -19,11 +20,21 @@ internal sealed class SignalMonitorMailbox
 
     internal float? MaximumPeak { get { lock (_gate) return _maximumPeak; } }
 
+    internal float? CopyMaximumPeaks(Span<float?> channels)
+    {
+        lock (_gate)
+        {
+            _channelMaximumPeaks.AsSpan().CopyTo(channels);
+            return _maximumPeak;
+        }
+    }
+
     internal void ResetPeak()
     {
         lock (_gate)
         {
             _maximumPeak = null;
+            Array.Clear(_channelMaximumPeaks);
             // The next native snapshot can still include samples from before the click.
             _discardNextPeak = true;
         }
@@ -36,7 +47,10 @@ internal sealed class SignalMonitorMailbox
             if (!_discardNextPeak)
                 for (int i = 0; i < _channels; ++i)
                     if (float.IsFinite(frame.Peaks[i]))
+                    {
+                        _channelMaximumPeaks[i] = Math.Max(_channelMaximumPeaks[i] ?? 0, Math.Abs(frame.Peaks[i]));
                         _maximumPeak = Math.Max(_maximumPeak ?? 0, Math.Abs(frame.Peaks[i]));
+                    }
             _discardNextPeak = false;
             _history.Append(frame);
             if (_available && frame.Timestamp - _firstPendingTime > 0.1) _available = false;
@@ -69,9 +83,11 @@ internal sealed class SignalMonitorMailbox
 internal sealed class SignalMonitorBallistics
 {
     internal readonly double[] Levels = Enumerable.Repeat(-60.0, 8).ToArray();
+    internal readonly double[] LiveLevels = Enumerable.Repeat(double.NaN, 8).ToArray();
     internal readonly double[] Peaks = Enumerable.Repeat(-60.0, 8).ToArray();
     internal readonly double[] Spectrum = Enumerable.Repeat(-90.0, 120).ToArray();
     private readonly double[] _targets = Enumerable.Repeat(-60.0, 8).ToArray();
+    private readonly double[] _unclampedTargets = Enumerable.Repeat(double.NegativeInfinity, 8).ToArray();
     private readonly double[] _spectrumTargets = Enumerable.Repeat(-90.0, 120).ToArray();
     private readonly double[] _holdUntil = new double[8];
     private double _previousTime;
@@ -88,7 +104,11 @@ internal sealed class SignalMonitorBallistics
             LastSignal = frame.Timestamp;
             SampleRate = frame.SampleRate;
             for (int i = 0; i < _targets.Length; ++i)
-                _targets[i] = Math.Clamp(20 * Math.Log10(Math.Max(0.000001, frame.Peaks[i])), -60, 0);
+            {
+                double magnitude = float.IsFinite(frame.Peaks[i]) ? Math.Abs(frame.Peaks[i]) : 0;
+                _unclampedTargets[i] = magnitude > 0 ? 20 * Math.Log10(magnitude) : double.NegativeInfinity;
+                _targets[i] = Math.Clamp(_unclampedTargets[i], -60, 0);
+            }
             for (int i = 0; i < _spectrumTargets.Length; ++i)
                 _spectrumTargets[i] = Math.Clamp(frame.Spectrum[i], -90, 6);
         }
@@ -98,6 +118,10 @@ internal sealed class SignalMonitorBallistics
         {
             double value = stale ? -60 : _targets[c];
             Levels[c] = Math.Max(value, Levels[c] - elapsed * 32);
+            // Match the moving meter, but retain numeric values beyond its -60..0 dB scale.
+            if (double.IsFinite(LastSignal))
+                LiveLevels[c] = Levels[c] <= -60 ? (stale ? double.NegativeInfinity : _unclampedTargets[c]) :
+                    !stale && _targets[c] >= 0 ? _unclampedTargets[c] : Levels[c];
             if (value >= Peaks[c])
             {
                 Peaks[c] = value;

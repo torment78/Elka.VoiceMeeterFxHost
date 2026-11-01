@@ -32,7 +32,12 @@ public partial class MainWindow
         {
             Color hue = SignalMonitorHue(mode, endpoint, outputSide);
             SignalMonitorController? window = null;
-            window = new SignalMonitorController(() => _createSignalMonitorWindow(endpoint, outputSide, stream, hue),
+            window = new SignalMonitorController(() =>
+                {
+                    var monitor = _createSignalMonitorWindow(endpoint, outputSide, stream, hue);
+                    AuxiliaryWindowPlacement.SetKey(monitor, $"SignalMonitor:{key}");
+                    return monitor;
+                },
                 hue, failure =>
                 {
                     if (Dispatcher.HasShutdownStarted) return;

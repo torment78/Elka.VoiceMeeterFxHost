@@ -28,8 +28,19 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.12 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.12).**
-The **DSP Overrun Log** now updates incrementally at a maximum of 10 Hz while
+**[0.8.3.13 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.13).**
+Audio-thread priority handling now defaults to **guarded**: existing high-priority
+VoiceMeeter and Insert ASIO threads are left unchanged, duplicate MMCSS joins are
+removed, and any owned registration is released when its thread exits. Runtime
+logs record the observed priority before and after. This is not a confirmed fix
+for intermittent clicks or an overloaded processing chain. See
+[audio-thread priority diagnostics](docs/DspDiagnostics.md#audio-thread-priority).
+
+**Ctrl-click, then Enter** now connects mixed VST/group selections in click order,
+including a group followed by a VST and an output endpoint. Existing group wiring
+and cables are preserved instead of disconnecting and reactivating them.
+
+The **DSP Overrun Log** still updates incrementally at a maximum of 10 Hz while
 expanded, with a virtualized list of the latest 50 entries. Existing rows are
 retained instead of rebuilding the entire list, reducing layout work while
 dragging or scrolling the canvas. DSP usage keeps its 30 Hz refresh; native

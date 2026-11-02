@@ -1,4 +1,5 @@
 #include "engine/RealtimeEngine.h"
+#include "engine/AudioThreadPriority.h"
 #include "native_api/SignalMonitorReaders.h"
 #include "insert_asio/InsertAsioHost.h"
 #include "plugins/PluginHostLayer.h"
@@ -2125,6 +2126,11 @@ __declspec(dllexport) int __cdecl ElkaFx_ReadDspPerformance(
     auto& performance = g_host->engine.dspPerformance;
     *frequency = performance.ticksPerSecond();
     return performance.read(rows, capacity, events, eventCapacity, *eventCount, *dropped, *skipped);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetAudioThreadPriorityInfo(int* before, int* after, int count, int* mode)
+{
+    return elka::getAudioThreadPriorityInfo(before, after, count, mode);
 }
 
 __declspec(dllexport) void __cdecl ElkaFx_GetStats(NativeStats* stats)

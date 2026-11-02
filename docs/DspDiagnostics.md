@@ -2,7 +2,7 @@
 
 Both sections are above the normal Log in the sidebar and start collapsed.
 Click a section heading to open or close it. These diagnostics are included in
-the [unsigned 0.8.3.12 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.12).
+the [unsigned 0.8.3.13 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.13).
 
 ![DSP Performance with individual VST usage and DSP Overrun Log](images/dsp-performance-dev.png)
 
@@ -89,9 +89,37 @@ An overrun is a timing warning, not proof of an audible glitch. A low measured
 time also cannot rule out a driver, device, or callback-delivery problem.
 
 Intermittent clicks in normal callback mode remain under investigation, including
-reports with no increasing DSP overrun counts. Version 0.8.3.12 does not include
+reports with no increasing DSP overrun counts. Version 0.8.3.13 does not include
 a confirmed fix for those clicks. The counters measure processing after callback
 delivery, not late delivery or audio-sample continuity.
+
+## Audio Thread Priority
+
+Version 0.8.3.13 defaults to **guarded** priority handling. FX Host does not force
+VoiceMeeter or Insert ASIO callback threads to `THREAD_PRIORITY_HIGHEST`.
+If a thread already has that priority or higher, it is left unchanged. Otherwise,
+FX Host attempts one MMCSS `Pro Audio` registration (falling back to `Audio`) and
+sets its MMCSS task priority to High. Its owned registration is released on
+thread exit. The former duplicate registrations have been removed.
+
+The normal runtime log records one before/after observation for each active
+stream: InputInsert, OutputInsert, Main and InsertAsio. Inactive streams are not
+logged. For example:
+
+```text
+Audio thread priority stream=InputInsert before=15 after=15 mode=guarded
+```
+
+For controlled comparisons, the process environment variable
+`ELKA_AUDIO_THREAD_PRIORITY` accepts `guarded`, `off` or `legacy`. It is read when
+the native DLL loads; restart FX Host after changing it. Unset or unrecognized
+values use guarded. `off` makes no scheduling changes. `legacy` enables the old
+forced-HIGHEST priority step for testing, with one owned MMCSS registration.
+Neither the installer nor a normal launch sets a persistent environment override.
+
+These controls do not change audio samples, gain, delay or plugin processing.
+Priority observations and overrun counts alone do not prove an audible improvement;
+compare listening results with the same setup and an appropriate buffer budget.
 
 ## Background Detection And Files
 

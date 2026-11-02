@@ -1,6 +1,6 @@
 #include "voicemeeter/VoicemeeterClient.h"
+#include "engine/AudioThreadPriority.h"
 
-#include <avrt.h>
 #include <windows.h>
 
 #include <cstring>
@@ -11,35 +11,6 @@ namespace
 {
 constexpr char ClientName[] = "Elka VoiceMeeter FX Host";
 
-class CallbackThreadAudioPriority
-{
-public:
-    CallbackThreadAudioPriority() noexcept
-    {
-        DWORD taskIndex = 0;
-        mmcssHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
-        if (mmcssHandle != nullptr)
-            AvSetMmThreadPriority(mmcssHandle, AVRT_PRIORITY_HIGH);
-    }
-
-    ~CallbackThreadAudioPriority()
-    {
-        if (mmcssHandle != nullptr)
-            AvRevertMmThreadCharacteristics(mmcssHandle);
-    }
-
-    CallbackThreadAudioPriority(const CallbackThreadAudioPriority&) = delete;
-    CallbackThreadAudioPriority& operator=(const CallbackThreadAudioPriority&) = delete;
-
-private:
-    HANDLE mmcssHandle = nullptr;
-};
-
-void ensureCallbackThreadAudioPriority() noexcept
-{
-    thread_local CallbackThreadAudioPriority priority;
-    (void)priority;
-}
 }
 
 VoicemeeterClient::VoicemeeterClient(RealtimeEngine& engineRef)
@@ -430,8 +401,6 @@ long __stdcall VoicemeeterClient::audioCallback(void* user, long command, void* 
 
 long VoicemeeterClient::handleAudioCallback(long command, void* data, long) noexcept
 {
-    ensureCallbackThreadAudioPriority();
-
     const bool isBufferCommand =
         command == vmr::CommandBufferIn ||
         command == vmr::CommandBufferOut ||
@@ -439,6 +408,9 @@ long VoicemeeterClient::handleAudioCallback(long command, void* data, long) noex
 
     if (isBufferCommand)
     {
+        ensureAudioThreadPriorityOnce(command == vmr::CommandBufferIn ? 0 :
+            command == vmr::CommandBufferOut ? 1 : 2);
+
         constexpr uint64_t StatsFlushInterval = 16;
         thread_local uint64_t pendingTotal = 0;
         thread_local uint64_t pendingBufferIn = 0;

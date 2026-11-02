@@ -48,6 +48,7 @@ set(ELKA_REALTIME_CALLBACK_SOURCES
     src/voicemeeter/VoicemeeterRemoteApi.cpp
     src/voicemeeter/VoicemeeterClient.cpp
     src/engine/RealtimeEngine.cpp
+    src/engine/AudioThreadPriority.cpp
 )
 
 set(ELKA_NATIVE_CORE_SOURCES
@@ -166,3 +167,8 @@ target_link_libraries(DspPerformanceChecks PRIVATE Avrt)
 # Shared-container identity checks do not load plugins or connect to audio.
 add_executable(PluginContainerChecks EXCLUDE_FROM_ALL tests/PluginContainerChecks/main.cpp)
 target_include_directories(PluginContainerChecks PRIVATE src)
+
+# Exercise the production priority helper against simulated OS calls, not audio threads.
+add_executable(AudioThreadPriorityChecks EXCLUDE_FROM_ALL
+    tests/AudioThreadPriorityChecks/main.cpp src/engine/AudioThreadPriority.cpp)
+target_include_directories(AudioThreadPriorityChecks PRIVATE tests/AudioThreadPriorityChecks/fakes src)

@@ -5,7 +5,6 @@
 #include <memory>
 #include <xmmintrin.h>
 #include <windows.h>
-#include <avrt.h>
 
 #ifndef _MM_DENORMALS_ZERO_ON
 #define _MM_DENORMALS_ZERO_ON 0x0040
@@ -286,22 +285,6 @@ void ensureDenormalFlush() noexcept
     (void)configured;
 }
 
-void ensureRealtimeThreadPriority() noexcept
-{
-    thread_local bool configured = []() noexcept {
-        DWORD taskIndex = 0;
-        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
-        if (mmcss == nullptr)
-            mmcss = AvSetMmThreadCharacteristicsW(L"Audio", &taskIndex);
-
-        if (mmcss != nullptr)
-            AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
-
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-        return true;
-    }();
-    (void)configured;
-}
 }
 
 RealtimeEngine::RealtimeEngine() noexcept
@@ -1352,7 +1335,6 @@ void RealtimeEngine::processInternal(
     DspPerformanceScope* timing) noexcept
 {
     ensureDenormalFlush();
-    ensureRealtimeThreadPriority();
     if (RealtimeJitterDiagnosticsEnabled)
         recordCallbackArrivalJitter(buffer, delayStream);
 

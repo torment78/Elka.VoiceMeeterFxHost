@@ -7,6 +7,12 @@ using System.Security.Cryptography;
 try
 {
     if (Native.IsRemoteReady() != 0) throw new Exception("Remote readiness unexpectedly initialized the host.");
+    var before = new int[4];
+    var after = new int[4];
+    if (Native.PriorityInfo(before, after, 4, out var priorityMode) != 4 || priorityMode is < 0 or > 2 ||
+        before.Any(value => value != -9999) || after.Any(value => value != -9999) ||
+        Native.PriorityInfo(before, after, 3, out _) != -1)
+        throw new Exception("Audio priority diagnostics returned unexpected initial state.");
     if (Native.Open(0, 0, 0, 2) != 0) throw new Exception("Host unexpectedly initialized.");
     Native.Close(0);
     if (Native.Read(0, new float[8], 8, new float[120], 120, out _, out _) != -1)
@@ -20,7 +26,7 @@ try
     string hash = Convert.ToHexString(SHA256.HashData(file));
     if (args.Length != 1 || !hash.Equals(args[0], StringComparison.OrdinalIgnoreCase))
         throw new Exception($"Wrong native DLL: {module.FileName}, SHA256 {hash}");
-    Console.WriteLine($"PASS: signal monitor, DSP diagnostics and Remote readiness exports resolve from the expected DLL: {module.FileName}");
+    Console.WriteLine($"PASS: signal monitor, DSP diagnostics, audio priority and Remote readiness exports resolve from the expected DLL: {module.FileName}");
     Console.WriteLine("No audio engine or VoiceMeeter connection was started.");
     return 0;
 }
@@ -35,6 +41,8 @@ internal static class Native
     private const string Dll = "ElkaVoiceMeeterFxHost.Native.dll";
     [DllImport(Dll, EntryPoint = "ElkaFx_IsVoicemeeterRemoteReady", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int IsRemoteReady();
+    [DllImport(Dll, EntryPoint = "ElkaFx_GetAudioThreadPriorityInfo", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int PriorityInfo([Out] int[] before, [Out] int[] after, int count, out int mode);
     [DllImport(Dll, EntryPoint = "ElkaFx_OpenSignalMonitor", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int Open(int stream, int outputSide, int first, int channels);
     [DllImport(Dll, EntryPoint = "ElkaFx_CloseSignalMonitor", CallingConvention = CallingConvention.Cdecl)]

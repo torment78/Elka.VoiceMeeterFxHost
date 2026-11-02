@@ -42,6 +42,7 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--quick-connect")) { window.CheckQuickConnectionChains(); return 0; }
             if (args.Contains("--widget-states")) { window.CheckWidgetTileStates(); return 0; }
             window.ShowActivated = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
@@ -55,6 +56,7 @@ internal static class CanvasInteractionChecks
             window.CheckHotkeyActions();
             window.CheckEndpointHotkeys();
             window.CheckGroupChainUi();
+            window.CheckQuickConnectionChains();
             window.CheckTrayMenuTheme();
             window.CheckFloatingPanel();
             window.CheckWidgetTileStates();

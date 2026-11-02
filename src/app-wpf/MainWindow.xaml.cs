@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly NativeEngineClient _engine = new();
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _statusTimer;
+    private readonly AudioThreadPriorityDiagnostics _audioThreadPriorityDiagnostics = new(RuntimeLog.Write);
     private readonly DispatcherTimer _channelApplyTimer;
     private readonly DispatcherTimer _pluginScanTimer;
     private DispatcherTimer? _startupDelayTimer;
@@ -3261,6 +3262,7 @@ public partial class MainWindow : Window
 
     private void UpdateLiveStatusText()
     {
+        if (_engine.IsAttached) _audioThreadPriorityDiagnostics.Poll();
         RefreshDspIdentities();
         TryRegisterVoicemeeterCustomButton();
 
@@ -12985,6 +12987,7 @@ private void RefreshEndpointButtonSelection()
         RoutingCanvas.Focus();
         _quickGroupNodeSlots.Remove(node.Slot);
         _quickGroupNodeSlots.Add(node.Slot);
+        AddQuickOrderedItem(new QuickChainItem(node.Slot, string.Empty));
         SelectPluginNode(node.Slot, rebuildCanvas: false);
         AppendLog($"Quick VST node {_quickGroupNodeSlots.Count}: {node.Name}.");
         RebuildVstNodeList();
@@ -13001,6 +13004,7 @@ private void RefreshEndpointButtonSelection()
         RoutingCanvas.Focus();
         _quickGroupIds.Remove(group.Id);
         _quickGroupIds.Add(group.Id);
+        AddQuickOrderedItem(new QuickChainItem(-1, group.Id));
         SelectPluginGroup(group.Id, rebuildCanvas: false);
         AppendLog($"Quick VST group {_quickGroupIds.Count}: {group.Name}.");
         RebuildVstNodeList();
@@ -13032,6 +13036,11 @@ private void RefreshEndpointButtonSelection()
         if (ShouldCompleteQuickEndpointConnections())
         {
             return CompleteQuickEndpointConnections();
+        }
+
+        if (ShouldCompleteQuickOrderedConnections())
+        {
+            return CompleteQuickOrderedConnections();
         }
 
         if (ShouldCompleteQuickGroupConnections())
@@ -13345,10 +13354,9 @@ private void RefreshEndpointButtonSelection()
                         From = EndpointSourceKey(source.Mode, channel),
                         To = NodeInputKey(node.Slot, visualPin)
                     });
+                    SetPluginInputRouteActive(node.Slot, channel, visualPin, active: true);
+                    count++;
                 }
-
-                SetPluginInputRouteActive(node.Slot, channel, visualPin, active: true);
-                count++;
             }
         }
 
@@ -13386,10 +13394,9 @@ private void RefreshEndpointButtonSelection()
                         From = NodeOutputKey(node.Slot, pin),
                         To = EndpointDestinationKey(destination.Mode, channel)
                     });
+                    SetPluginOutputRouteActive(node.Slot, pin, channel, active: true);
+                    count++;
                 }
-
-                SetPluginOutputRouteActive(node.Slot, pin, channel, active: true);
-                count++;
             }
         }
 
@@ -13517,6 +13524,7 @@ private void RefreshEndpointButtonSelection()
         _quickConnectDestinationEndpoints.Clear();
         _quickGroupNodeSlots.Clear();
         _quickGroupIds.Clear();
+        _quickOrderedItems.Clear();
         _quickGroupPluginChoices.Clear();
         RefreshQuickGroupPluginListSelection();
         if (log)

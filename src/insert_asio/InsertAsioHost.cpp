@@ -1,6 +1,7 @@
 #include "insert_asio/InsertAsioHost.h"
 
 #include "engine/RealtimeEngine.h"
+#include "engine/AudioThreadPriority.h"
 
 #include <algorithm>
 #include <cmath>
@@ -260,6 +261,7 @@ void InsertAsioHost::audioDeviceIOCallbackWithContext(
         writePointers
     };
 
+    ensureAudioThreadPriorityOnce(3);
     realtimeEngine.processInsertAsio(buffer);
 
     for (int channel = outputLimit; channel < numOutputChannels; ++channel)

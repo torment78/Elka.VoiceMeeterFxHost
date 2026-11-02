@@ -7,13 +7,13 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Elka.VoiceMeeterFxHost.App;
 
-internal static class Program
+internal static partial class Program
 {
     private static int _checks;
     [STAThread]
     private static void Main()
     {
-        var application = new Application();
+        var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/DspPerformanceUiChecks;component/Themes/ElkaTheme.xaml", UriKind.Relative)
@@ -25,6 +25,7 @@ internal static class Program
         HostStatusChecks();
         ProcessingDisplayChecks();
         ViewChecks(dashboard);
+        OverrunViewChecks(dashboard);
         Console.WriteLine($"DSP performance UI: {_checks} checks passed. No audio device or live host opened.");
     }
 
@@ -84,10 +85,14 @@ internal static class Program
         Check(history.Update([], [], frequency, now + frequency * 3, wallTime, 0, 0).Cycles.Count == 0, "stopped callback does not retain live load");
 
         history.Clear();
-        for (var i = 0; i < 215; ++i)
-            history.Update([], [item], frequency, now + (ulong)(i + 4) * frequency, wallTime, 0, 0, flush: true);
-        var capped = history.Update([], [], frequency, now + frequency * 220, wallTime, 0, 0);
+        logged.Clear();
+        const int generated = DspPerformanceHistory.MaximumEntries + 15;
+        Check(DspPerformanceHistory.MaximumEntries == 50, "displayed log cap is fifty");
+        for (var i = 0; i < generated; ++i)
+            history.Update([], [item], frequency, now + (ulong)(i + 4) * frequency, wallTime, 0, 0, logged.Add, flush: true);
+        var capped = history.Update([], [], frequency, now + frequency * (generated + 5), wallTime, 0, 0);
         Check(capped.Overruns.Count == DspPerformanceHistory.MaximumEntries, "bounded displayed log");
+        Check(logged.Count == generated, "display cap never truncates entries sent to the file writer");
         history.Clear();
         Check(history.Update([], [], frequency, now, wallTime, 0, 0).Overruns.Count == 0, "clear log");
 
@@ -441,6 +446,8 @@ internal static class Program
         Check(((ItemsControl)panel.FindName("PluginRows")).Items.Count == 0, "stream selection updates ranking");
         panel.Update(new([dashboard.Cycles[0] with { Stream = 3 }], [], 0, 0));
         Check(picker.SelectedIndex == 0, "all-VST view restored when selected callback stops");
+        AllowOverrunRefresh(panel);
+        panel.Update(new([dashboard.Cycles[0] with { Stream = 3 }], [], 0, 0));
         Check(((ItemsControl)panel.FindName("OverrunRows")).Items.Count == 0, "cleared log refreshes");
         Click(panel, "PerformanceToggle"); Click(panel, "OverrunToggle");
         Check(!panel.IsExpanded, "collapse does not require stopping diagnostics");

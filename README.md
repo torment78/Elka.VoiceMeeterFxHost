@@ -28,7 +28,13 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.11 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.11).**
+**[0.8.3.12 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.12).**
+The **DSP Overrun Log** now updates incrementally at a maximum of 10 Hz while
+expanded, with a virtualized list of the latest 50 entries. Existing rows are
+retained instead of rebuilding the entire list, reducing layout work while
+dragging or scrolling the canvas. DSP usage keeps its 30 Hz refresh; native
+audio processing and the saved overrun log are unchanged.
+
 **Menu > Settings > Widget** selects the VSTs and groups for a movable floating
 panel titled **FX Host**. Toggle it from the tray's **Widget** command, optionally
 keep it on top, lock its position, or hide its toolbar. Group drawers can open

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -11,7 +12,8 @@ public partial class DspDiagnosticsPanel : UserControl
     internal event Action? ClearLogRequested;
     private DspDashboard _snapshot = DspDashboard.Empty;
     private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Empty;
-    private IReadOnlyList<DspOverrunEntry> _shownEntries = [];
+    private readonly ObservableCollection<DspOverrunEntry> _overrunRows = [];
+    private long _lastOverrunRefresh;
     private readonly ObservableCollection<DspDisplayRow<DspPluginUsage>> _pluginRows = [];
     private readonly ObservableCollection<DspDisplayRow<DspCycleUsage>> _callbackRows = [];
     internal bool IsExpanded => PerformanceContent.Visibility == Visibility.Visible || OverrunContent.Visibility == Visibility.Visible;
@@ -21,6 +23,7 @@ public partial class DspDiagnosticsPanel : UserControl
         InitializeComponent();
         PluginRows.ItemsSource = _pluginRows;
         CallbackRows.ItemsSource = _callbackRows;
+        OverrunRows.ItemsSource = _overrunRows;
     }
 
     internal void Update(DspDashboard snapshot)
@@ -50,15 +53,36 @@ public partial class DspDiagnosticsPanel : UserControl
             }
             SyncRows(_callbackRows, all && snapshot.Cycles.Count > 0 ? snapshot.Cycles : new[] { cycle }, item => item.Stream);
         }
-        if (OverrunContent.Visibility == Visibility.Visible &&
-            (_shownEntries.Count != snapshot.Overruns.Count || _shownEntries.FirstOrDefault() != snapshot.Overruns.FirstOrDefault()))
+        RefreshOverruns(snapshot, Stopwatch.GetTimestamp());
+    }
+
+    private void RefreshOverruns(DspDashboard snapshot, long now)
+    {
+        if (OverrunContent.Visibility != Visibility.Visible ||
+            (_lastOverrunRefresh != 0 && Stopwatch.GetElapsedTime(_lastOverrunRefresh, now).TotalMilliseconds < 100)) return;
+        _lastOverrunRefresh = now;
+        var previousCount = _overrunRows.Count;
+        var count = Math.Min(snapshot.Overruns.Count, DspPerformanceHistory.MaximumEntries);
+        if (count == 0)
         {
-            _shownEntries = snapshot.Overruns;
-            OverrunRows.ItemsSource = _shownEntries;
-            OverrunCount.Text = _shownEntries.Count == 0 ? "No budget overruns recorded." : $"{_shownEntries.Count} recent entr{(_shownEntries.Count == 1 ? "y" : "ies")}";
+            if (previousCount > 0) _overrunRows.Clear();
         }
-        HealthText.Text = snapshot.Health;
-        HealthText.Visibility = snapshot.Health.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        else
+        {
+            var added = 0;
+            while (added < count && (previousCount == 0 || snapshot.Overruns[added] != _overrunRows[0])) ++added;
+            // Drop only expired tail entries, including after a clear or a long hidden interval.
+            // Trim before inserting so even collection notifications never exceed the display cap.
+            while (_overrunRows.Count > count - added) _overrunRows.RemoveAt(_overrunRows.Count - 1);
+            for (var index = added - 1; index >= 0; --index) _overrunRows.Insert(0, snapshot.Overruns[index]);
+        }
+        if (_overrunRows.Count != previousCount)
+            OverrunCount.Text = _overrunRows.Count == 0 ? "No budget overruns recorded." : $"{_overrunRows.Count} recent entr{(_overrunRows.Count == 1 ? "y" : "ies")}";
+
+        var health = snapshot.Health;
+        if (HealthText.Text != health) HealthText.Text = health;
+        var visibility = health.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (HealthText.Visibility != visibility) HealthText.Visibility = visibility;
     }
 
     internal void UpdateHostStatus(HostStatusSnapshot status)

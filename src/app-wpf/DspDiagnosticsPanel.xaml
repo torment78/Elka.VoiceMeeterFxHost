@@ -156,12 +156,24 @@
                         <Button Grid.Column="1" Width="32" MinHeight="28" Padding="4" FontFamily="Segoe MDL2 Assets" Content="&#xE894;"
                                 ToolTip="Clear the displayed overrun log. The saved log file is kept." Click="ClearLog_Click" />
                     </Grid>
-                    <ScrollViewer x:Name="OverrunScroller" MaxHeight="300" VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
-                        <ScrollViewer.Resources>
-                            <Style TargetType="ScrollBar" BasedOn="{StaticResource StableVerticalScrollBar}" />
-                        </ScrollViewer.Resources>
-                        <ItemsControl x:Name="OverrunRows">
+                    <ItemsControl x:Name="OverrunRows" MaxHeight="300" ScrollViewer.CanContentScroll="True"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                  VirtualizingPanel.ScrollUnit="Pixel">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.Template>
+                            <ControlTemplate TargetType="ItemsControl">
+                                <ScrollViewer x:Name="OverrunScroller" VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                                              CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}">
+                                    <ScrollViewer.Resources>
+                                        <Style TargetType="ScrollBar" BasedOn="{StaticResource StableVerticalScrollBar}" />
+                                    </ScrollViewer.Resources>
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </ControlTemplate>
+                        </ItemsControl.Template>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,0,1" Padding="0,10,8,12" Margin="0,0,0,6">
@@ -189,8 +201,7 @@
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                    </ItemsControl>
                 </StackPanel>
                 <TextBlock x:Name="HealthText" Visibility="Collapsed" Foreground="{StaticResource DspDanger}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" />
             </StackPanel>

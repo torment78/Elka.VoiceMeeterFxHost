@@ -2,7 +2,7 @@
 
 Both sections are above the normal Log in the sidebar and start collapsed.
 Click a section heading to open or close it. These diagnostics are included in
-the [unsigned 0.8.3.11 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.11).
+the [unsigned 0.8.3.12 development release](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.12).
 
 ![DSP Performance with individual VST usage and DSP Overrun Log](images/dsp-performance-dev.png)
 
@@ -82,14 +82,14 @@ ID or callback name, budget, processing duration, usage, and excess time.
 
 Repeated overruns for the same node and format are grouped approximately once
 per second. Each entry shows the occurrence count and the worst measured event
-in that group. The panel keeps the latest 200 entries. A VST overrun and its
+in that group. The panel keeps the latest 50 entries. A VST overrun and its
 callback overrun can both be logged; they are not two independent audio glitches.
 
 An overrun is a timing warning, not proof of an audible glitch. A low measured
 time also cannot rule out a driver, device, or callback-delivery problem.
 
 Intermittent clicks in normal callback mode remain under investigation, including
-reports with no increasing DSP overrun counts. Version 0.8.3.11 does not include
+reports with no increasing DSP overrun counts. Version 0.8.3.12 does not include
 a confirmed fix for those clicks. The counters measure processing after callback
 delivery, not late delivery or audio-sample continuity.
 
@@ -100,8 +100,14 @@ in the tray. Panel rendering stops while hidden. Formatting and disk writes
 run outside the audio threads; the audio path records only bounded timing data.
 Timing measurement has a small overhead and does not change routing or samples.
 
-The visible dashboard refreshes at a target of 30 Hz (about every 33.3 ms). Native
-timing snapshots are published at up to 60 Hz on audio-block boundaries, and the
+The DSP usage dashboard refreshes at a target of 30 Hz (about every 33.3 ms).
+The expanded overrun log refreshes at most every 100 ms (10 Hz), adds only new
+entries, and virtualizes its rows. Unchanged snapshots do not rebuild the list
+or reset its scroll position. Clear empties the displayed list on the next log
+refresh; the saved log file is kept. The 50-entry limit applies to displayed
+history only, not to file logging.
+
+Native timing snapshots are published at up to 60 Hz on audio-block boundaries, and the
 background reader polls about every 16.7 ms. Overrun detection still runs per block;
 repeated log entries are grouped roughly once per second. These are diagnostic
 refresh intervals, not audio sample rates or buffer settings.

@@ -113,7 +113,7 @@ internal sealed record DspDashboard(IReadOnlyList<DspCycleUsage> Cycles, IReadOn
 // reader, never on a native audio thread. Totals stay separate for each callback.
 internal sealed class DspPerformanceHistory
 {
-    public const int MaximumEntries = 200;
+    public const int MaximumEntries = 50;
     private readonly Dictionary<(int Stream, int Slot), DspNativeTiming> _previous = [];
     private readonly Dictionary<(int Stream, int Slot), DspPluginUsage> _usage = [];
     private readonly Dictionary<int, DspCycleUsage> _cycles = [];

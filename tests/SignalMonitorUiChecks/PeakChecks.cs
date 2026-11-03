@@ -72,7 +72,58 @@ internal static class PeakChecks
             "white readout releases with the live meter rather than retaining the peak");
         for (int step = 0; step < 400; ++step) live.Advance(null, 1.1 + step / 60.0);
         Check(live.LiveLevels.All(double.IsNegativeInfinity), "stopped streams clear the live readout after release");
+        SessionChecks(Check);
         Console.WriteLine($"{checks} sample-peak capture and reset checks passed.");
         return checks;
+    }
+
+    private static void SessionChecks(Action<bool, string> check)
+    {
+        var source = new FakePeakHoldSource();
+        var session = new PeakHoldSession(source);
+        var address = new EndpointMeterAddress(0, false, 10, 8);
+        float nodeMax = 0;
+        using var node = session.Subscribe(address, (maximum, _) => nodeMax = maximum.Max(), (_, _) => nodeMax = 0);
+        node.Poll();
+        source.Capture(address, [0, .5f, 0, 0, 0, 0, 0, 4]);
+        var first = new SignalMonitorMailbox(8);
+        using (var monitor = session.Subscribe(address, first.MergePeakHold, first.ResetPeakChannels))
+        {
+            monitor.Poll();
+            check(first.MaximumPeak == 4, "opening initializes overall peak from native session");
+            var peaks = new float?[8]; first.CopyMaximumPeaks(peaks);
+            check(peaks[1] == .5f && peaks[7] == 4, "opening initializes each red channel marker");
+        }
+        source.Capture(address, [0, 2, 0, 0, 0, 0, 0, 8]);
+        var reopened = new SignalMonitorMailbox(8);
+        using (var monitor = session.Subscribe(address, reopened.MergePeakHold, reopened.ResetPeakChannels))
+        {
+            monitor.Poll(); node.Poll();
+            check(reopened.MaximumPeak == 8 && nodeMax == 8, "closed monitor does not stop endpoint watches");
+            session.Reset(address);
+            check(reopened.MaximumPeak is null && nodeMax == 0, "reset clears all subscribed views together");
+            var stale = new SignalMonitorFrame(); stale.Peaks[7] = 8;
+            reopened.Publish(stale); monitor.Poll();
+            check(reopened.MaximumPeak is null, "pre-reset FFT/tap snapshot cannot relatch cleared peak");
+            source.Capture(address, [0, 1.25f, 0, 0, 0, 0, 0, 0]);
+            monitor.Poll();
+            check(reopened.MaximumPeak == 1.25f, "new native over is never discarded with an old tap snapshot");
+            source.Capture(address, [0, 1.25f, 0, 0, 0, 0, 0, 3]);
+            monitor.Poll();
+            session.Reset(address with { FirstChannel = 17, Channels = 1 });
+            var peaks = new float?[8]; reopened.CopyMaximumPeaks(peaks);
+            check(reopened.MaximumPeak == 1.25f && peaks[7] is null && peaks[1] == 1.25f,
+                "overlapping monitor reset preserves unrelated channel maxima");
+        }
+        int registrations = source.Watches;
+        for (int i = 0; i < 20; ++i) node.Poll();
+        check(source.Watches == registrations, "polling never duplicates a watch registration");
+        node.Dispose();
+        check(source.Watches == source.Unwatches, "all native reference counts balance after close");
+        var delayed = new FakePeakHoldSource { Available = false };
+        using var late = new PeakHoldSession(delayed).Subscribe(address, (_, _) => { }, (_, _) => { });
+        late.Poll();
+        delayed.Available = true; late.Poll(); late.Poll();
+        check(delayed.Watches == 1, "startup-delay watches retry once the host exists");
     }
 }

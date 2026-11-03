@@ -105,8 +105,41 @@ internal static class WindowChecks
             finally { window.Close(); }
             Check(window.ReaderFailure is null, "Window reader closes without an engine connection");
         }
+        CheckPersistentWindows(Check);
         Console.WriteLine($"{checks} complete-window controls, pause and grow/shrink checks passed.");
         return checks;
+    }
+
+    private static void CheckPersistentWindows(Action<bool, string> check)
+    {
+        var source = new FakePeakHoldSource();
+        var session = new PeakHoldSession(source);
+        var address = new EndpointMeterAddress(1, true, 0, 8);
+        using var node = session.Subscribe(address, (_, _) => { }, (_, _) => { });
+        node.Poll();
+        source.Capture(address, [2, .5f, .25f, 0, 0, 0, 0, 4]);
+        SignalMonitorWindow Open() => new("A1", "Destination", 1, true, 0, 8,
+            Color.FromRgb(85, 194, 122), (_, cancel) => cancel.WaitHandle.WaitOne(), session);
+        var first = Open();
+        var firstView = Descendants((DependencyObject)first.Content).OfType<SignalMonitorView>().Single();
+        check(firstView.ChannelPeakText(0) == "+6.02" && firstView.ChannelPeakText(7) == "+12.04",
+            "real monitor constructor seeds all held channel markers before displaying");
+        first.Close();
+        source.Capture(address, [8, .5f, .25f, 0, 0, 0, 0, 4]);
+        var second = Open();
+        try
+        {
+            var view = Descendants((DependencyObject)second.Content).OfType<SignalMonitorView>().Single();
+            check(view.ChannelPeakText(0) == "+18.06" && view.ChannelPeakText(7) == "+12.04",
+                "reopened window retains maxima including data captured while it was closed");
+            session.Reset(address);
+            second.RefreshPeakReadout();
+            check(Enumerable.Range(0, 8).All(c => view.ChannelPeakMarkerDb(c) is null),
+                "external node reset clears an open monitor's red markers");
+        }
+        finally { second.Close(); }
+        node.Dispose();
+        check(source.Watches == source.Unwatches, "closed real monitor windows release native watch references");
     }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

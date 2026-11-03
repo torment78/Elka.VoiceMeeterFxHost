@@ -10,6 +10,7 @@
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Shared/FakePeakHoldSource.cs" Link="FakePeakHoldSource.cs" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <Compile Include="../../src/app-wpf/*.cs" Link="App/%(Filename)%(Extension)" />

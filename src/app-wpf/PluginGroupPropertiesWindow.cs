@@ -34,6 +34,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot> _reloadPluginNode;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePinsCollapsed;
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePowerLinked;
+    private readonly Action<PluginNodeSnapshot, bool> _setLoadSettingsOnce;
+    private readonly Action<PluginNodeSnapshot> _reloadSavedSettings;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
     private readonly TextBox _nameTextBox = new();
@@ -75,7 +77,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot, bool> setPluginNodeBypass,
         Action<PluginNodeSnapshot> reloadPluginNode,
         Action<PluginNodeSnapshot, bool> setPluginNodePinsCollapsed,
-        Action<PluginNodeSnapshot, bool>? setPluginNodePowerLinked = null)
+        Action<PluginNodeSnapshot, bool>? setPluginNodePowerLinked = null,
+        Action<PluginNodeSnapshot, bool>? setLoadSettingsOnce = null,
+        Action<PluginNodeSnapshot>? reloadSavedSettings = null)
     {
         _group = group;
         _members = members.ToList();
@@ -90,6 +94,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _reloadPluginNode = reloadPluginNode;
         _setPluginNodePinsCollapsed = setPluginNodePinsCollapsed;
         _setPluginNodePowerLinked = setPluginNodePowerLinked ?? ((node, linked) => node.BypassPowerLinked = linked);
+        _setLoadSettingsOnce = setLoadSettingsOnce ?? ((node, enabled) => node.LoadSettingsOnce = enabled);
+        _reloadSavedSettings = reloadSavedSettings ?? (_ => { });
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
 
@@ -550,6 +556,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
     {
         var menu = new ContextMenu();
         menu.Items.Add(new MenuItem { Header = $"ID {node.InstanceId}", IsEnabled = false });
+        menu.Items.Add(PluginSavedDataControls.CreateMenuItem(node, _setLoadSettingsOnce));
+        menu.Items.Add(CreateMenuItem("Reload saved settings now", () => _reloadSavedSettings(node)));
         if (node.MissingPlugin)
         {
             menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });

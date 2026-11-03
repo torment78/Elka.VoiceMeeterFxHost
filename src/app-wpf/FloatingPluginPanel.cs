@@ -10,7 +10,7 @@ namespace Elka.VoiceMeeterFxHost.App;
 
 internal sealed record FloatingPluginTarget(string Key, string Name, string Detail, Color Hue,
     bool Available, FloatingPluginTarget[] Members, bool Bypassed = false, bool Enabled = true, CallbackMode Mode = CallbackMode.Input,
-    Color? Fill = null)
+    Color? Fill = null, WidgetLevelMapping? Levels = null)
 {
     public bool IsGroup => Detail == "Group";
     public override string ToString() => $"{Detail} / {Name}";
@@ -23,6 +23,7 @@ internal sealed class FloatingPluginPanel : Window
     private readonly Action<string> _toggleEditor;
     private readonly Action _save;
     private readonly Func<string, ContextMenu?>? _contextMenu;
+    private readonly WidgetLevels _levels;
     private readonly WrapPanel _tiles = new();
     private readonly Grid _island = new();
     private readonly Grid _header = new() { Margin = new Thickness(0, 0, 0, 8) };
@@ -58,10 +59,12 @@ internal sealed class FloatingPluginPanel : Window
     internal Point IslandContentOrigin => _island.PointToScreen(new Point());
 
     internal FloatingPluginPanel(FloatingPanelSettings state, Func<FloatingPluginTarget[]> targets,
-        Action<string> toggleEditor, Action save, Func<string, ContextMenu?>? contextMenu = null)
+        Action<string> toggleEditor, Action save, Func<string, ContextMenu?>? contextMenu = null,
+        IWidgetLevelSource? levelSource = null, Dictionary<string, WidgetPeakState>? peakStates = null)
     {
         _state = state; _getTargets = targets; _toggleEditor = toggleEditor; _save = save;
         _contextMenu = contextMenu;
+        _levels = new WidgetLevels(levelSource, peakStates);
         _state.Tiles ??= [];
         _state.GroupFlyoutDirections ??= [];
         _state.TileRows = Math.Clamp(_state.TileRows, 1, 20);
@@ -143,12 +146,15 @@ internal sealed class FloatingPluginPanel : Window
         _tiles.SizeChanged += (_, _) => QueueDrawerLayout();
         IsVisibleChanged += (_, _) => { if (!IsVisible) _groupDrawer?.Hide(); else QueueDrawerLayout(); };
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) _groupDrawer?.Hide(); else QueueDrawerLayout(); };
+        IsVisibleChanged += (_, _) => _levels.SetActive(IsVisible && WindowState != WindowState.Minimized);
+        StateChanged += (_, _) => _levels.SetActive(IsVisible && WindowState != WindowState.Minimized);
         Closed += (_, _) =>
         {
             CapturePlacement(); _closed = true; _ready = false;
             _picker?.Close(); _picker = null;
             _source?.RemoveHook(ResizeHook); _source = null;
             CloseDrawer();
+            _levels.Dispose();
         };
         RefreshTargets();
     }
@@ -349,7 +355,7 @@ internal sealed class FloatingPluginPanel : Window
             {
                 saved.Mode = target.Mode; saved.IsGroup = target.IsGroup; saved.Name = target.Name;
             }
-        string Signature(FloatingPluginTarget t) => $"{t.Key}|{t.Name}|{t.Available}|{t.Hue}|{t.Fill}|{t.Bypassed}|{t.Enabled}|{t.Mode}";
+        string Signature(FloatingPluginTarget t) => $"{t.Key}|{t.Name}|{t.Available}|{t.Hue}|{t.Fill}|{t.Bypassed}|{t.Enabled}|{t.Mode}|{t.Levels?.Signature}";
         var fingerprint = string.Join("\n", _targets.Select(t => Signature(t) + string.Join(";", t.Members.Select(Signature))))
             + string.Join("\n", _state.Tiles.Select(t => $"{t.Key}|{t.Enabled}"));
         if (_fingerprint == fingerprint) return;
@@ -375,20 +381,27 @@ internal sealed class FloatingPluginPanel : Window
     private Button CreateTile(FloatingPluginTarget target, bool mainTile = false)
     {
         var state = StateText(target);
-        var content = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        content.Children.Add(new TextBlock { Text = target.Name, TextWrapping = TextWrapping.Wrap, MaxHeight = 36, FontSize = 12 });
+        var content = new Grid { Width = 112, Height = 62 };
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(22) });
+        content.RowDefinitions.Add(new RowDefinition());
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(14) });
+        content.Children.Add(_levels.Create(target.Available ? target.Levels : null, target.Key));
+        var name = new TextBlock { Text = target.Name, TextWrapping = TextWrapping.Wrap, MaxHeight = 26,
+            FontSize = 11, LineHeight = 13, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetRow(name, 1); content.Children.Add(name);
         var detail = new TextBlock { Text = target.Detail,
-            FontSize = 10, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+            FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis };
         detail.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
         var status = new TextBlock { Text = state, FontSize = 9, FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(6, 4, 0, 0) };
+            Margin = new Thickness(6, 0, 0, 0) };
         status.SetResourceReference(TextBlock.ForegroundProperty, state switch
         {
             "OFF / BYPASS" or "BYPASS" or "OFF" => "TextBrush",
             "ON" => "RouteAccentBrush", _ => "MutedTextBrush"
         });
         var footer = new DockPanel(); DockPanel.SetDock(status, Dock.Right);
-        footer.Children.Add(status); footer.Children.Add(detail); content.Children.Add(footer);
+        footer.Children.Add(status); footer.Children.Add(detail); Grid.SetRow(footer, 2); content.Children.Add(footer);
         var button = new Button { Content = content, Width = 132, Height = 74, Padding = new Thickness(9, 5, 9, 5),
             Margin = new Thickness(3), BorderThickness = new Thickness(1), HorizontalContentAlignment = HorizontalAlignment.Left,
             BorderBrush = PluginStateVisuals.Outline(new SolidColorBrush(target.Hue), VisualState(target)),

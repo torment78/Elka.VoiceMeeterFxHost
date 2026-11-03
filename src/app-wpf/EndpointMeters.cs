@@ -5,8 +5,6 @@ using System.Windows.Media;
 
 namespace Elka.VoiceMeeterFxHost.App;
 
-internal readonly record struct EndpointMeterAddress(int Stream, bool OutputSide, int FirstChannel, int Channels);
-
 internal interface IEndpointPeakSource
 {
     int Open(EndpointMeterAddress address);
@@ -46,10 +44,12 @@ internal sealed class EndpointMeterReader : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _reader;
     private bool _disposed;
+    private readonly Action? _pollPeakHolds;
     internal Exception? Failure { get; private set; }
 
-    internal EndpointMeterReader(EndpointMeterAddress[] addresses, IEndpointPeakSource source)
+    internal EndpointMeterReader(EndpointMeterAddress[] addresses, IEndpointPeakSource source, Action? pollPeakHolds = null)
     {
+        _pollPeakHolds = pollPeakHolds;
         _addresses = addresses;
         _source = source;
         _pending = addresses.Select(_ => new float[8]).ToArray();
@@ -103,6 +103,7 @@ internal sealed class EndpointMeterReader : IDisposable
             using var cadence = new SignalMonitorCadence(_lifetime.Token, RefreshHz);
             while (!_lifetime.IsCancellationRequested)
             {
+                _pollPeakHolds?.Invoke();
                 bool retry = clock.Elapsed.TotalSeconds >= nextOpen;
                 if (retry) nextOpen = clock.Elapsed.TotalSeconds + 1;
                 for (int i = 0; i < handles.Length && !_lifetime.IsCancellationRequested; i++)

@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/app-wpf/PeakHold.cs" Link="PeakHold.cs" />
+    <Compile Include="../Shared/FakePeakHoldSource.cs" Link="FakePeakHoldSource.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorWindow.cs" Link="SignalMonitorWindow.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorTiming.cs" Link="SignalMonitorTiming.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorCadence.cs" Link="SignalMonitorCadence.cs" />

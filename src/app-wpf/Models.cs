@@ -501,6 +501,7 @@ internal sealed class PluginNodeSnapshot
     public string PluginStateBase64 { get; set; } = string.Empty;
     public string PluginPresetBase64 { get; set; } = string.Empty;
     public string PluginParameterStateBase64 { get; set; } = string.Empty;
+    public bool LoadSettingsOnce { get; set; }
     public int InstanceId { get; set; } = -1;
     public int Slot { get; set; }
     public int X { get; set; } = 430;
@@ -800,7 +801,18 @@ internal static class FxHostSettingsStore
     }
 }
 
-internal sealed class NativeEngineClient : IDisposable
+internal interface IPluginSavedData
+{
+    bool TryGetPluginNodeState(int slot, out string state);
+    bool TryGetPluginNodePreset(int slot, out string preset);
+    bool TryGetPluginNodeParameterState(int slot, out string parameters);
+    bool SetPluginNodeState(int slot, string? state);
+    bool SetPluginNodePreset(int slot, string? preset);
+    bool SetPluginNodeParameterState(int slot, string? parameters);
+    bool SetPluginNodeControl(int slot, string controlName, string valueText, out string status);
+}
+
+internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 {
     private const string DllName = "ElkaVoiceMeeterFxHost.Native.dll";
     private const int NativeConnectionRunning = 3;

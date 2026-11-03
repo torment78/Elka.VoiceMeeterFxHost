@@ -71,7 +71,7 @@ internal sealed class FloatingGroupDrawer : Window
         Title = group.Name + " - Group drawer"; _name.Text = group.Name; _name.ToolTip = group.Name;
         _shell.BorderBrush = new SolidColorBrush(group.Hue);
         Left = placement.Bounds.Left; Top = placement.Bounds.Top; Width = placement.Bounds.Width; Height = placement.Bounds.Height;
-        var signature = string.Join("\n", group.Members.Select(m => $"{m.Key}|{m.Name}|{m.Detail}|{m.Hue}|{m.Available}|{m.Bypassed}|{m.Enabled}"));
+        var signature = string.Join("\n", group.Members.Select(m => $"{m.Key}|{m.Name}|{m.Detail}|{m.Hue}|{m.Available}|{m.Bypassed}|{m.Enabled}|{m.Levels?.Signature}"));
         if (_fingerprint != signature || MemberCount != group.Members.Length)
         {
             _fingerprint = signature; _members.Children.Clear();

@@ -13,7 +13,7 @@ public partial class MainWindow
     private readonly Dictionary<(VoicemeeterKind Kind, EndpointMeterAddress Address), EndpointPeakState> _endpointPeakStates = [];
     private readonly float[] _endpointMeterPeaks = new float[8];
     private bool _endpointMetersInitialized;
-    private bool _endpointMeterRendering;
+    private volatile bool _endpointMeterRendering;
     private long _endpointMeterRenderBucket = -1;
     private EndpointMeterReader? _endpointMeterReader;
     private IEndpointPeakSource _endpointPeakSource = new NativeEndpointPeakSource();
@@ -46,9 +46,8 @@ public partial class MainWindow
         for (int i = 0; i < _endpointMeters.Count; i++)
         {
             var item = _endpointMeters[i];
-            bool fresh = reader.Take(i, _endpointMeterPeaks, out bool fullScale);
+            bool fresh = reader.Take(i, _endpointMeterPeaks);
             item.View.Advance(fresh ? _endpointMeterPeaks : null, now);
-            item.Peak.Observe(fullScale);
             item.Indicator.Refresh();
         }
     }
@@ -58,18 +57,6 @@ public partial class MainWindow
         if (_endpointMeterRendering) CompositionTarget.Rendering -= RenderEndpointMeters;
         _endpointMeterRendering = false;
         _endpointMeterRenderBucket = -1;
-        RetainPendingEndpointPeaks();
-    }
-
-    private void RetainPendingEndpointPeaks()
-    {
-        if (_endpointMeterReader is not { } reader || !reader.Matches(_endpointMeters.Select(item => item.Address).ToArray())) return;
-        for (int i = 0; i < _endpointMeters.Count; i++)
-        {
-            reader.Take(i, _endpointMeterPeaks, out bool fullScale);
-            _endpointMeters[i].Peak.Observe(fullScale);
-            _endpointMeters[i].Indicator.Refresh();
-        }
     }
 
     private void QueueEndpointMeterUpdate()
@@ -86,6 +73,14 @@ public partial class MainWindow
     private void UpdateEndpointMeterActivity()
     {
         if (!_endpointMetersInitialized) return;
+        SyncEndpointPeakWatches();
+        _endpointPeakDisplayActive = !_isShuttingDown && IsVisible && WindowState != WindowState.Minimized &&
+            RoutingCanvas.IsVisible && _workspaceView == WorkspaceView.Vst;
+        PollEndpointPeakHolds();
+        if (_endpointPeakDisplayActive)
+        {
+            RefreshEndpointPeakIndicators();
+        }
         bool active = _settings.NodeVuMetersEnabled && !_isShuttingDown && IsVisible && WindowState != WindowState.Minimized &&
             RoutingCanvas.IsVisible && _workspaceView == WorkspaceView.Vst && _endpointMeters.Count > 0;
         if (!active) { StopEndpointMeters(); return; }
@@ -93,7 +88,7 @@ public partial class MainWindow
         if (_endpointMeterReader?.Matches(addresses) != true)
         {
             StopEndpointMeters();
-            _endpointMeterReader = new EndpointMeterReader(addresses, _endpointPeakSource);
+            _endpointMeterReader = new EndpointMeterReader(addresses, _endpointPeakSource, PollEndpointPeakHolds);
         }
         if (!_endpointMeterRendering)
         {
@@ -106,7 +101,6 @@ public partial class MainWindow
     {
         StopEndpointMeterRendering();
         _endpointMeterReader?.Dispose();
-        RetainPendingEndpointPeaks();
         _endpointMeterReader = null;
         Array.Clear(_endpointMeterPeaks);
         foreach (var item in _endpointMeters) item.View.Clear();
@@ -115,15 +109,17 @@ public partial class MainWindow
     private void DrawEndpointMeters(IoEndpoint endpoint, CallbackMode mode, bool outputSide,
         int pinCount, double x, double y, Border card, List<FrameworkElement> elements)
     {
-        if (!_settings.NodeVuMetersEnabled) return;
         var view = new EndpointMeterView(pinCount, SignalMonitorHue(mode, endpoint, outputSide))
         {
             Width = VstEndpointCardWidth - 48
         };
         Canvas.SetLeft(view, x + (outputSide ? 44 : 8));
         Canvas.SetTop(view, VstCardPinY(y, 0) - EndpointMeterView.RowHeight / 2);
-        RoutingCanvas.Children.Add(view);
-        elements.Add(view);
+        if (_settings.NodeVuMetersEnabled)
+        {
+            RoutingCanvas.Children.Add(view);
+            elements.Add(view);
+        }
         int stream = _vstCanvasMode == CallbackMode.Main || IsInputDirectOutputVstView()
             ? 2 : mode == CallbackMode.Output ? 1 : 0;
         var address = new EndpointMeterAddress(stream, outputSide, endpoint.Range.Start, endpoint.ChannelCount);
@@ -133,8 +129,8 @@ public partial class MainWindow
         var indicator = new EndpointPeakIndicator(peak, card.Background, card.BorderBrush,
             $"{endpoint.Name} / {(outputSide ? "returned output" : "incoming input")}", () =>
             {
-                _endpointMeterReader?.ResetPeak(address);
-                peak.Reset();
+                _peakHoldSession.Reset(address);
+                RefreshEndpointPeakIndicators();
             });
         Canvas.SetLeft(indicator, x + (outputSide ? 5 : VstEndpointCardWidth - EndpointPeakIndicator.Diameter - 5));
         Canvas.SetTop(indicator, y + 7);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/AudioBufferView.h"
+#include "plugins/PluginLevelCapture.h"
 #include <atomic>
 #include <cstdint>
 
@@ -52,6 +53,7 @@ struct PluginRoutingView
     int inputRouteCount = 0;
     const PluginAudioOutputRoute* outputRoutes = nullptr;
     int outputRouteCount = 0;
+    PluginLevelCapture* outputLevels = nullptr;
 };
 
 class RealtimePluginProcessor

@@ -30,7 +30,7 @@ internal static class WidgetMemoryChecks
                 }
             }
             int retained = references.Count(r => r.IsAlive);
-            Console.WriteLine($"Retained widget/selector windows: {retained}/{references.Count}");
+            Console.WriteLine($"Retained widget/drawer/selector windows and level readers: {retained}/{references.Count}");
             Console.WriteLine("Isolated UI process only. No plugins, audio, user settings, or debugger attached.");
             return retained == 0 ? 0 : 1;
         }
@@ -41,11 +41,14 @@ internal static class WidgetMemoryChecks
     private static void Exercise(List<WeakReference> references, bool report)
     {
         var nodes = Enumerable.Range(1, 4).Select(i => new FloatingPluginTarget($"node:{i}",
-            $"Test plugin {i}", $"ID {i}", Color.FromRgb(85, 194, 122), true, [])).ToArray();
-        var group = new FloatingPluginTarget("group:1", "Mic Chain", "Group", Colors.CornflowerBlue, true, nodes);
+            $"Test plugin {i}", $"ID {i}", Color.FromRgb(85, 194, 122), true, [],
+            Levels: WidgetLevelMapping.Node(new PluginNodeSnapshot { Slot = i - 1 }))).ToArray();
+        var group = new FloatingPluginTarget("group:1", "Mic Chain", "Group", Colors.CornflowerBlue, true, nodes,
+            Levels: new WidgetLevelMapping(nodes[0].Levels!.Input, nodes[^1].Levels!.Output));
         var targets = nodes.Append(group).ToArray();
         var state = new FloatingPanelSettings { AlwaysOnTop = false, Left = 80, Top = 80 };
-        var panel = new FloatingPluginPanel(state, () => targets, _ => { }, () => { }) { ShowActivated = false };
+        var levels = new MemoryLevelSource();
+        var panel = new FloatingPluginPanel(state, () => targets, _ => { }, () => { }, levelSource: levels) { ShowActivated = false };
         references.Add(new WeakReference(panel));
         panel.Loaded += (_, _) => panel.Left = -20000;
         panel.SelectTiles([nodes[0], group]);
@@ -64,6 +67,15 @@ internal static class WidgetMemoryChecks
         Pump();
         picker.Close();
         panel.Close();
+        if (levels.Watching) throw new Exception("Closed widget retained level watches.");
+        references.Add(new WeakReference(levels));
+    }
+
+    private sealed class MemoryLevelSource : IWidgetLevelSource
+    {
+        internal bool Watching;
+        public bool Watch(ulong[] masks) { Watching = masks.Any(m => m != 0); return true; }
+        public bool Read(float[] peaks) { Array.Fill(peaks, .25f); return true; }
     }
 
     private static void Pump()
@@ -86,7 +98,7 @@ internal static class WidgetMemoryChecks
     private static void Report(string stage)
     {
         using var process = Process.GetCurrentProcess();
-        Console.WriteLine($"{stage}: managed={GC.GetTotalMemory(false) / 1048576.0:F2} MB, " +
+        Console.WriteLine($"{stage}: managed heap after GC={GC.GetGCMemoryInfo().HeapSizeBytes / 1048576.0:F2} MB, " +
             $"private={process.PrivateMemorySize64 / 1048576.0:F2} MB, working set={process.WorkingSet64 / 1048576.0:F2} MB, " +
             $"handles={process.HandleCount}");
     }

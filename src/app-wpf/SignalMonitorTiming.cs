@@ -13,7 +13,7 @@ internal sealed class SignalMonitorMailbox
     private readonly int _channels;
     private float? _maximumPeak;
     private readonly float?[] _channelMaximumPeaks = new float?[8];
-    private bool _discardNextPeak;
+    private readonly bool[] _discardNextPeaks = new bool[8];
     internal Action? Updated;
 
     internal SignalMonitorMailbox(int channels = 8) => _channels = Math.Clamp(channels, 1, 8);
@@ -29,29 +29,51 @@ internal sealed class SignalMonitorMailbox
         }
     }
 
-    internal void ResetPeak()
+    internal void ResetPeak() => ResetPeakChannels(0, _channels);
+
+    internal void ResetPeakChannels(int first, int count)
     {
         lock (_gate)
         {
-            _maximumPeak = null;
-            Array.Clear(_channelMaximumPeaks);
+            Array.Clear(_channelMaximumPeaks, first, count);
+            RecalculateMaximum();
             // The next native snapshot can still include samples from before the click.
-            _discardNextPeak = true;
+            Array.Fill(_discardNextPeaks, true, first, count);
         }
+    }
+
+    internal void MergePeakHold(float[] maximum, uint[] overs)
+    {
+        lock (_gate)
+        {
+            for (int i = 0; i < _channels; ++i)
+                if (float.IsFinite(maximum[i]) && maximum[i] > 0)
+                    _channelMaximumPeaks[i] = Math.Max(_channelMaximumPeaks[i] ?? 0, maximum[i]);
+            RecalculateMaximum();
+        }
+    }
+
+    private void RecalculateMaximum()
+    {
+        _maximumPeak = null;
+        for (int i = 0; i < _channels; ++i)
+            if (_channelMaximumPeaks[i] is { } peak) _maximumPeak = Math.Max(_maximumPeak ?? 0, peak);
     }
 
     internal void Publish(SignalMonitorFrame frame)
     {
         lock (_gate)
         {
-            if (!_discardNextPeak)
-                for (int i = 0; i < _channels; ++i)
+            for (int i = 0; i < _channels; ++i)
+            {
+                if (!_discardNextPeaks[i])
                     if (float.IsFinite(frame.Peaks[i]))
                     {
                         _channelMaximumPeaks[i] = Math.Max(_channelMaximumPeaks[i] ?? 0, Math.Abs(frame.Peaks[i]));
                         _maximumPeak = Math.Max(_maximumPeak ?? 0, Math.Abs(frame.Peaks[i]));
                     }
-            _discardNextPeak = false;
+                _discardNextPeaks[i] = false;
+            }
             _history.Append(frame);
             if (_available && frame.Timestamp - _firstPendingTime > 0.1) _available = false;
             if (!_available) _firstPendingTime = frame.Timestamp;

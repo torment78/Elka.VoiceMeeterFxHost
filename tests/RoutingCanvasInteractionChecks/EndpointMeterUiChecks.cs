@@ -59,7 +59,7 @@ public partial class MainWindow
         Assert(_endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "taskbar minimize releases taps and render subscription too");
         WindowState = WindowState.Normal;
         SetNodeMetersEnabled(false);
-        Assert(_endpointMeters.Count == 0 && _endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "settings-off removes meters and releases taps");
+        Assert(!RoutingCanvas.Children.OfType<EndpointMeterView>().Any() && _endpointMeterReader is null && !_endpointMeterRendering && source.Opens == source.Closes, "settings-off removes bars and releases taps; continuous peak indicators remain");
         SetNodeMetersEnabled(true);
         Assert(_endpointMeters.Count == 16, "settings-on restores meter visuals");
         _vstCanvasMode = CallbackMode.Output;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <xmmintrin.h>
 #include <windows.h>
 
@@ -1059,6 +1060,7 @@ void RealtimeEngine::setPluginSlot(
     target.enabled.store(false, std::memory_order_release);
     target.kind.store(static_cast<int>(kind), std::memory_order_release);
     target.processor.store(processor, std::memory_order_release);
+    pluginLevels.reset(slot);
     target.bypassed.store(bypassed, std::memory_order_release);
     target.powered.store(powered, std::memory_order_release);
     setPluginSlotRoutes(slot, inputRoutes, inputRouteCount, outputRoutes, outputRouteCount);
@@ -1075,6 +1077,7 @@ void RealtimeEngine::clearPluginSlot(int slot) noexcept
     auto& target = pluginSlots[static_cast<size_t>(slot)];
     target.enabled.store(false, std::memory_order_release);
     target.processor.store(nullptr, std::memory_order_release);
+    pluginLevels.reset(slot);
     target.bypassed.store(false, std::memory_order_release);
     target.powered.store(false, std::memory_order_release);
     target.inputRouteCount.store(0, std::memory_order_release);
@@ -1315,16 +1318,20 @@ void RealtimeEngine::process(AudioBufferView buffer, CallbackStreamKind kind) no
 {
     DspPerformanceScope timing(dspPerformance, delayStreamIndex(kind), buffer.sampleRate, buffer.samplesPerFrame);
     signalMonitors.capture(static_cast<int>(kind), false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
+    peakHold.capture(static_cast<int>(kind), false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame);
     processInternal(buffer, kind, true, delayStreamIndex(kind), timing.active() ? &timing : nullptr);
     signalMonitors.capture(static_cast<int>(kind), true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
+    peakHold.capture(static_cast<int>(kind), true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame);
 }
 
 void RealtimeEngine::processInsertAsio(AudioBufferView buffer) noexcept
 {
     DspPerformanceScope timing(dspPerformance, 3, buffer.sampleRate, buffer.samplesPerFrame);
     signalMonitors.capture(0, false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame, buffer.sampleRate);
+    peakHold.capture(0, false, buffer.read, buffer.inputChannels, buffer.samplesPerFrame);
     processInternal(buffer, CallbackStreamKind::InputInsert, false, 3, timing.active() ? &timing : nullptr);
     signalMonitors.capture(0, true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame, buffer.sampleRate);
+    peakHold.capture(0, true, buffer.write, buffer.outputChannels, buffer.samplesPerFrame);
 }
 
 void RealtimeEngine::processInternal(
@@ -2517,6 +2524,12 @@ void RealtimeEngine::applyPlugins(
 
         if (validInputRoutes > 0)
         {
+            const auto levelMask = pluginLevels.mask(slot);
+            std::optional<PluginLevelCapture> outputLevels;
+            if (levelMask >> 32) outputLevels.emplace(static_cast<uint32_t>(levelMask >> 32));
+            if (static_cast<uint32_t>(levelMask) != 0)
+                pluginLevels.publish(slot, 0, PluginLevels::input(static_cast<uint32_t>(levelMask),
+                    inputRoutes.data(), validInputRoutes, buffer.samplesPerFrame));
             const auto processNode = [&](AudioBufferView block, const PluginRoutingView& routes) noexcept {
                 const auto start = timing != nullptr ? DspPerformance::clock() : 0;
                 const bool result = processor->process(block, routes);
@@ -2570,12 +2583,15 @@ void RealtimeEngine::applyPlugins(
                         inputRoutes.data(),
                         validInputRoutes,
                         outputRoutes.data(),
-                        validOutputRoutes
+                        validOutputRoutes,
+                        outputLevels ? &*outputLevels : nullptr
                     });
             }
 
             if (bypassed)
             {
+                if (outputLevels)
+                    PluginLevels::bypass(*outputLevels, inputRoutes.data(), validInputRoutes, buffer.samplesPerFrame);
                 std::array<float*, MaxPluginRoutes> clearedDestinations {};
                 int clearedCount = 0;
                 rendered = false;
@@ -2626,6 +2642,8 @@ void RealtimeEngine::applyPlugins(
                     rendered = true;
                 }
             }
+
+            if (outputLevels) pluginLevels.publish(slot, PluginLevels::Pins, *outputLevels);
 
             if (rendered)
             {

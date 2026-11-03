@@ -2,6 +2,8 @@
 
 #include "engine/AudioBufferView.h"
 #include "engine/SignalMonitor.h"
+#include "engine/PeakHold.h"
+#include "engine/PluginLevels.h"
 #include "engine/DspPerformance.h"
 #include "plugins/RealtimePluginProcessor.h"
 
@@ -136,10 +138,13 @@ class RealtimeEngine
 {
 public:
     SignalMonitorHub signalMonitors;
+    PeakHold peakHold;
+    PluginLevels pluginLevels;
     DspPerformance dspPerformance;
     uint64_t pluginPerformanceToken(int slot) const noexcept;
     static constexpr int MaxDelayMilliseconds = 10000;
     static constexpr int MaxPluginSlots = 16;
+    static_assert(MaxPluginSlots == PluginLevels::Slots);
     static_assert(MaxPluginSlots == DspPerformance::Slots);
     static constexpr int MaxPluginRoutes = 64;
     static constexpr int MaxPluginPins = 32;

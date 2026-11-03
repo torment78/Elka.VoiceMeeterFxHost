@@ -22,6 +22,7 @@ internal static class CanvasInteractionChecks
             return IntPtr.Zero;
         });
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
         app.Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/RoutingCanvasInteractionChecks;component/Themes/ElkaTheme.xaml", UriKind.Relative)
@@ -44,6 +45,9 @@ internal static class CanvasInteractionChecks
         {
             if (args.Contains("--quick-connect")) { window.CheckQuickConnectionChains(); return 0; }
             if (args.Contains("--widget-states")) { window.CheckWidgetTileStates(); return 0; }
+            if (args.Contains("--widget-levels")) { window.CheckWidgetLevels(); return 0; }
+            if (args.Contains("--saved-data")) { window.CheckPluginSavedData(); return 0; }
+            if (args.Contains("--pending-restore")) { window.CheckPendingPluginRestores(); return 0; }
             window.ShowActivated = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.Left = -20000;
@@ -60,6 +64,9 @@ internal static class CanvasInteractionChecks
             window.CheckTrayMenuTheme();
             window.CheckFloatingPanel();
             window.CheckWidgetTileStates();
+            window.CheckWidgetLevels();
+            window.CheckPluginSavedData();
+            window.CheckPendingPluginRestores();
             window.CheckCanvasStateVisuals();
             WindowPlacementChecks.Run();
             Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, no user settings loaded or saved.");
@@ -119,6 +126,7 @@ namespace Elka.VoiceMeeterFxHost.App
 
         internal MainWindow(CanvasTestSession session)
         {
+            _peakHoldSession = new PeakHoldSession(new FakePeakHoldSource());
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
             _statusTimer = new DispatcherTimer();
             _channelApplyTimer = new DispatcherTimer();

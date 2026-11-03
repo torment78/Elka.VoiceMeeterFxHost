@@ -17,6 +17,7 @@ internal static class Program
         CheckMissingPlugin();
         CheckAutoWireAndExternalAppend();
         CheckImmediateSelection();
+        CheckSavedDataOptions();
         Console.WriteLine($"PASS: {_checks} group menu, pin, reload, and cancel checks. No audio engine started.");
     }
 
@@ -26,7 +27,7 @@ internal static class Program
         var node = fixture.Nodes[0];
         var menu = Menu(fixture.Window, node);
         var headers = menu.Items.OfType<MenuItem>().Select(item => item.Header is PluginNodePowerControls ? "Power controls" : (string)item.Header).ToArray();
-        Check(headers.SequenceEqual(new[] { "ID 1", "Open Editor", "Info", "Reload", "Power controls", "Properties",
+        Check(headers.SequenceEqual(new[] { "ID 1", PluginSavedDataControls.Label, "Reload saved settings now", "Open Editor", "Info", "Reload", "Power controls", "Properties",
             "Minimize Pins", "Remove From Group", "Remove" }), "group VST menu parity and order");
         Check(!menu.Items.OfType<MenuItem>().First().IsEnabled, "ID is not clickable");
         Click(fixture, node, "Open Editor");
@@ -97,6 +98,22 @@ internal static class Program
         Check(fixture.RouteCalls == 0, "cancel never toggles routes into retired slots");
     }
 
+    private static void CheckSavedDataOptions()
+    {
+        var fixture = new Fixture();
+        var node = fixture.Nodes[0];
+        var option = Menu(fixture.Window, node).Items.OfType<MenuItem>()
+            .Single(item => Equals(item.Header, PluginSavedDataControls.Label));
+        Check(!option.IsChecked && Equals(option.ToolTip, PluginSavedDataControls.Help), "group member defaults off with full tooltip");
+        option.IsChecked = true;
+        option.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Check(node.LoadSettingsOnce && !fixture.Nodes[1].LoadSettingsOnce, "group option affects only chosen member");
+        Click(fixture, node, "Reload saved settings now");
+        Check(fixture.Actions.SequenceEqual(new[] { "load-once:1", "saved-settings:1" }), "group saved-data commands dispatch to owner");
+        Check(fixture.RouteCalls == 0, "group saved-data options do not alter routes");
+        fixture.Window.Close();
+    }
+
     private static void CheckLayoutAndCancel()
     {
         var fixture = new Fixture();
@@ -116,8 +133,9 @@ internal static class Program
         var node = fixture.Nodes[0];
         node.MissingPlugin = true;
         var items = Menu(fixture.Window, node).Items.OfType<MenuItem>().ToArray();
-        Check(items.Select(item => item.Header).SequenceEqual(new[] { "ID 1", "Missing VST", "Remove" }), "missing VST offers only removal");
-        Check(!items[1].IsEnabled, "missing status disabled");
+        Check(items.Select(item => item.Header).SequenceEqual(new[] { "ID 1", PluginSavedDataControls.Label,
+            "Reload saved settings now", "Missing VST", "Remove" }), "missing VST retains saved-data controls and removal");
+        Check(!items[3].IsEnabled, "missing status disabled");
         fixture.Window.Close();
     }
 
@@ -240,7 +258,9 @@ internal static class Program
                 (n, enabled) => PluginNodePowerState.SetEnabled(n, enabled, (_, _) => { }, (_, _) => { }),
                 (n, bypassed) => PluginNodePowerState.SetBypass(n, bypassed, (_, _) => { }, (_, _) => { }),
                 n => { Actions.Add($"reload:{n.InstanceId}"); Replace(n, n.Slot + 10); },
-                (n, collapsed) => n.PinsCollapsed = collapsed);
+                (n, collapsed) => n.PinsCollapsed = collapsed,
+                setLoadSettingsOnce: (n, enabled) => { n.LoadSettingsOnce = enabled; Actions.Add($"load-once:{n.InstanceId}"); },
+                reloadSavedSettings: n => Actions.Add($"saved-settings:{n.InstanceId}"));
         }
 
         public void Replace(PluginNodeSnapshot node, int slot, bool changeLayout = false)

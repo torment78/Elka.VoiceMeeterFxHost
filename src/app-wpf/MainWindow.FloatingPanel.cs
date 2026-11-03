@@ -7,6 +7,7 @@ namespace Elka.VoiceMeeterFxHost.App;
 public partial class MainWindow
 {
     private FloatingPluginPanel? _floatingPluginPanel;
+    private readonly Dictionary<string, WidgetPeakState> _widgetPeakStates = [];
 
     private string FloatingNodeKey(PluginNodeSnapshot node) =>
         $"{_kind}:vst:{node.InstanceId}:{PluginIdentity.Canonical(node.PluginIdentifier).ToUpperInvariant()}";
@@ -22,7 +23,7 @@ public partial class MainWindow
             var hue = FindNodeRouteHue(node.Slot, []);
             var stroke = (HueStrokeBrush(hue) as SolidColorBrush)?.Color ?? Color.FromRgb(240, 138, 62);
             return new FloatingPluginTarget(FloatingNodeKey(node), node.Name, $"ID {node.InstanceId}", stroke,
-                !node.MissingPlugin, [], node.Bypassed, node.Enabled, node.Mode, Fill(hue, stroke));
+                !node.MissingPlugin, [], node.Bypassed, node.Enabled, node.Mode, Fill(hue, stroke), WidgetLevelMapping.Node(node));
         }
         FloatingPluginTarget GroupTarget(PluginGroupSnapshot group)
         {
@@ -31,7 +32,7 @@ public partial class MainWindow
             var stroke = (HueStrokeBrush(hue) as SolidColorBrush)?.Color ?? Color.FromRgb(85, 194, 122);
             return new FloatingPluginTarget(FloatingGroupKey(group), group.Name,
                 "Group", stroke, true, members.Select(NodeTarget).ToArray(), GroupIsBypassed(members), GroupIsEnabled(members),
-                group.Mode, Fill(hue, stroke));
+                group.Mode, Fill(hue, stroke), WidgetLevelMapping.Group(group.Id, _settings.CanvasConnections));
         }
         return _settings.PluginNodes.OrderBy(n => n.InstanceId).Select(NodeTarget)
             .Concat(_settings.PluginGroups.Select(GroupTarget)).ToArray();
@@ -50,7 +51,7 @@ public partial class MainWindow
         // No owner: hiding the main window must not hide this independent panel.
         var panel = new FloatingPluginPanel(state, FloatingPanelTargets, ToggleFloatingPanelEditor,
             () => { if (!_isShuttingDown) QueueSave(); },
-            FloatingPanelContextMenu);
+            FloatingPanelContextMenu, peakStates: _widgetPeakStates);
         _floatingPluginPanel = panel;
         panel.Closed += (_, _) =>
         {

@@ -12,12 +12,15 @@ public partial class MainWindow
     internal void CheckEndpointPeakUi()
     {
         StopEndpointMeters();
+        StopEndpointPeakWatches();
         _endpointPeakStates.Clear();
         _kind = VoicemeeterKind.Potato;
         _workspaceView = WorkspaceView.Vst;
         _vstCanvasMode = CallbackMode.Input;
         _settings.NodeVuMetersEnabled = true;
         var source = new PeakUiSource();
+        var holds = new FakePeakHoldSource();
+        _peakHoldSession = new PeakHoldSession(holds);
         _endpointPeakSource = source;
         var inputs = VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind);
         foreach (var endpoint in inputs)
@@ -32,6 +35,7 @@ public partial class MainWindow
         void Send(EndpointMeterAddress address, int channel, float level)
         {
             var samples = new float[8]; samples[channel] = level;
+            holds.Capture(address, samples);
             source.Send(address, samples);
         }
         bool WaitPeak(EndpointPeakState peak) => WaitFor(() =>
@@ -51,6 +55,8 @@ public partial class MainWindow
         Assert(routing == JsonSerializer.Serialize(_settings.CanvasConnections) && offsets.SequenceEqual(_settings.EndpointCanvasYOffsets),
             "peak reset never edits routing or node placement");
         RenderEndpointPreview(inputs[0], "endpoint-peaks-preview.png");
+        using var openMonitor = _peakHoldSession.Subscribe(left.Address,
+            new SignalMonitorMailbox(left.Address.Channels).MergePeakHold, (_, _) => { });
 
         var vaio = inputs.First(e => e.Name == "VAIO");
         var compact = _endpointMeters.Single(m => !m.Address.OutputSide && m.Address.FirstChannel == vaio.Range.Start);
@@ -70,11 +76,21 @@ public partial class MainWindow
         Thread.Sleep(100);
         Assert(_endpointMeterReader is null && !_endpointMeterRendering && source.Reads == reads && source.Opens == source.Closes,
             "tray hide stops peak data reads and closes every tap");
-        Assert(compact.Peak.IsLatched && right.Peak.IsLatched, "tray hide retains existing red latches without background work");
+        Assert(compact.Peak.IsLatched && right.Peak.IsLatched, "tray hide retains existing native latches");
+        _peakHoldSession.Reset(left.Address);
+        Send(left.Address, 1, 2f);
+        Assert(WaitFor(() => left.Peak.IsLatched), "4 Hz peak-only poll catches new overs while main window is hidden");
+        Assert(source.Reads == reads && _endpointMeterReader is null, "hidden peak polling never reopens meter or FFT taps");
         Show(); UpdateEndpointMeterActivity();
         SetNodeMetersEnabled(false);
-        Assert(_endpointMeters.Count == 0 && !RoutingCanvas.Children.OfType<EndpointPeakIndicator>().Any() &&
-            _endpointMeterReader is null && !_endpointMeterRendering, "VU off hides peak indicators and disconnects their data");
+        Assert(_endpointMeters.Count == 16 && RoutingCanvas.Children.OfType<EndpointPeakIndicator>().Count() == 16 &&
+            !RoutingCanvas.Children.OfType<EndpointMeterView>().Any() && _endpointMeterReader is null && !_endpointMeterRendering,
+            "VU off stops bars and their taps but retains independent peak dots");
+        _peakHoldSession.Reset(left.Address);
+        Send(left.Address, 0, 3f);
+        Assert(WaitFor(() => left.Peak.IsLatched), "new peaks still latch with node VU meters disabled");
+        var tooltip = (string)_endpointMeters.Single(m => m.Address == left.Address).Indicator.ToolTip;
+        Assert(tooltip.Contains("Measured continuously") && tooltip.Contains("overs"), "tooltip describes session hold and block counts");
         SetNodeMetersEnabled(true); UpdateEndpointMeterActivity();
         Assert(_endpointMeters.Single(m => m.Address == compact.Address).Peak.IsLatched, "turning meters back on preserves the latch");
 
@@ -89,7 +105,27 @@ public partial class MainWindow
             "Out-Out return channel eight latches independently");
         output.Indicator.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert(!output.Peak.IsLatched, "Out-Out peak click resets successfully");
+        var mailbox = new SignalMonitorMailbox(8);
+        using (var monitor = _peakHoldSession.Subscribe(output.Address, mailbox.MergePeakHold, mailbox.ResetPeakChannels))
+        {
+            monitor.Poll();
+            Send(output.Address, 7, 4f);
+            monitor.Poll();
+            Assert(mailbox.MaximumPeak == 4, "open monitor shares native endpoint hold");
+            output.Indicator.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(mailbox.MaximumPeak is null && !output.Peak.IsLatched, "node click resets the open monitor immediately");
+        }
+        Send(output.Address, 7, 5f);
+        var reopened = new SignalMonitorMailbox(8);
+        using (var monitor = _peakHoldSession.Subscribe(output.Address, reopened.MergePeakHold, reopened.ResetPeakChannels))
+        {
+            monitor.Poll();
+            Assert(reopened.MaximumPeak == 5, "monitor reopened after an over retains the session maximum");
+        }
         StopEndpointMeters();
+        openMonitor.Dispose();
+        StopEndpointPeakWatches();
+        Assert(holds.Watches == holds.Unwatches, "shutdown releases every endpoint and monitor watch exactly once");
         _settings.EndpointRouteHues.Remove(vaio.Key(CallbackMode.Input));
         _saveTimer.Stop();
         Console.WriteLine("PASS: input/output peak latches, click-reset, full eight-channel detection, layout, hue, rebuild and inactive lifecycle. Native audio blocked.");

@@ -164,6 +164,16 @@ target_include_directories(DspPerformanceChecks PRIVATE src)
 target_compile_definitions(DspPerformanceChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(DspPerformanceChecks PRIVATE Avrt)
 
+add_executable(PeakHoldChecks EXCLUDE_FROM_ALL tests/PeakHoldChecks/main.cpp src/engine/RealtimeEngine.cpp)
+target_include_directories(PeakHoldChecks PRIVATE src)
+target_compile_definitions(PeakHoldChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(PeakHoldChecks PRIVATE Avrt)
+
+add_executable(WidgetLevelChecks EXCLUDE_FROM_ALL tests/WidgetLevelChecks/main.cpp src/engine/RealtimeEngine.cpp)
+target_include_directories(WidgetLevelChecks PRIVATE src)
+target_compile_definitions(WidgetLevelChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(WidgetLevelChecks PRIVATE Avrt)
+
 # Shared-container identity checks do not load plugins or connect to audio.
 add_executable(PluginContainerChecks EXCLUDE_FROM_ALL tests/PluginContainerChecks/main.cpp)
 target_include_directories(PluginContainerChecks PRIVATE src)

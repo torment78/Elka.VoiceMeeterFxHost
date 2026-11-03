@@ -10,12 +10,13 @@ internal sealed class PluginNodePropertiesWindow : Window
     private readonly ComboBox _outputLayoutCombo = new();
     internal PluginNodeSnapshot Node { get; }
 
-    public PluginNodePropertiesWindow(PluginNodeSnapshot node, Action<Window>? showHotkeys = null)
+    public PluginNodePropertiesWindow(PluginNodeSnapshot node, Action<Window>? showHotkeys = null,
+        Action<PluginNodeSnapshot, bool>? setLoadSettingsOnce = null)
     {
         Node = node;
         Title = $"{node.Name} Properties";
         Width = 380;
-        Height = showHotkeys is null ? 250 : 292;
+        Height = showHotkeys is null ? 294 : 336;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
 
@@ -39,6 +40,7 @@ internal sealed class PluginNodePropertiesWindow : Window
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(135) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -53,6 +55,22 @@ internal sealed class PluginNodePropertiesWindow : Window
             OutputLayoutId,
             OutputPins);
 
+        var loadOnce = new CheckBox
+        {
+            Content = new TextBlock { Text = PluginSavedDataControls.Label, TextWrapping = TextWrapping.Wrap },
+            IsChecked = node.LoadSettingsOnce, ToolTip = PluginSavedDataControls.Help,
+            Margin = new Thickness(0, 0, 0, 12), VerticalAlignment = VerticalAlignment.Top
+        };
+        loadOnce.Click += (_, _) =>
+        {
+            LoadSettingsOptionChanged = true;
+            if (setLoadSettingsOnce is not null) setLoadSettingsOnce(node, loadOnce.IsChecked == true);
+            else node.LoadSettingsOnce = loadOnce.IsChecked == true;
+        };
+        Grid.SetRow(loadOnce, 3);
+        Grid.SetColumnSpan(loadOnce, 2);
+        root.Children.Add(loadOnce);
+
         if (showHotkeys is not null)
         {
             var hotkey = new Button
@@ -62,7 +80,7 @@ internal sealed class PluginNodePropertiesWindow : Window
                 Style = TryFindResource("VbanButton") as Style
             };
             hotkey.Click += (_, _) => showHotkeys(this);
-            Grid.SetRow(hotkey, 3);
+            Grid.SetRow(hotkey, 4);
             Grid.SetColumnSpan(hotkey, 2);
             root.Children.Add(hotkey);
         }
@@ -103,7 +121,7 @@ internal sealed class PluginNodePropertiesWindow : Window
 
         buttons.Children.Add(cancel);
         buttons.Children.Add(apply);
-        Grid.SetRow(buttons, 4);
+        Grid.SetRow(buttons, 5);
         Grid.SetColumnSpan(buttons, 2);
         root.Children.Add(buttons);
 
@@ -111,6 +129,9 @@ internal sealed class PluginNodePropertiesWindow : Window
     }
 
     public int MainInputPins { get; private set; }
+    internal bool LoadSettingsOptionChanged { get; private set; }
+    internal bool HasLayoutChanges => MainInputPins != Node.MainInputPins || SidechainInputPins != Node.SidechainInputPins ||
+        OutputPins != Node.OutputPins || MainInputLayoutId != Node.MainInputLayoutId || OutputLayoutId != Node.OutputLayoutId;
     public int SidechainInputPins { get; private set; }
     public int OutputPins { get; private set; }
     public int MainInputLayoutId { get; private set; }

@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/app-wpf/PeakHold.cs" Link="PeakHold.cs" />
     <Compile Include="../../src/app-wpf/EndpointMeters.cs" Link="EndpointMeters.cs" />
     <Compile Include="../../src/app-wpf/EndpointPeakIndicator.cs" Link="EndpointPeakIndicator.cs" />
     <Compile Include="../../src/app-wpf/SignalMonitorCadence.cs" Link="SignalMonitorCadence.cs" />

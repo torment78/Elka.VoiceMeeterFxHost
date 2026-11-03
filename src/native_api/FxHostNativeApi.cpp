@@ -1,6 +1,8 @@
 #include "engine/RealtimeEngine.h"
 #include "engine/AudioThreadPriority.h"
 #include "native_api/SignalMonitorReaders.h"
+#include "native_api/PeakHoldReader.h"
+#include "native_api/PluginLevelsReader.h"
 #include "insert_asio/InsertAsioHost.h"
 #include "plugins/PluginHostLayer.h"
 #include "voicemeeter/VoicemeeterClient.h"
@@ -184,6 +186,8 @@ struct NativeExternalWasapiPingResult
 };
 
 SignalMonitorReaders g_signalMonitorReaders;
+PeakHoldReader g_peakHoldReader;
+PluginLevelsReader g_pluginLevelsReader;
 
 class NativeHost
 {
@@ -192,10 +196,14 @@ public:
         : insertAsio(engine),
           client(engine)
     {
+        g_peakHoldReader.attach(engine.peakHold);
+        g_pluginLevelsReader.attach(engine.pluginLevels);
     }
 
     ~NativeHost()
     {
+        g_peakHoldReader.detach();
+        g_pluginLevelsReader.detach();
         g_signalMonitorReaders.detach(engine.signalMonitors);
     }
 
@@ -1728,6 +1736,35 @@ __declspec(dllexport) int __cdecl ElkaFx_GetVoicemeeterType()
     {
         return 0;
     }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_SetPluginLevelWatches(const uint64_t* masks, int count)
+{
+    return g_pluginLevelsReader.watches(masks, count);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_ReadPluginLevels(float* peaks, int count)
+{
+    return g_pluginLevelsReader.read(peaks, count);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_PeakHoldWatch(int stream, int output, int first, int count, int on)
+{
+    if ((output != 0 && output != 1) || (on != 0 && on != 1)) return -2;
+    return g_peakHoldReader.watch(stream, output != 0, first, count, on != 0);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_PeakHoldRead(int stream, int output, int first, int count,
+    float* maxAbs, unsigned int* overBlocks)
+{
+    if (count > 8 || (output != 0 && output != 1)) return -2;
+    return g_peakHoldReader.read(stream, output != 0, first, count, maxAbs, overBlocks);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_PeakHoldReset(int stream, int output, int first, int count)
+{
+    if (output != 0 && output != 1) return -2;
+    return g_peakHoldReader.reset(stream, output != 0, first, count);
 }
 
 __declspec(dllexport) int __cdecl ElkaFx_OpenSignalMonitor(int stream, int outputSide, int firstChannel, int channelCount)

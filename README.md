@@ -28,7 +28,20 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.13 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.13).**
+**[0.8.3.14 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.14).**
+Endpoint and Signal Monitor peak holds now survive closing and reopening monitor
+windows during the session, until you reset them. Widget VST and group tiles
+show input and output dBFS readings, plus a red center value that latches above
+0 dBFS until clicked. These are sample-peak warnings, not clipping detection.
+
+VSTs now offer **Load settings once (keep live plugin data)** for loudness meters
+and learning plugins, plus **Reload saved settings now** for a manual restore.
+The option is off by default. Normal startup restore retries are also bounded:
+pending restore ends after the final retry or within five seconds, and a user
+parameter command ends it immediately. Subsequent saves capture current plugin
+data even if its editor was never opened, and later editor opens no longer
+overwrite those changes. Audio sample processing and routing are unchanged.
+
 Audio-thread priority handling now defaults to **guarded**: existing high-priority
 VoiceMeeter and Insert ASIO threads are left unchanged, duplicate MMCSS joins are
 removed, and any owned registration is released when its thread exits. Runtime

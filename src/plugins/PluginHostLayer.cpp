@@ -2342,6 +2342,10 @@ public:
             return renderPassthrough(routing, buffer.samplesPerFrame);
         }
 
+        if (routing.outputLevels)
+            for (int pin = 0; pin < outputPinCount; ++pin)
+                routing.outputLevels->capture(pin, scratch.getReadPointer(pin), buffer.samplesPerFrame);
+
         std::array<float*, 64> clearedDestinations {};
         int clearedCount = 0;
 
@@ -2407,6 +2411,9 @@ private:
 
             if (matchingInput == nullptr)
                 continue;
+
+            if (routing.outputLevels)
+                routing.outputLevels->capture(outputRoute.pluginPin, matchingInput->source, samples);
 
             auto* destination = outputRoute.destination;
             if (matchingInput->source == destination)
@@ -2774,6 +2781,10 @@ public:
         lateAudioRequestId = 0;
         if (header->responseId != request || header->status < 0)
             return renderSilence(buffer, routing);
+
+        if (routing.outputLevels)
+            for (int pin = 0; pin < outputPinCount; ++pin)
+                routing.outputLevels->capture(pin, channelPointer(pin), buffer.samplesPerFrame);
 
         std::array<float*, 64> clearedDestinations {};
         int clearedCount = 0;
@@ -3306,6 +3317,9 @@ private:
 
             if (passthroughInput == nullptr)
                 continue;
+
+            if (routing.outputLevels)
+                routing.outputLevels->capture(outputRoute.pluginPin, passthroughInput->source, buffer.samplesPerFrame);
 
             bool alreadyCleared = false;
             for (int i = 0; i < clearedCount; ++i)

@@ -13,6 +13,7 @@ internal static class CanvasInteractionChecks
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains("--settings-write-worker")) return SettingsWriteChecks.RunWorker();
         // Link the real window and its handlers, but make native audio access
         // impossible, even if a UI handler accidentally starts using the engine.
         NativeLibrary.SetDllImportResolver(typeof(MainWindow).Assembly, (name, _, _) =>
@@ -48,6 +49,15 @@ internal static class CanvasInteractionChecks
             if (args.Contains("--widget-levels")) { window.CheckWidgetLevels(); return 0; }
             if (args.Contains("--saved-data")) { window.CheckPluginSavedData(); return 0; }
             if (args.Contains("--pending-restore")) { window.CheckPendingPluginRestores(); return 0; }
+            if (args.Contains("--saved-data-check")) { window.CheckSavedDataComparison(); return 0; }
+            if (args.Contains("--plugin-failures")) { window.CheckPluginFailuresUi(); return 0; }
+            if (args.Contains("--plugin-capacity")) { window.CheckPluginCapacityUi(); return 0; }
+            if (args.Contains("--settings-autosave"))
+            {
+                window.CheckPluginStateAutosave(args.Contains("--real-minute"));
+                SettingsWriteChecks.Run();
+                return 0;
+            }
             window.ShowActivated = false;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.Left = -20000;
@@ -67,9 +77,14 @@ internal static class CanvasInteractionChecks
             window.CheckWidgetLevels();
             window.CheckPluginSavedData();
             window.CheckPendingPluginRestores();
+            window.CheckSavedDataComparison();
+            window.CheckPluginFailuresUi();
+            window.CheckPluginCapacityUi();
+            window.CheckPluginStateAutosave();
+            SettingsWriteChecks.Run();
             window.CheckCanvasStateVisuals();
             WindowPlacementChecks.Run();
-            Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, no user settings loaded or saved.");
+            Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, settings writes isolated to scratch files.");
             return 0;
         }
         catch (Exception ex)

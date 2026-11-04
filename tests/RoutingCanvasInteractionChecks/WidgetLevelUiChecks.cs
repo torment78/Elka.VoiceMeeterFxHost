@@ -106,7 +106,7 @@ public partial class MainWindow
             WidgetLevelReadout.Format(1) == "0.0", "Silence, unavailable and unity formatted correctly");
 
         var benchmark = new WidgetLevelReadout(mapping);
-        var exactUnity = new float[1024]; exactUnity[2 * 64] = 1;
+        var exactUnity = new float[PluginCapacity.LevelValues]; exactUnity[2 * 64] = 1;
         benchmark.Update(exactUnity);
         Assert(benchmark.PeakButton.Visibility == Visibility.Hidden, "Exactly 0 dBFS does not latch the strictly-over-zero center warning");
         exactUnity[2 * 64] = float.PositiveInfinity; benchmark.Update(exactUnity);
@@ -124,8 +124,8 @@ public partial class MainWindow
 
     private sealed class FakeWidgetLevels : IWidgetLevelSource
     {
-        internal ulong[] Masks = new ulong[16];
-        internal readonly float[] Peaks = new float[1024];
+        internal ulong[] Masks = new ulong[PluginCapacity.Slots];
+        internal readonly float[] Peaks = new float[PluginCapacity.LevelValues];
         internal int Reads;
         public bool Watch(ulong[] masks) { masks.CopyTo(Masks, 0); return true; }
         public bool Read(float[] peaks) { Reads++; Peaks.CopyTo(peaks, 0); return true; }

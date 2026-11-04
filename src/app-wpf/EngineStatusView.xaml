@@ -25,5 +25,7 @@
         </Grid>
         <TextBlock x:Name="ActivityText" Visibility="Collapsed" Margin="0,5,0,0" FontSize="11"
                    Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" />
+        <TextBlock x:Name="FailureText" Visibility="Collapsed" Margin="0,5,0,0" FontSize="11"
+                   Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

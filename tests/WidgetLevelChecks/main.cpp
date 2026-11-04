@@ -70,24 +70,24 @@ void collectorChecks()
     check(output.peaks[0] == 20, "finite over-zero samples retained; nonfinite values ignored");
     output.capture(4, invalid, 4);
     check(output.peaks[4] == 0, "unwatched output pins not scanned");
-    std::array<uint64_t, 16> masks {};
-    masks[15] = 0x8000000180000001ULL;
+    std::array<uint64_t, PluginLevels::Slots> masks {};
+    masks[PluginLevels::Slots - 1] = 0x8000000180000001ULL;
     std::array<float, PluginLevels::Values> peaks {};
-    check(!levels.watches(nullptr, 16) && !levels.watches(masks.data(), 15) && !levels.read(peaks.data(), 1), "ABI capacities validated");
-    levels.watches(masks.data(), 16);
-    levels.publish(15, 0, input); levels.publish(15, 32, output);
-    levels.read(peaks.data(), 1024);
-    check(peaks[15 * 64] == .25f && peaks[15 * 64 + 32] == 20 && peaks.back() == .5f, "independent side, slot and pin 31");
-    levels.read(peaks.data(), 1024);
+    check(!levels.watches(nullptr, PluginLevels::Slots) && !levels.watches(masks.data(), PluginLevels::Slots - 1) && !levels.read(peaks.data(), 1), "ABI capacities validated");
+    levels.watches(masks.data(), PluginLevels::Slots);
+    levels.publish(PluginLevels::Slots - 1, 0, input); levels.publish(PluginLevels::Slots - 1, 32, output);
+    levels.read(peaks.data(), PluginLevels::Values);
+    check(peaks[(PluginLevels::Slots - 1) * 64] == .25f && peaks[(PluginLevels::Slots - 1) * 64 + 32] == 20 && peaks.back() == .5f, "independent side, slot and pin 31");
+    levels.read(peaks.data(), PluginLevels::Values);
     check(std::all_of(peaks.begin(), peaks.end(), [](float p) { return p == 0; }), "drain clears interval peaks; stopped streams fall to silence");
-    levels.publish(15, 0, input); levels.reset(15); levels.read(peaks.data(), 1024);
-    check(peaks[15 * 64] == 0 && levels.mask(15) == masks[15], "slot replacement clears old peaks but retains subscriptions");
+    levels.publish(PluginLevels::Slots - 1, 0, input); levels.reset(PluginLevels::Slots - 1); levels.read(peaks.data(), PluginLevels::Values);
+    check(peaks[(PluginLevels::Slots - 1) * 64] == 0 && levels.mask(PluginLevels::Slots - 1) == masks[PluginLevels::Slots - 1], "slot replacement clears old peaks but retains subscriptions");
     PluginLevelsReader reader;
-    check(reader.read(peaks.data(), 1024) == -1, "reader never starts the host");
+    check(reader.read(peaks.data(), PluginLevels::Values) == -1, "reader never starts the host");
     reader.attach(levels);
-    check(reader.watches(masks.data(), 16) == 0 && reader.read(peaks.data(), 1024) == 0, "reader attached");
+    check(reader.watches(masks.data(), PluginLevels::Slots) == 0 && reader.read(peaks.data(), PluginLevels::Values) == 0, "reader attached");
     reader.detach();
-    check(reader.read(peaks.data(), 1024) == -1, "reader detached");
+    check(reader.read(peaks.data(), PluginLevels::Values) == -1, "reader detached");
 }
 
 void engineChecks()
@@ -101,8 +101,8 @@ void engineChecks()
     float* read[] { source.data(), source.data() };
     float* write[] { left.data(), right.data() };
     AudioBufferView block { 48000, 256, 2, 2, read, write };
-    std::array<uint64_t, 16> masks {};
-    std::array<float, 1024> peaks {};
+    std::array<uint64_t, PluginLevels::Slots> masks {};
+    std::array<float, PluginLevels::Values> peaks {};
     for (int stream = 0; stream < 4; ++stream)
     for (bool power : {false, true})
     for (bool bypass : {false, true})
@@ -111,28 +111,28 @@ void engineChecks()
         engine->setPluginSlot(0, &plugin, kind, inputs, 2, outputs, 2, true, bypass, power);
         engine->setPluginSlot(1, &other, kind, inputs, 2, outputs, 2, true, false, true);
         auto process = [&] { if (stream == 3) engine->processInsertAsio(block); else engine->process(block, kind); };
-        masks.fill(0); engine->pluginLevels.watches(masks.data(), 16);
+        masks.fill(0); engine->pluginLevels.watches(masks.data(), PluginLevels::Slots);
         process(); const auto expectedLeft = left, expectedRight = right;
         int calls = plugin.calls;
-        masks[0] = masks[1] = 0x300000003ULL; engine->pluginLevels.watches(masks.data(), 16);
+        masks[0] = masks[1] = 0x300000003ULL; engine->pluginLevels.watches(masks.data(), PluginLevels::Slots);
         allocations = 0; countAllocations = true; process(); countAllocations = false;
         check(allocations == 0, "metered callbacks allocate no heap memory");
         check(left == expectedLeft && right == expectedRight, "metered and unmetered audio bit-identical on all paths/states");
         check(plugin.calls == calls + (power ? 1 : 0), "no extra plugin execution");
-        engine->pluginLevels.read(peaks.data(), 1024);
+        engine->pluginLevels.read(peaks.data(), PluginLevels::Values);
         check(peaks[0] == .25f && peaks[1] == .25f, "incoming node level visible even when powered off");
         check(peaks[32] == (bypass ? .25f : power ? .5f : 0), "output follows bypass/off/active node state");
         check(peaks[64 + 32] == 2, "shared destination never contaminates another node's output reading");
     }
     engine->clearPluginSlots();
-    engine->pluginLevels.read(peaks.data(), 1024);
+    engine->pluginLevels.read(peaks.data(), PluginLevels::Values);
     check(std::all_of(peaks.begin(), peaks.end(), [](float p) { return p == 0; }), "removed nodes leave no stale values");
 }
 
 void concurrentChecks()
 {
     PluginLevels levels;
-    std::array<float, 1024> peaks {};
+    std::array<float, PluginLevels::Values> peaks {};
     std::atomic<bool> done {};
     std::thread producer([&] {
         PluginLevelCapture capture { 1 }; capture.peaks[0] = 2;
@@ -142,10 +142,10 @@ void concurrentChecks()
     bool bad = false; float maximum = 0;
     while (!done)
     {
-        levels.read(peaks.data(), 1024);
+        levels.read(peaks.data(), PluginLevels::Values);
         bad |= peaks[0] != 0 && peaks[0] != 2; maximum = std::max(maximum, peaks[0]);
     }
-    producer.join(); levels.read(peaks.data(), 1024); maximum = std::max(maximum, peaks[0]);
+    producer.join(); levels.read(peaks.data(), PluginLevels::Values); maximum = std::max(maximum, peaks[0]);
     check(!bad && maximum == 2, "concurrent drains and publications stay finite and preserve peaks");
 }
 
@@ -172,7 +172,7 @@ void benchmark()
             engine->setPluginSlot(s, &(*plugins)[s], CallbackStreamKind::InputInsert,
                 ins.data(), pins, outs.data(), pins, true, false, true);
         }
-        std::array<uint64_t, 16> masks {};
+        std::array<uint64_t, PluginLevels::Slots> masks {};
         std::array<std::array<double, 7>, 2> times {};
         AudioBufferView block {48000, 256, pins, pins, read.data(), write.data()};
         for (int round = 0; round < 7; ++round)
@@ -181,7 +181,7 @@ void benchmark()
             int on = (run + round) % 2;
             masks.fill(0);
             for (int s = 0; s < count; ++s) if (on) masks[s] = ((uint64_t{1} << pins) - 1) * 0x100000001ULL;
-            engine->pluginLevels.watches(masks.data(), 16);
+            engine->pluginLevels.watches(masks.data(), PluginLevels::Slots);
             for (int i = 0; i < 100; ++i) engine->processInsertAsio(block);
             auto start = std::chrono::steady_clock::now();
             for (int i = 0; i < 3000; ++i) engine->processInsertAsio(block);

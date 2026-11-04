@@ -2371,6 +2371,12 @@ void RealtimeEngine::applyPlugins(
         return scratchBuffers->pluginBypassOutputBuffer.data() + offset;
     };
 
+    // Dependencies finish before these routes are populated. Reuse one set per
+    // callback rather than reserving large arrays at every depth of a long chain.
+    std::array<PluginAudioInputRoute, MaxPluginRoutes> inputRoutes {};
+    std::array<PluginAudioOutputRoute, MaxPluginRoutes> outputRoutes {};
+    std::array<PluginAudioOutputRoute, MaxPluginRoutes> monitorOutputRoutes {};
+    std::array<float*, MaxPluginRoutes> clearedDestinations {};
     std::array<int, MaxPluginSlots> visitState {};
     const auto processSlot = [&](auto&& self, int slot) noexcept -> void {
         if (slot < 0 || slot >= MaxPluginSlots)
@@ -2427,8 +2433,8 @@ void RealtimeEngine::applyPlugins(
                 self(self, sourceSlot);
         }
 
-        std::array<PluginAudioInputRoute, MaxPluginRoutes> inputRoutes {};
-        std::array<PluginAudioOutputRoute, MaxPluginRoutes> outputRoutes {};
+        inputRoutes.fill({});
+        outputRoutes.fill({});
         int validInputRoutes = 0;
         int validOutputRoutes = 0;
         std::array<bool, MaxPluginPins> pluginBusOutputAdded {};
@@ -2544,7 +2550,7 @@ void RealtimeEngine::applyPlugins(
 
             if (powered && bypassed)
             {
-                std::array<PluginAudioOutputRoute, MaxPluginRoutes> monitorOutputRoutes {};
+                monitorOutputRoutes.fill({});
                 int validMonitorOutputRoutes = 0;
                 for (int outputIndex = 0; outputIndex < validOutputRoutes; ++outputIndex)
                 {
@@ -2592,7 +2598,7 @@ void RealtimeEngine::applyPlugins(
             {
                 if (outputLevels)
                     PluginLevels::bypass(*outputLevels, inputRoutes.data(), validInputRoutes, buffer.samplesPerFrame);
-                std::array<float*, MaxPluginRoutes> clearedDestinations {};
+                clearedDestinations.fill(nullptr);
                 int clearedCount = 0;
                 rendered = false;
 

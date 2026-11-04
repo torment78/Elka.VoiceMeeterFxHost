@@ -74,6 +74,7 @@ public partial class MainWindow
     {
         _pendingPluginRestores.Clear();
         _pluginNodesPendingSavedDataApply.Clear();
+        _pluginNodesWithUnstableState.Clear();
         _pendingPluginRestoreTimer?.Stop();
     }
 
@@ -114,6 +115,7 @@ public partial class MainWindow
     // for an opted-in instance or a copy/rebuild outside startup; do not retry live data.
     private void CompleteCreatedPluginStateRestore(PluginNodeSnapshot node, PluginNodeSnapshot saved, bool allowVerificationRetry = true)
     {
+        ForgetUnstablePluginState(node.Slot);
         if (!node.LoadSettingsOnce && allowVerificationRetry)
         {
             VerifyRestoredPluginState(node, saved);

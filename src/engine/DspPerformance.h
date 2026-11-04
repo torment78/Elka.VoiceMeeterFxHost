@@ -1,5 +1,7 @@
 #pragma once
 
+#include "plugins/PluginCapacity.h"
+
 #include <Windows.h>
 #include <array>
 #include <atomic>
@@ -36,7 +38,7 @@ class DspPerformance
 {
 public:
     static constexpr int Streams = 4;
-    static constexpr int Slots = 16;
+    static constexpr int Slots = HostedPluginCapacity;
     static constexpr int Rows = Streams * (Slots + 1);
     static constexpr unsigned EventCapacity = 256;
     static constexpr uint64_t PeakWindowSeconds = 10;

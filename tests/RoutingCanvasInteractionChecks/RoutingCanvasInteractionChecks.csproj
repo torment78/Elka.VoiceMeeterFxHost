@@ -11,9 +11,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Shared/FakePeakHoldSource.cs" Link="FakePeakHoldSource.cs" />
+    <Compile Include="../Shared/ParameterSnapshotFixture.cs" Link="ParameterSnapshotFixture.cs" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
-    <Compile Include="../../src/app-wpf/*.cs" Link="App/%(Filename)%(Extension)" />
+    <Compile Include="../../src/app-wpf/*.cs" Exclude="../../src/app-wpf/AppDataPaths.cs" Link="App/%(Filename)%(Extension)" />
     <Page Include="../../src/app-wpf/*.xaml" Exclude="../../src/app-wpf/App.xaml" Link="%(Filename)%(Extension)" />
     <ApplicationDefinition Include="../../src/app-wpf/App.xaml" Link="App.xaml" />
     <Page Include="../../src/app-wpf/Themes/ElkaTheme.xaml" Link="Themes/ElkaTheme.xaml" />

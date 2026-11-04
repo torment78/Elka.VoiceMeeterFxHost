@@ -1,6 +1,7 @@
 #pragma once
 
 #include "plugins/RealtimePluginProcessor.h"
+#include "plugins/PluginCapacity.h"
 #include <atomic>
 #include <bit>
 
@@ -10,7 +11,7 @@ namespace elka
 class PluginLevels
 {
 public:
-    static constexpr int Slots = 16;
+    static constexpr int Slots = HostedPluginCapacity;
     static constexpr int Pins = 32;
     static constexpr int Values = Slots * Pins * 2;
     static_assert(std::atomic<float>::is_always_lock_free);

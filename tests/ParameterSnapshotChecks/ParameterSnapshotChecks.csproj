@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/app-wpf/PluginParameterSnapshot.cs" Link="PluginParameterSnapshot.cs" />
+    <Compile Include="../Shared/ParameterSnapshotFixture.cs" Link="ParameterSnapshotFixture.cs" />
+  </ItemGroup>
+</Project>

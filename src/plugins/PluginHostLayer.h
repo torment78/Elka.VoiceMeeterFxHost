@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "plugins/RealtimePluginProcessor.h"
+#include "plugins/PluginCapacity.h"
 
 namespace elka
 {
@@ -93,7 +94,7 @@ struct PluginNodeSummary
 class PluginHostLayer
 {
 public:
-    static constexpr int MaxPluginNodes = 16;
+    static constexpr int MaxPluginNodes = HostedPluginCapacity;
 
     PluginHostLayer();
     ~PluginHostLayer();
@@ -140,6 +141,7 @@ public:
     bool isPluginNodeBypassed(int slot) const noexcept;
     void setPluginNodePowered(int slot, bool powered) noexcept;
     bool isPluginNodePowered(int slot) const noexcept;
+    bool isPluginNodeFailed(int slot) const noexcept;
     RealtimePluginProcessor* realtimeProcessor() noexcept;
     RealtimePluginProcessor* realtimeProcessorForSlot(int slot) noexcept;
     std::string loadedPluginName() const;

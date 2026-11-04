@@ -18,4 +18,11 @@ public partial class EngineStatusView : UserControl
         ActivityText.ToolTip = activity;
         ActivityText.Visibility = string.IsNullOrWhiteSpace(activity) ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    internal void SetFailure(string? text)
+    {
+        FailureText.Text = text ?? string.Empty;
+        FailureText.ToolTip = text;
+        FailureText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+    }
 }

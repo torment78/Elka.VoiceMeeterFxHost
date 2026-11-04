@@ -182,3 +182,6 @@ target_include_directories(PluginContainerChecks PRIVATE src)
 add_executable(AudioThreadPriorityChecks EXCLUDE_FROM_ALL
     tests/AudioThreadPriorityChecks/main.cpp src/engine/AudioThreadPriority.cpp)
 target_include_directories(AudioThreadPriorityChecks PRIVATE tests/AudioThreadPriorityChecks/fakes src)
+
+include(tests/PluginFailureChecks/CMakeLists.txt)
+include(tests/PluginCapacityChecks/CMakeLists.txt)

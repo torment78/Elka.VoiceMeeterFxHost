@@ -143,7 +143,7 @@ public:
     DspPerformance dspPerformance;
     uint64_t pluginPerformanceToken(int slot) const noexcept;
     static constexpr int MaxDelayMilliseconds = 10000;
-    static constexpr int MaxPluginSlots = 16;
+    static constexpr int MaxPluginSlots = HostedPluginCapacity;
     static_assert(MaxPluginSlots == PluginLevels::Slots);
     static_assert(MaxPluginSlots == DspPerformance::Slots);
     static constexpr int MaxPluginRoutes = 64;

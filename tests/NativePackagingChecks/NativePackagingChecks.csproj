@@ -11,6 +11,7 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/app-wpf/PluginCapacity.cs" Link="PluginCapacity.cs" />
     <Content Include="../../build-vs2026/Release/ElkaVoiceMeeterFxHost.Native.dll"
              Link="ElkaVoiceMeeterFxHost.Native.dll" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

@@ -691,6 +691,8 @@ internal sealed class FxHostSettings
 
 internal static class FxHostSettingsStore
 {
+    private static readonly object WriteLock = new();
+    private static long _latestWriteTicket;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -725,8 +727,12 @@ internal static class FxHostSettingsStore
     {
         try
         {
-            Directory.CreateDirectory(SettingsDirectory);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            var json = JsonSerializer.SerializeToUtf8Bytes(settings, JsonOptions);
+            lock (WriteLock)
+            {
+                Interlocked.Increment(ref _latestWriteTicket);
+                WriteSettingsFile(json);
+            }
             return true;
         }
         catch
@@ -734,6 +740,47 @@ internal static class FxHostSettingsStore
             // Persistence should never interrupt the audio engine or UI.
             return false;
         }
+    }
+
+    public static Task<bool> SaveInBackground(FxHostSettings settings)
+    {
+        byte[] json;
+        try
+        {
+            // Settings belong to the UI thread; workers receive only immutable bytes.
+            json = JsonSerializer.SerializeToUtf8Bytes(settings, JsonOptions);
+        }
+        catch
+        {
+            return Task.FromResult(false);
+        }
+
+        var ticket = Interlocked.Increment(ref _latestWriteTicket);
+        return Task.Run(() =>
+        {
+            lock (WriteLock)
+            {
+                if (ticket != Interlocked.Read(ref _latestWriteTicket)) return false;
+                try
+                {
+                    WriteSettingsFile(json);
+                    return true;
+                }
+                catch
+                {
+                    // Preserve the last complete save; another save can retry.
+                    return false;
+                }
+            }
+        });
+    }
+
+    private static void WriteSettingsFile(byte[] json)
+    {
+        Directory.CreateDirectory(SettingsDirectory);
+        var temporaryPath = SettingsPath + ".tmp";
+        File.WriteAllBytes(temporaryPath, json);
+        File.Move(temporaryPath, SettingsPath, overwrite: true);
     }
 
     internal static FxHostSettings DeserializeSaved(string json)
@@ -2049,15 +2096,12 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
                 return false;
             }
 
-            var required = Math.Clamp(length, 1, 16 * 1024 * 1024);
-            var builder = new StringBuilder(required);
-            if (ElkaFx_GetPluginNodeState(slot, builder, builder.Capacity) != 0)
+            if (!TryReadCompletePluginData(length, (buffer, capacity) => ElkaFx_GetPluginNodeState(slot, buffer, capacity), out state))
             {
-                state = string.Empty;
+                _lastStatus = "Plugin state capture failed: native read failed or returned incomplete data.";
                 return false;
             }
 
-            state = builder.ToString();
             return true;
         }
         catch (SEHException ex)
@@ -2090,15 +2134,12 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
                 return false;
             }
 
-            var required = Math.Clamp(length, 1, 32 * 1024 * 1024);
-            var builder = new StringBuilder(required);
-            if (ElkaFx_GetPluginNodePreset(slot, builder, builder.Capacity) != 0)
+            if (!TryReadCompletePluginData(length, (buffer, capacity) => ElkaFx_GetPluginNodePreset(slot, buffer, capacity), out preset))
             {
-                preset = string.Empty;
+                _lastStatus = "Plugin preset capture failed: native read failed or returned incomplete data.";
                 return false;
             }
 
-            preset = builder.ToString();
             return true;
         }
         catch (SEHException ex)
@@ -2165,21 +2206,35 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
                 return false;
             }
 
-            var required = Math.Clamp(length, 1, 32 * 1024 * 1024);
-            var builder = new StringBuilder(required);
-            if (ElkaFx_GetPluginNodeParameterState(slot, builder, builder.Capacity) != 0)
+            if (!TryReadCompletePluginData(length, (buffer, capacity) => ElkaFx_GetPluginNodeParameterState(slot, buffer, capacity), out parameterState))
             {
-                parameterState = string.Empty;
+                _lastStatus = "Plugin parameter capture failed: native read failed or returned incomplete data.";
                 return false;
             }
 
-            parameterState = builder.ToString();
             return true;
         }
         catch (SEHException ex)
         {
             _lastStatus = $"Plugin parameter capture failed: {ex.Message}";
             parameterState = string.Empty;
+            return false;
+        }
+    }
+
+    internal static bool TryReadCompletePluginData(int length, Func<StringBuilder, int, int> read, out string data)
+    {
+        data = string.Empty;
+        if (length <= 0) return false;
+        try
+        {
+            var builder = new StringBuilder(length);
+            if (read(builder, builder.Capacity) != 0 || builder.Length < length - 1) return false;
+            data = builder.ToString();
+            return true;
+        }
+        catch (OutOfMemoryException)
+        {
             return false;
         }
     }

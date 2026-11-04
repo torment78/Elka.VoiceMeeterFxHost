@@ -10,7 +10,7 @@ namespace Elka.VoiceMeeterFxHost.App;
 
 internal readonly record struct WidgetLevelPin(int Slot, int Pin)
 {
-    internal bool Valid => Slot is >= 0 and < 16 && Pin is >= 0 and < 32;
+    internal bool Valid => Slot is >= 0 and < PluginCapacity.Slots && Pin is >= 0 and < 32;
     internal int Index(bool output) => Slot * 64 + (output ? 32 : 0) + Pin;
 }
 
@@ -61,8 +61,8 @@ internal sealed class WidgetLevels : IDisposable
     private readonly IWidgetLevelSource _source;
     private readonly DispatcherTimer _timer;
     private readonly List<WidgetLevelReadout> _views = [];
-    private readonly ulong[] _masks = new ulong[16];
-    private readonly float[] _peaks = new float[1024];
+    private readonly ulong[] _masks = new ulong[PluginCapacity.Slots];
+    private readonly float[] _peaks = new float[PluginCapacity.LevelValues];
     private bool _active = true, _configured, _disposed;
     internal bool Running => _timer.IsEnabled;
 

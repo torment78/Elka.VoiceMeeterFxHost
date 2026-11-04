@@ -58,7 +58,7 @@ void collectorChecks()
     monitor->finish(block, second + 5 * ms);
     Readback result;
     result.read(*monitor);
-    check(result.count == 17, "one stream only");
+    check(result.count == DspPerformance::Slots + 1, "one stream only");
     check(result.eventCount == 0, "exactly 100% is not an overrun");
     check(result.rows[0].pluginTicks == 5 * ms, "callback plugin sum");
     check(result.rows[1].token == 41 && result.rows[1].calls == 1, "node identity and call count");
@@ -169,7 +169,7 @@ void peakWindowChecks()
           "peak reset preserves average numerators, denominators and VST totals");
     check(result.rows[0].overruns == 1 && result.rows[1].overruns == 1 && result.eventCount == 4,
           "peak reset preserves overrun counters and pending events from both streams");
-    check(result.rows[17].peakTicks == 7 * ms && result.rows[18].peakTicks == 6 * ms,
+    check(result.rows[DspPerformance::Slots + 1].peakTicks == 7 * ms && result.rows[DspPerformance::Slots + 2].peakTicks == 6 * ms,
           "streams keep independent peak windows");
     emit(0, boundary + second, 3 * ms, 4 * ms);
     result.read(*monitor);
@@ -279,9 +279,9 @@ void concurrentChecks()
     }
     for (auto& thread : producers) thread.join();
     result.read(*monitor);
-    check(result.count == 68 && result.skipped == 0, "independent stream telemetry");
+    check(result.count == DspPerformance::Rows && result.skipped == 0, "independent stream telemetry");
     for (int stream = 0; stream < 4; ++stream)
-        check(result.rows[stream * 17].calls == 10000, "no lost processed blocks");
+        check(result.rows[stream * (DspPerformance::Slots + 1)].calls == 10000, "no lost processed blocks");
 }
 
 void overheadChecks()

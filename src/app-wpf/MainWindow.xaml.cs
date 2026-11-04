@@ -218,11 +218,7 @@ public partial class MainWindow : Window
         {
             Interval = TimeSpan.FromMilliseconds(350)
         };
-        _saveTimer.Tick += (_, _) =>
-        {
-            _saveTimer.Stop();
-            SaveSettings();
-        };
+        _saveTimer.Tick += SaveTimer_Tick;
 
         _statusTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -323,8 +319,10 @@ public partial class MainWindow : Window
         UpdateLiveStatusText();
         _statusTimer.Start();
         InitializeDspPerformance();
+        InitializePluginFailureMonitor();
         InitializeEndpointMeters();
         StartStartupAudioEngineAfterConfiguredDelay(startupDelaySeconds);
+        StartPluginStateAutosave();
         _ = CheckStartupUpdatesAsync();
         if (_settings.FloatingPanel.Visible)
             Dispatcher.BeginInvoke(new Action(ShowFloatingPluginPanel));
@@ -601,6 +599,7 @@ public partial class MainWindow : Window
 
     private void DisposeTrayIcon()
     {
+        DisposePluginFailureMonitor();
         if (_trayIcon is not null)
         {
             _trayIcon.Visible = false;
@@ -1817,6 +1816,7 @@ public partial class MainWindow : Window
 
         ClearPendingPluginRestores();
         _settings.PluginNodes = savedNodes;
+        ClearPluginFailures();
         _settings.PluginGroups = savedGroups;
         _settings.CanvasConnections = savedConnections;
         _savedPluginNodesRestored = false;
@@ -2242,6 +2242,7 @@ public partial class MainWindow : Window
         }
 
         ClearPendingPluginRestores();
+        ClearPluginFailures();
         _selectedPluginNodeSlot = null;
         _selectedPluginGroupId = null;
         ClearSelectedConnectionKeys();
@@ -2249,8 +2250,14 @@ public partial class MainWindow : Window
 
     private bool SaveSettings()
     {
-        CaptureWindowPlacement();
         CapturePluginNodeStates();
+        PrepareSettingsForSave();
+        return FxHostSettingsStore.Save(_settings);
+    }
+
+    private void PrepareSettingsForSave()
+    {
+        CaptureWindowPlacement();
         _settings.Kind = _kind;
         _settings.SelectedMode = _selectedMode;
         _settings.SelectedEndpointName = _selectedEndpoint?.Name;
@@ -2267,11 +2274,16 @@ public partial class MainWindow : Window
         _settings.Endpoints = _settingsByEndpoint.Values
             .Select(static settings => settings.ToSnapshot())
             .ToList();
-        return FxHostSettingsStore.Save(_settings);
     }
 
     private PluginStateCaptureSummary CapturePluginNodeStates()
     {
+        return CapturePluginNodeStates(skipLoadSettingsOnce: false, out _);
+    }
+
+    private PluginStateCaptureSummary CapturePluginNodeStates(bool skipLoadSettingsOnce, out int changed)
+    {
+        changed = 0;
         var captured = 0;
         var failed = 0;
         var looseCaptured = 0;
@@ -2288,7 +2300,7 @@ public partial class MainWindow : Window
                 looseTotal++;
             }
 
-            if (node.MissingPlugin)
+            if (node.MissingPlugin || (skipLoadSettingsOnce && node.LoadSettingsOnce))
             {
                 continue;
             }
@@ -2307,9 +2319,14 @@ public partial class MainWindow : Window
                 continue;
             }
 
+            var nodeChanged = false;
             if (SavedPluginData.TryGetPluginNodeState(node.Slot, out var state))
             {
-                node.PluginStateBase64 = state;
+                if (!string.Equals(node.PluginStateBase64, state, StringComparison.Ordinal))
+                {
+                    node.PluginStateBase64 = state;
+                    nodeChanged = true;
+                }
                 captured++;
                 characters += state.Length;
                 if (loose)
@@ -2324,15 +2341,24 @@ public partial class MainWindow : Window
 
             if (SavedPluginData.TryGetPluginNodePreset(node.Slot, out var preset))
             {
-                node.PluginPresetBase64 = preset;
+                if (!string.Equals(node.PluginPresetBase64, preset, StringComparison.Ordinal))
+                {
+                    node.PluginPresetBase64 = preset;
+                    nodeChanged = true;
+                }
                 presetCharacters += preset.Length;
             }
 
             if (SavedPluginData.TryGetPluginNodeParameterState(node.Slot, out var parameterState))
             {
-                node.PluginParameterStateBase64 = parameterState;
+                if (!string.Equals(node.PluginParameterStateBase64, parameterState, StringComparison.Ordinal))
+                {
+                    node.PluginParameterStateBase64 = parameterState;
+                    nodeChanged = true;
+                }
                 parameterCharacters += parameterState.Length;
             }
+            if (nodeChanged) changed++;
         }
 
         _lastPluginStateCapture = new PluginStateCaptureSummary(captured, failed, characters, presetCharacters, parameterCharacters, looseCaptured, looseTotal);
@@ -7159,40 +7185,39 @@ private void RefreshEndpointButtonSelection()
 
         var startupRestore = _pendingPluginRestores.GetValueOrDefault(restored.Slot);
         if (!ReferenceEquals(startupRestore?.Node, restored)) startupRestore = null;
-        var stateVerified = string.IsNullOrWhiteSpace(savedNode.PluginStateBase64);
-        var presetVerified = string.IsNullOrWhiteSpace(savedNode.PluginPresetBase64);
-        var appliedState = string.Empty;
-        var appliedPreset = string.Empty;
-
-        if (!stateVerified && SavedPluginData.TryGetPluginNodeState(restored.Slot, out appliedState))
-        {
-            stateVerified = string.Equals(appliedState, savedNode.PluginStateBase64, StringComparison.Ordinal);
-        }
-
-        if (!presetVerified && SavedPluginData.TryGetPluginNodePreset(restored.Slot, out appliedPreset))
-        {
-            presetVerified = string.Equals(appliedPreset, savedNode.PluginPresetBase64, StringComparison.Ordinal);
-        }
-
-        if (stateVerified && presetVerified && string.IsNullOrWhiteSpace(savedNode.PluginParameterStateBase64))
+        if (SavedPluginDataStillApplied(restored, savedNode))
         {
             return;
         }
 
+        // Native state reads can pump UI messages, including changing this option.
+        if (restored.LoadSettingsOnce)
+        {
+            EndPluginSavedDataPending(restored);
+            return;
+        }
         if (startupRestore is not null && !ReferenceEquals(GetPendingPluginRestore(restored), startupRestore)) return;
 
-        if (ApplySavedPluginNodeData(restored, savedNode))
+        if (ApplySavedPluginNodeData(restored, savedNode) && SavedPluginParametersStillApplied(restored, savedNode))
         {
             AppendLog($"{savedNode.Name}: saved VST data restored on retry ({savedNode.PluginStateBase64.Length:n0} state chars, {savedNode.PluginPresetBase64.Length:n0} preset chars, {savedNode.PluginParameterStateBase64.Length:n0} parameter chars).");
             return;
         }
 
-        stateVerified = string.IsNullOrWhiteSpace(savedNode.PluginStateBase64) ||
-                        (SavedPluginData.TryGetPluginNodeState(restored.Slot, out appliedState) &&
-                         string.Equals(appliedState, savedNode.PluginStateBase64, StringComparison.Ordinal));
-        presetVerified = string.IsNullOrWhiteSpace(savedNode.PluginPresetBase64) ||
-                         (SavedPluginData.TryGetPluginNodePreset(restored.Slot, out appliedPreset) &&
-                          string.Equals(appliedPreset, savedNode.PluginPresetBase64, StringComparison.Ordinal));
+        var stateRead = SavedPluginData.TryGetPluginNodeState(restored.Slot, out var appliedState);
+        var presetRead = SavedPluginData.TryGetPluginNodePreset(restored.Slot, out var appliedPreset);
+        if ((!string.IsNullOrWhiteSpace(savedNode.PluginStateBase64) && stateRead &&
+             !string.Equals(appliedState, savedNode.PluginStateBase64, StringComparison.Ordinal)) ||
+            (!string.IsNullOrWhiteSpace(savedNode.PluginPresetBase64) && presetRead &&
+             !string.Equals(appliedPreset, savedNode.PluginPresetBase64, StringComparison.Ordinal)))
+        {
+            MarkUnstablePluginState(restored);
+            if (SavedPluginDataStillApplied(restored, savedNode))
+            {
+                AppendLog($"{savedNode.Name}: state reads back different bytes; parameter values checked instead.");
+                return;
+            }
+        }
         AppendLog($"{savedNode.Name}: saved VST data did not verify after restore ({savedNode.PluginStateBase64.Length:n0}/{appliedState.Length:n0} state chars, {savedNode.PluginPresetBase64.Length:n0}/{appliedPreset.Length:n0} preset chars, {savedNode.PluginParameterStateBase64.Length:n0} parameter chars).");
     }
 
@@ -7271,7 +7296,14 @@ private void RefreshEndpointButtonSelection()
                 continue;
             }
             if (!ReferenceEquals(GetPendingPluginRestore(node!), restore)) continue;
-            try { ApplySavedPluginNodeData(node!, node!); }
+            try
+            {
+                if (!SavedPluginDataStillApplied(node!) && ReferenceEquals(GetPendingPluginRestore(node!), restore))
+                {
+                    ApplySavedPluginNodeData(node!, node!);
+                    AppendLog($"{node!.Name}: saved VST data re-applied (the plugin changed it after loading).");
+                }
+            }
             finally { if (finalAttempt) EndPluginSavedDataPending(restore); }
         }
     }
@@ -7703,13 +7735,12 @@ private void RefreshEndpointButtonSelection()
             var border = new Border
             {
                 Background = NodeBackgroundBrush(node),
-                BorderBrush = selected
-                    ? (Brush)FindResource("VolumeAccentBrush")
-                    : NodeOutlineBrush(node),
-                BorderThickness = selected ? new Thickness(2) : new Thickness(1),
+                BorderBrush = PluginCardOutline(node, selected),
+                BorderThickness = new Thickness(selected || IsPluginFailed(node) ? 2 : 1),
                 CornerRadius = new CornerRadius(5),
                 Padding = new Thickness(8),
-                Margin = new Thickness(0, 0, 0, 6)
+                Margin = new Thickness(0, 0, 0, 6),
+                Tag = node
             };
             border.MouseLeftButtonDown += (_, _) => SelectPluginNode(node.Slot, rebuildCanvas: true);
             border.ContextMenu = BuildNodeContextMenu(node);
@@ -7723,8 +7754,9 @@ private void RefreshEndpointButtonSelection()
 
             grid.Children.Add(new TextBlock
             {
-                Text = node.Name,
-                Foreground = (Brush)FindResource("TextBrush"),
+                Text = PluginListLabel(node),
+                Foreground = IsPluginFailed(node) ? FailureBrush : (Brush)FindResource("TextBrush"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center
             });
 
@@ -8105,7 +8137,17 @@ private void RefreshEndpointButtonSelection()
         var pendingRestore = GetPendingPluginRestore(node);
         if (pendingRestore is not null)
         {
-            ApplySavedPluginNodeData(node, node);
+            if (SavedPluginDataStillApplied(node))
+            {
+                EndPluginSavedDataPending(pendingRestore);
+                pendingRestore = null;
+            }
+            else if (ReferenceEquals(GetPendingPluginRestore(node), pendingRestore))
+            {
+                ApplySavedPluginNodeData(node, node);
+                AppendLog($"{node.Name}: saved VST data re-applied before opening the editor.");
+            }
+            else pendingRestore = null;
         }
 
         AppendLog(_engine.OpenPluginEditor(node.Slot, $"{node.Name} - ID {node.InstanceId}"));
@@ -8122,9 +8164,15 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        try { ApplySavedPluginNodeData(node, node); }
+        try
+        {
+            if (!SavedPluginDataStillApplied(node) && ReferenceEquals(GetPendingPluginRestore(node), pendingRestore))
+            {
+                ApplySavedPluginNodeData(node, node);
+                AppendLog($"{node.Name}: saved VST data was re-applied after opening the editor.");
+            }
+        }
         finally { EndPluginSavedDataPending(pendingRestore); }
-        AppendLog($"{currentNode.Name}: saved VST data was re-applied after opening the editor.");
     }
 
     private void SetNodePinsCollapsed(PluginNodeSnapshot node, bool collapsed)
@@ -8145,6 +8193,8 @@ private void RefreshEndpointButtonSelection()
 
         EndPluginSavedDataPending(node);
         _settings.PluginNodes.Remove(node);
+        ForgetUnstablePluginState(node.Slot);
+        ForgetPluginFailure(node.Slot);
         _settings.CanvasConnections.RemoveAll(connection => connection.FromSlot == node.Slot || connection.ToSlot == node.Slot);
         foreach (var group in _settings.PluginGroups.ToArray())
         {
@@ -8268,8 +8318,8 @@ private void RefreshEndpointButtonSelection()
             if (border is null) continue;
             var selected = _selectedPluginNodeSlot == slot || _quickGroupNodeSlots.Contains(slot);
             var node = _settings.PluginNodes.FirstOrDefault(candidate => candidate.Slot == slot);
-            border.BorderBrush = selected || node is null ? (Brush)FindResource(selected ? "VolumeAccentBrush" : "RouteAccentBrush") : NodeOutlineBrush(node);
-            border.BorderThickness = new Thickness(selected ? 2 : 1);
+            border.BorderBrush = node is null ? (Brush)FindResource("RouteAccentBrush") : PluginCardOutline(node, selected);
+            border.BorderThickness = new Thickness(selected || (node is not null && IsPluginFailed(node)) ? 2 : 1);
         }
         foreach (var group in _settings.PluginGroups.Where(GroupBelongsToCurrentCanvas))
         {
@@ -8277,10 +8327,8 @@ private void RefreshEndpointButtonSelection()
             var border = elements.OfType<Border>().FirstOrDefault();
             if (border is null) continue;
             var selected = _selectedPluginGroupId == group.Id || _quickGroupIds.Contains(group.Id);
-            border.BorderBrush = selected ? (Brush)FindResource("VolumeAccentBrush") :
-                PluginStateVisuals.Outline(HueStrokeBrush(GroupDisplayHue(group)) ?? (Brush)FindResource("RouteAccentBrush"),
-                    PluginStateVisuals.GroupState(GroupMembers(group).Select(node => (node.Enabled, node.Bypassed))));
-            border.BorderThickness = new Thickness(selected ? 2 : 1);
+            border.BorderBrush = GroupCardOutline(group, selected);
+            border.BorderThickness = new Thickness(selected || GroupMembers(group).Any(IsPluginFailed) ? 2 : 1);
         }
     }
 
@@ -8772,11 +8820,8 @@ private void RefreshEndpointButtonSelection()
             Width = VstGroupWidth,
             Height = height,
             Background = GroupBackgroundBrush(members, HueFillBrush(groupHue)),
-            BorderBrush = selected
-                ? (Brush)FindResource("VolumeAccentBrush")
-                : PluginStateVisuals.Outline(HueStrokeBrush(groupHue) ?? (Brush)FindResource("RouteAccentBrush"),
-                    PluginStateVisuals.GroupState(members.Select(node => (node.Enabled, node.Bypassed)))),
-            BorderThickness = selected ? new Thickness(2) : new Thickness(1),
+            BorderBrush = GroupCardOutline(group, selected),
+            BorderThickness = new Thickness(selected || members.Any(IsPluginFailed) ? 2 : 1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 8, 10, 8),
             Tag = group,
@@ -8808,6 +8853,7 @@ private void RefreshEndpointButtonSelection()
         {
             Text = GroupStatusText(members),
             Style = (Style)FindResource("MutedText"),
+            Foreground = members.Any(IsPluginFailed) ? FailureBrush : (Brush)FindResource("MutedTextBrush"),
             FontSize = 10,
             LineHeight = 11,
             Margin = new Thickness(24, 2, 24, 0),
@@ -9024,8 +9070,10 @@ private void RefreshEndpointButtonSelection()
         return members.Count > 0 && members.All(static node => node.Enabled);
     }
 
-    private static string GroupStatusText(IReadOnlyCollection<PluginNodeSnapshot> members)
+    private string GroupStatusText(IReadOnlyCollection<PluginNodeSnapshot> members)
     {
+        var failures = members.Count(IsPluginFailed);
+        if (failures > 0) return $"{failures} FAILED";
         var label = members.Count == 1 ? "1 VST" : $"{members.Count} VSTs";
         var state = PluginStateVisuals.GroupState(members.Select(node => (node.Enabled, node.Bypassed)));
         return state == PluginVisualState.On ? label : $"{label}\n{PluginStateVisuals.Label(state)}";
@@ -9489,10 +9537,8 @@ private void RefreshEndpointButtonSelection()
                 Width = VstNodeWidth,
                 Height = nodeHeight,
                 Background = NodeBackgroundBrush(node),
-                BorderBrush = selected
-                    ? (Brush)FindResource("VolumeAccentBrush")
-                    : NodeOutlineBrush(node),
-                BorderThickness = selected ? new Thickness(2) : new Thickness(1),
+                BorderBrush = PluginCardOutline(node, selected),
+                BorderThickness = new Thickness(selected || IsPluginFailed(node) ? 2 : 1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 8, 10, 8),
                 Tag = node,
@@ -9519,12 +9565,14 @@ private void RefreshEndpointButtonSelection()
             {
                 Text = NodePinSummaryForCanvas(node),
                 Style = (Style)FindResource("MutedText"),
+                Foreground = IsPluginFailed(node) ? FailureBrush : (Brush)FindResource("MutedTextBrush"),
+                TextWrapping = IsPluginFailed(node) ? TextWrapping.Wrap : TextWrapping.NoWrap,
                 FontSize = 10,
                 LineHeight = 11,
                 Margin = new Thickness(34, 2, 34, 0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 TextAlignment = TextAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = IsPluginFailed(node) ? TextTrimming.None : TextTrimming.CharacterEllipsis
             });
 
             for (var row = 0; row < inputPins.Count; row++)
@@ -9801,6 +9849,8 @@ private void RefreshEndpointButtonSelection()
         {
             _engine.RemovePluginNode(member.Slot);
             EndPluginSavedDataPending(member);
+            ForgetUnstablePluginState(member.Slot);
+            ForgetPluginFailure(member.Slot);
         }
 
         _settings.CanvasConnections.RemoveAll(connection =>
@@ -10198,8 +10248,9 @@ private void RefreshEndpointButtonSelection()
             : $"{node.InputPins} in / {node.OutputPins} out";
     }
 
-    private static string NodePinSummaryForCanvas(PluginNodeSnapshot node)
+    private string NodePinSummaryForCanvas(PluginNodeSnapshot node)
     {
+        if (IsPluginFailed(node)) return "FAILED - Reload";
         return node.SidechainInputPins > 0
             ? $"{node.MainInputPins} in + {node.SidechainInputPins} sc\n{node.OutputPins} out"
             : $"{node.InputPins} in\n{node.OutputPins} out";
@@ -10312,6 +10363,8 @@ private void RefreshEndpointButtonSelection()
         }
 
         _engine.RemovePluginNode(node.Slot);
+        ForgetUnstablePluginState(node.Slot);
+        ForgetPluginFailure(node.Slot);
         node.Slot = replacement.Slot;
         node.PluginFormat = replacement.PluginFormat;
         node.PluginIdentifier = replacement.PluginIdentifier;
@@ -13874,6 +13927,7 @@ private void RefreshEndpointButtonSelection()
         _pluginRestoreTimer.Stop();
         _statusTimer.Stop();
         _saveTimer.Stop();
+        StopPluginStateAutosave();
         _startupDelayTimer?.Stop();
         CloseFloatingPluginPanel();
         SaveSettings();

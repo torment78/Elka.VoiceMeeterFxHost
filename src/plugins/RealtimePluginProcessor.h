@@ -63,6 +63,8 @@ public:
 
     const uint64_t performanceToken = nextPerformanceToken.fetch_add(1, std::memory_order_relaxed);
     virtual bool usesWorkerProcess() const noexcept { return false; }
+    // Control-thread query only; implementations may inspect a worker process.
+    virtual bool hasFailed() const noexcept { return false; }
 
     virtual bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept = 0;
 private:

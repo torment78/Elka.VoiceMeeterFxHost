@@ -1,0 +1,42 @@
+#pragma once
+#include "plugins/RealtimePluginProcessor.h"
+#include "plugins/PluginCapacity.h"
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <mutex>
+#include <windows.h>
+
+namespace elka
+{
+@block_size@
+@hosted_processor@
+
+// Only the sandbox lifecycle is simulated; failure detection and its readiness
+// declaration below are taken directly from SandboxedPluginProcessor.
+struct SandboxFailureProbe final : RealtimePluginProcessor
+{
+    @sandbox_ready@;
+    HANDLE workerProcess = nullptr;
+    bool process(AudioBufferView, const PluginRoutingView&) noexcept override { return false; }
+    @sandbox_failure@
+};
+
+class PluginHostLayer
+{
+public:
+    static constexpr int MaxPluginNodes = HostedPluginCapacity;
+    struct Impl { std::array<std::shared_ptr<RealtimePluginProcessor>, MaxPluginNodes> nodeProcessors; };
+    std::unique_ptr<Impl> impl = std::make_unique<Impl>();
+    bool isPluginNodeFailed(int slot) const noexcept;
+};
+@host_failure@
+}
+
+struct TestHost { elka::PluginHostLayer plugins; };
+std::mutex g_mutex;
+std::unique_ptr<TestHost> g_host;
+@bulk_export@

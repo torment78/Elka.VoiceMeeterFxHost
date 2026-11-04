@@ -23,6 +23,7 @@
 #include <mmreg.h>
 #include <mmdeviceapi.h>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <propsys.h>
 #include <sstream>
@@ -225,6 +226,42 @@ public:
 std::mutex g_mutex;
 std::mutex g_scanMutex;
 std::unique_ptr<NativeHost> g_host;
+
+// Length/Get pairs share one serialization. All access is guarded by g_mutex.
+struct PendingCapture
+{
+    int slot = -1;
+    std::string text;
+
+    void clear() noexcept
+    {
+        slot = -1;
+        std::string{}.swap(text);
+    }
+};
+
+PendingCapture g_pendingState;
+PendingCapture g_pendingPreset;
+PendingCapture g_pendingParameterState;
+
+int keepPendingCapture(PendingCapture& pending, int slot, std::string text)
+{
+    pending.clear();
+    if (text.empty()) return 1;
+    if (text.size() >= static_cast<size_t>(std::numeric_limits<int>::max())) return -1;
+    const auto length = static_cast<int>(text.size()) + 1;
+    pending.text = std::move(text);
+    pending.slot = slot;
+    return length;
+}
+
+bool takePendingCapture(PendingCapture& pending, int slot, std::string& text)
+{
+    const auto matches = pending.slot == slot && !pending.text.empty();
+    if (matches) text = std::move(pending.text);
+    pending.clear();
+    return matches;
+}
 
 struct ScanProgressState
 {
@@ -1798,6 +1835,9 @@ __declspec(dllexport) void __cdecl ElkaFx_Shutdown()
 {
     std::unique_lock scanLock(g_scanMutex, std::try_to_lock);
     std::lock_guard lock(g_mutex);
+    g_pendingState.clear();
+    g_pendingPreset.clear();
+    g_pendingParameterState.clear();
     if (g_host)
     {
         std::wstring ignoredButtonError;
@@ -3353,14 +3393,25 @@ __declspec(dllexport) int __cdecl ElkaFx_ClosePluginEditor(int slot, wchar_t* st
     return 0;
 }
 
+// 0 = complete snapshot, 1 = busy/uninitialized (buffer untouched), -1 = invalid buffer.
+__declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeFailures(int* flags, int count)
+{
+    if (flags == nullptr || count < elka::PluginHostLayer::MaxPluginNodes) return -1;
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_host) return 1;
+    for (int slot = 0; slot < elka::PluginHostLayer::MaxPluginNodes; ++slot)
+        flags[slot] = g_host->plugins.isPluginNodeFailed(slot) ? 1 : 0;
+    return 0;
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeStateLength(int slot)
 {
     try
     {
         std::lock_guard lock(g_mutex);
+        g_pendingState.clear();
         auto& target = host();
-        const auto state = target.plugins.pluginNodeStateBase64(slot);
-        return state.empty() ? 1 : static_cast<int>(state.size()) + 1;
+        return keepPendingCapture(g_pendingState, slot, target.plugins.pluginNodeStateBase64(slot));
     }
     catch (...)
     {
@@ -3373,8 +3424,14 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeState(int slot, wchar_t* b
     try
     {
         std::lock_guard lock(g_mutex);
+        std::string state;
+        if (takePendingCapture(g_pendingState, slot, state))
+        {
+            writeWide(widenUtf8(state), buffer, bufferChars);
+            return 0;
+        }
         auto& target = host();
-        const auto state = target.plugins.pluginNodeStateBase64(slot);
+        state = target.plugins.pluginNodeStateBase64(slot);
         writeWide(widenUtf8(state), buffer, bufferChars);
         return state.empty() && !target.plugins.lastError().empty() ? -1 : 0;
     }
@@ -3404,9 +3461,9 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodePresetLength(int slot)
     try
     {
         std::lock_guard lock(g_mutex);
+        g_pendingPreset.clear();
         auto& target = host();
-        const auto preset = target.plugins.pluginNodePresetBase64(slot);
-        return preset.empty() ? 1 : static_cast<int>(preset.size()) + 1;
+        return keepPendingCapture(g_pendingPreset, slot, target.plugins.pluginNodePresetBase64(slot));
     }
     catch (...)
     {
@@ -3419,8 +3476,14 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodePreset(int slot, wchar_t* 
     try
     {
         std::lock_guard lock(g_mutex);
+        std::string preset;
+        if (takePendingCapture(g_pendingPreset, slot, preset))
+        {
+            writeWide(widenUtf8(preset), buffer, bufferChars);
+            return 0;
+        }
         auto& target = host();
-        const auto preset = target.plugins.pluginNodePresetBase64(slot);
+        preset = target.plugins.pluginNodePresetBase64(slot);
         writeWide(widenUtf8(preset), buffer, bufferChars);
         return preset.empty() && !target.plugins.lastError().empty() ? -1 : 0;
     }
@@ -3450,9 +3513,9 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeParameterStateLength(int s
     try
     {
         std::lock_guard lock(g_mutex);
+        g_pendingParameterState.clear();
         auto& target = host();
-        const auto parameterState = target.plugins.pluginNodeParameterStateBase64(slot);
-        return parameterState.empty() ? 1 : static_cast<int>(parameterState.size()) + 1;
+        return keepPendingCapture(g_pendingParameterState, slot, target.plugins.pluginNodeParameterStateBase64(slot));
     }
     catch (...)
     {
@@ -3465,8 +3528,14 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeParameterState(int slot, w
     try
     {
         std::lock_guard lock(g_mutex);
+        std::string parameterState;
+        if (takePendingCapture(g_pendingParameterState, slot, parameterState))
+        {
+            writeWide(widenUtf8(parameterState), buffer, bufferChars);
+            return 0;
+        }
         auto& target = host();
-        const auto parameterState = target.plugins.pluginNodeParameterStateBase64(slot);
+        parameterState = target.plugins.pluginNodeParameterStateBase64(slot);
         writeWide(widenUtf8(parameterState), buffer, bufferChars);
         return parameterState.empty() && !target.plugins.lastError().empty() ? -1 : 0;
     }
@@ -3554,6 +3623,9 @@ __declspec(dllexport) int __cdecl ElkaFx_SetPluginNodeControl(
 __declspec(dllexport) int __cdecl ElkaFx_RemovePluginNode(int slot)
 {
     std::lock_guard lock(g_mutex);
+    if (g_pendingState.slot == slot) g_pendingState.clear();
+    if (g_pendingPreset.slot == slot) g_pendingPreset.clear();
+    if (g_pendingParameterState.slot == slot) g_pendingParameterState.clear();
     auto& target = host();
     target.engine.clearPluginSlot(slot);
     Sleep(25);

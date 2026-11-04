@@ -2295,7 +2295,7 @@ public:
 
     bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept override
     {
-        if (failed)
+        if (failed.load(std::memory_order_relaxed))
             return renderPassthrough(routing, buffer.samplesPerFrame);
 
         if (plugin == nullptr || buffer.write == nullptr || buffer.samplesPerFrame <= 0)
@@ -2338,7 +2338,7 @@ public:
 
         if (!processPluginBlockSafely(*plugin, block, midi))
         {
-            failed = true;
+            failed.store(true, std::memory_order_relaxed);
             return renderPassthrough(routing, buffer.samplesPerFrame);
         }
 
@@ -2378,7 +2378,7 @@ public:
         return true;
     }
 
-    bool hasFailed() const noexcept { return failed; }
+    bool hasFailed() const noexcept override { return failed.load(std::memory_order_relaxed); }
     juce::AudioPluginInstance* pluginInstance() noexcept { return plugin.get(); }
     int channelCount() const noexcept { return processChannels; }
 
@@ -2449,7 +2449,7 @@ private:
     int outputPinCount = 2;
     int processChannels = 2;
     int maxBlockSize = 4096;
-    bool failed = false;
+    std::atomic<bool> failed { false };
 };
 
 std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
@@ -2726,7 +2726,7 @@ public:
 
     bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept override
     {
-        if (!ready || header == nullptr || audioData == nullptr || requestEvent == nullptr || responseEvent == nullptr)
+        if (!ready.load(std::memory_order_relaxed) || header == nullptr || audioData == nullptr || requestEvent == nullptr || responseEvent == nullptr)
             return bypass(buffer, routing);
 
         if (buffer.samplesPerFrame <= 0 || buffer.samplesPerFrame > maxBlockSize)
@@ -2816,7 +2816,13 @@ public:
         return true;
     }
 
-    bool isReady() const noexcept { return ready; }
+    bool isReady() const noexcept { return ready.load(std::memory_order_relaxed); }
+
+    bool hasFailed() const noexcept override
+    {
+        return !ready.load(std::memory_order_relaxed) ||
+            (workerProcess != nullptr && WaitForSingleObject(workerProcess, 0) == WAIT_OBJECT_0);
+    }
 
     bool isEditorOpen() const noexcept
     {
@@ -2827,7 +2833,7 @@ public:
     bool openEditor(const std::string& windowTitle, std::string& error) noexcept
     {
         error.clear();
-        if (!ready || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
+        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
         {
             error = "Sandboxed plugin worker is not ready.";
             return false;
@@ -2875,7 +2881,7 @@ public:
     bool closeEditor(std::string& error) noexcept
     {
         error.clear();
-        if (!ready || header == nullptr || controlEvent == nullptr || responseEvent == nullptr)
+        if (!ready.load(std::memory_order_relaxed) || header == nullptr || controlEvent == nullptr || responseEvent == nullptr)
         {
             error = "Sandboxed plugin worker is not ready.";
             return false;
@@ -2975,7 +2981,7 @@ private:
     {
         value.clear();
         error.clear();
-        if (!ready || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
+        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
         {
             error = std::string("Sandboxed plugin worker is not ready for ") + label + " capture.";
             return false;
@@ -3026,7 +3032,7 @@ private:
         if (value.empty())
             return true;
 
-        if (!ready || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
+        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
         {
             error = std::string("Sandboxed plugin worker is not ready for ") + label + " restore.";
             return false;
@@ -3186,12 +3192,12 @@ private:
             return;
         }
 
-        ready = true;
+        ready.store(true, std::memory_order_relaxed);
     }
 
     void stop() noexcept
     {
-        ready = false;
+        ready.store(false, std::memory_order_relaxed);
         if (shutdownEvent != nullptr)
             SetEvent(shutdownEvent);
 
@@ -3383,7 +3389,7 @@ private:
     int processChannels = 2;
     int maxBlockSize = 512;
     DWORD processTimeoutMs = 8;
-    bool ready = false;
+    std::atomic<bool> ready { false };
 };
 
 struct WorkerPluginSession
@@ -5631,6 +5637,18 @@ bool PluginHostLayer::isPluginNodePowered(int slot) const noexcept
 
     return impl->nodeSummaries[static_cast<size_t>(slot)].powered;
 #else
+    return false;
+#endif
+}
+
+bool PluginHostLayer::isPluginNodeFailed(int slot) const noexcept
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes) return false;
+    const auto* processor = impl->nodeProcessors[static_cast<size_t>(slot)].get();
+    return processor != nullptr && processor->hasFailed();
+#else
+    (void) slot;
     return false;
 #endif
 }

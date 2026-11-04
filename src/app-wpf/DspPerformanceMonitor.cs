@@ -26,7 +26,7 @@ internal sealed class DspPerformanceMonitor : IDisposable
     {
         try
         {
-            var tokens = new ulong[16];
+            var tokens = new ulong[PluginCapacity.Slots];
             if (ElkaFx_GetDspPluginTokens(tokens, tokens.Length) < 0) return;
             var identities = nodes.Where(node => node.Slot >= 0 && node.Slot < tokens.Length &&
                 tokens[node.Slot] != 0 && !node.MissingPlugin)
@@ -42,7 +42,7 @@ internal sealed class DspPerformanceMonitor : IDisposable
     private void ReadLoop()
     {
         var history = new DspPerformanceHistory();
-        var rows = new DspNativeTiming[68];
+        var rows = new DspNativeTiming[PluginCapacity.DspRows];
         var events = new DspNativeOverrun[1024];
         ulong frequency = (ulong)Stopwatch.Frequency, dropped = 0, skipped = 0;
         var enabled = false;

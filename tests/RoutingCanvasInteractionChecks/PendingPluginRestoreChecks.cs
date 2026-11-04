@@ -100,7 +100,7 @@ public partial class MainWindow
             Assert(fake.Writes.Count == 0, "User control during editor delay cancels its trailing reapply");
 
             MarkPluginSavedDataPending(node);
-            fake.BeforeReadState = () => EndPluginSavedDataPending(node);
+            fake.BeforeCapture = () => EndPluginSavedDataPending(node);
             VerifyRestoredPluginState(node, node);
             Assert(fake.Writes.Count == 0 && !HasPendingSavedPluginData(node),
                 "A canceled startup window cannot reapply after a reentrant state read");
@@ -171,15 +171,19 @@ public partial class MainWindow
         internal string State = "initial-live";
         internal List<string> Writes { get; } = [];
         internal Action? BeforeControl;
-        internal Action? BeforeReadState;
+        internal Action? BeforeCapture;
         internal bool ThrowOnWrite;
+        private void BeforeRead()
+        {
+            var action = BeforeCapture; BeforeCapture = null; action?.Invoke();
+        }
         public bool TryGetPluginNodeState(int slot, out string state)
         {
-            var action = BeforeReadState; BeforeReadState = null; action?.Invoke();
+            BeforeRead();
             state = State; return true;
         }
-        public bool TryGetPluginNodePreset(int slot, out string state) { state = "live-preset"; return true; }
-        public bool TryGetPluginNodeParameterState(int slot, out string state) { state = "live-parameters"; return true; }
+        public bool TryGetPluginNodePreset(int slot, out string state) { BeforeRead(); state = "live-preset"; return true; }
+        public bool TryGetPluginNodeParameterState(int slot, out string state) { BeforeRead(); state = "live-parameters"; return true; }
         private void Write(string kind)
         {
             if (ThrowOnWrite) throw new InvalidOperationException("Simulated plugin state failure");

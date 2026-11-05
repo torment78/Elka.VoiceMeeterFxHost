@@ -174,6 +174,17 @@ public partial class MainWindow
         floatingPanel.Margin = new Thickness(0, 0, 0, 18);
         floatingPanel.Click += (_, _) => { ShowFloatingPluginPanel(); _floatingPluginPanel?.ShowPicker(); };
         root.Children.Add(floatingPanel);
+        RollbackPanel? rollbackView = null;
+        var rollback = CreateSaveManagerButton("Rollback");
+        rollback.Margin = new Thickness(0, 0, 0, 18);
+        rollback.Click += async (_, _) =>
+        {
+            rollbackView = CreateRollbackPanel(window, () => window.Content = root);
+            window.Content = rollbackView;
+            await rollbackView.LoadVersionsAsync();
+        };
+        root.Children.Add(rollback);
+        window.Closed += (_, _) => rollbackView?.Dispose();
         var close = CreateSaveManagerButton("Close");
         close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Click += (_, _) => window.Close();

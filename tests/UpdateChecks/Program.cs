@@ -66,6 +66,23 @@ Check(result.Stable is null && result.Beta is null, "installing the stable mirro
 result = SelectUpdates([stableMirror, Release("0.8.3.1", true)], Version("0.8.3.0"));
 Check(result.Beta?.Version.ToString() == "0.8.3.1", "later development build supersedes the signed stable mirror");
 
+var rollback = SelectRollbackVersions([Release("0.8.3.16", true), Release("0.8.3.16.0", true),
+    Release("0.8.3.17", true), Release("0.8.3.2", true), Release("0.8.3.10", true),
+    Release("0.8.3.0"), stableMirror, Release("0.8.3.0.0"), Release("0.8.3.10", true),
+    Release("0.7.6.5.3", true), Release("0.8.2.0"), draft, missing, malicious, wrongRepo, unpublished], Version("0.8.3.16"));
+Check(rollback.Count == 6, "rollback excludes current, newer, duplicate and invalid installers");
+Check(rollback.Where(r => r.Channel == UpdateChannel.Beta).Select(r => r.Version.ToString())
+    .SequenceEqual(new[] { "0.8.3.10", "0.8.3.2", "0.8.3.0", "0.7.6.5.3" }),
+    "dev rollback is newest-first numerically and retains older five-part releases");
+Check(rollback.Where(r => r.Channel == UpdateChannel.Stable).Select(r => r.Version.ToString())
+    .SequenceEqual(new[] { "0.8.3.0", "0.8.2.0" }), "signed rollback keeps stable releases separate");
+Check(rollback.Any(r => r.Channel == UpdateChannel.Beta && r.DownloadUri.AbsolutePath.Contains("%2Bdev/")),
+    "rollback accepts a signed stable mirror in the dev channel");
+Check(SelectRollbackVersions([Release("0.8.3.0"), stableMirror, Release("0.8.3.1", true)], Version("0.8.3.0.0")).Count == 0,
+    "rollback never offers current version or its mirror");
+Check(SelectRollbackVersions([Release("0.8.90.1", true)], Version("0.8.3.16")).Count == 0,
+    "higher experimental versions cannot appear as a rollback");
+
 using var pagedClient = new HttpClient(new FakeHandler(request =>
 {
     var first = request.RequestUri!.Query.EndsWith("&page=1", StringComparison.Ordinal);
@@ -74,6 +91,9 @@ using var pagedClient = new HttpClient(new FakeHandler(request =>
 }));
 result = await new ApplicationUpdates(pagedClient).CheckAsync("0.8.0", CancellationToken.None);
 Check(result.Stable?.Version.ToString() == "0.9.0", "checks later API pages");
+rollback = await new ApplicationUpdates(pagedClient).GetRollbackVersionsAsync("1.0.0", CancellationToken.None);
+Check(rollback.Select(r => r.Version.ToString()).SequenceEqual(new[] { "0.9.0", "0.7.0" }),
+    "rollback reads all release pages and deduplicates versions");
 
 var root = Path.Combine(Directory.GetCurrentDirectory(), "artifacts", "update-tests", Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
@@ -103,6 +123,17 @@ try
 catch (OperationCanceledException) { Check(true, "download respects cancellation"); }
 Check(Directory.GetFiles(root, "*.download", SearchOption.AllDirectories).Length == 0, "failed and canceled downloads leave no partial files");
 Check(Directory.GetFiles(root, "*.exe", SearchOption.AllDirectories).Length == 1, "only verified successful download becomes an executable");
+
+if (args.Contains("--live-rollback"))
+{
+    var older = await new ApplicationUpdates().GetRollbackVersionsAsync("0.8.3.16", CancellationToken.None);
+    Check(older.All(r => r.Version.CompareTo(Version("0.8.3.16")) < 0), "live rollback excludes current and newer versions");
+    foreach (var channel in new[] { UpdateChannel.Stable, UpdateChannel.Beta })
+    {
+        var choices = older.Where(r => r.Channel == channel).ToArray();
+        Check(choices.Length > 0, $"live {channel}: {choices.Length} older installers; latest {choices[0].Version} (metadata only)");
+    }
+}
 
 if (args.Contains("--live") || args.Contains("--live-stable-mirror"))
 {

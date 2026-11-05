@@ -185,18 +185,7 @@ public partial class MainWindow
             });
             var installer = await _applicationUpdates.DownloadAsync(update,
                 System.IO.Path.Combine(AppDataPaths.LocalRoot, "Updates"), progress, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!await SaveCurrentLayoutAsync())
-                throw new IOException("The current layout could not be saved. The installer was not opened.");
-            cancellationToken.ThrowIfCancellationRequested();
-            using var process = Process.Start(new ProcessStartInfo(installer)
-            {
-                UseShellExecute = true,
-                Verb = "runas",
-                WorkingDirectory = System.IO.Path.GetDirectoryName(installer)
-            }) ?? throw new IOException("Windows could not open the installer.");
-            menu.Close();
-            ShutdownFromTray();
+            await LaunchDownloadedInstallerAsync(installer, menu, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -222,5 +211,24 @@ public partial class MainWindow
             _updateInstallInProgress = false;
             UpdateMenuChanged?.Invoke();
         }
+    }
+
+    private async Task LaunchDownloadedInstallerAsync(string installer, Window menu, CancellationToken token,
+        ApplicationUpdate? rollback = null)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!await SaveCurrentLayoutAsync())
+            throw new IOException("The current layout could not be saved. The installer was not opened.");
+        token.ThrowIfCancellationRequested();
+        if (rollback is not null) BackupSettingsBeforeRollback(rollback);
+        token.ThrowIfCancellationRequested();
+        using var process = Process.Start(new ProcessStartInfo(installer)
+        {
+            UseShellExecute = true,
+            Verb = "runas",
+            WorkingDirectory = Path.GetDirectoryName(installer)
+        }) ?? throw new IOException("Windows could not open the installer.");
+        menu.Close();
+        ShutdownFromTray();
     }
 }

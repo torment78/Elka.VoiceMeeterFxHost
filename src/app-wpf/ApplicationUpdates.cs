@@ -34,6 +34,19 @@ internal sealed class ApplicationUpdates
         if (!ReleaseVersion.TryParse(currentVersion, out var current))
             throw new InvalidOperationException("The running application version could not be read.");
 
+        return SelectUpdates(await ReadReleasesAsync(cancellationToken).ConfigureAwait(false), current);
+    }
+
+    public async Task<IReadOnlyList<ApplicationUpdate>> GetRollbackVersionsAsync(string currentVersion, CancellationToken cancellationToken)
+    {
+        if (!ReleaseVersion.TryParse(currentVersion, out var current))
+            throw new InvalidOperationException("The running application version could not be read.");
+
+        return SelectRollbackVersions(await ReadReleasesAsync(cancellationToken).ConfigureAwait(false), current);
+    }
+
+    private async Task<List<GitHubRelease>> ReadReleasesAsync(CancellationToken cancellationToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var releases = new List<GitHubRelease>();
@@ -50,7 +63,7 @@ internal sealed class ApplicationUpdates
                 ?? throw new InvalidDataException("GitHub returned an empty release response.");
             releases.AddRange(batch);
             if (batch.Count < 100)
-                return SelectUpdates(releases, current);
+                return releases;
         }
         throw new InvalidDataException("GitHub returned too many release pages to finish the update check.");
     }
@@ -59,11 +72,43 @@ internal sealed class ApplicationUpdates
     {
         ApplicationUpdate? stable = null;
         ApplicationUpdate? beta = null;
-        foreach (var release in releases)
+        foreach (var update in SelectInstallers(releases))
         {
-            if (release.Draft || !ReleaseVersion.TryParse(release.Tag, out var version) || version.CompareTo(current) <= 0)
+            if (update.Version.CompareTo(current) <= 0)
                 continue;
 
+            if (update.Channel == UpdateChannel.Beta)
+            {
+                if (beta is null || update.Version.CompareTo(beta.Version) > 0)
+                    beta = update;
+            }
+            else if (stable is null || update.Version.CompareTo(stable.Version) > 0)
+            {
+                stable = update;
+            }
+        }
+        return new(stable, beta);
+    }
+
+    internal static IReadOnlyList<ApplicationUpdate> SelectRollbackVersions(IEnumerable<GitHubRelease> releases, ReleaseVersion current)
+    {
+        var result = new List<ApplicationUpdate>();
+        foreach (var installer in SelectInstallers(releases).Where(i => i.Version.CompareTo(current) < 0)
+                     .OrderByDescending(i => i.Version))
+        {
+            // Metadata suffixes and trailing zeros do not make a different installed version.
+            if (!result.Any(i => i.Channel == installer.Channel && i.Version.CompareTo(installer.Version) == 0))
+                result.Add(installer);
+        }
+        return result;
+    }
+
+    private static IEnumerable<ApplicationUpdate> SelectInstallers(IEnumerable<GitHubRelease> releases)
+    {
+        foreach (var release in releases)
+        {
+            if (release.Draft || !ReleaseVersion.TryParse(release.Tag, out var version))
+                continue;
             var expectedName = $"ElkaVoiceMeeterFxHostSetup-v{version}.exe";
             var asset = release.Assets?.FirstOrDefault(asset =>
                 string.Equals(asset.Name, expectedName, StringComparison.OrdinalIgnoreCase) &&
@@ -72,19 +117,9 @@ internal sealed class ApplicationUpdates
                 !IsInstallerUri(uri, release.Tag!, expectedName))
                 continue;
 
-            var update = new ApplicationUpdate(release.Prerelease ? UpdateChannel.Beta : UpdateChannel.Stable,
+            yield return new ApplicationUpdate(release.Prerelease ? UpdateChannel.Beta : UpdateChannel.Stable,
                 version, expectedName, uri, asset.Size, asset.Digest);
-            if (release.Prerelease)
-            {
-                if (beta is null || version.CompareTo(beta.Version) > 0)
-                    beta = update;
-            }
-            else if (stable is null || version.CompareTo(stable.Version) > 0)
-            {
-                stable = update;
-            }
         }
-        return new(stable, beta);
     }
 
     private static bool IsInstallerUri(Uri uri, string tag, string name) =>

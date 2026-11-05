@@ -148,6 +148,8 @@ public partial class MainWindow
             {
                 Assert(Descendants(settings).OfType<Button>().Any(b => b.Content as string == "Node VU Meters"),
                     "Settings retains the VU preference");
+                Assert(Descendants(settings).OfType<Button>().Any(b => b.Content as string == "Rollback"),
+                    "Settings includes rollback navigation");
                 Assert(!Descendants(settings).OfType<ComboBox>().Any(), "hotkey assignments are not embedded in Settings");
                 var hotkeys = Descendants(settings).OfType<Button>().Single(b => b.Content as string == "Hotkey");
                 InspectDialog(() => hotkeys.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)), () => _editorHotkeysWindow, window =>

@@ -2099,6 +2099,15 @@ __declspec(dllexport) void __cdecl ElkaFx_SetChannelSettings(
     target.engine.setChannelGainPercent(streamKind, channel, gainPercent);
 }
 
+__declspec(dllexport) void __cdecl ElkaFx_SetOutputBoostMilliDb(int stream, int channel, int milliDb)
+{
+    if (stream < 0 || stream > 1 || channel < 0 || channel >= 64)
+        return;
+    std::lock_guard lock(g_mutex);
+    host().engine.setOutputBoostMilliDb(
+        stream == 0 ? CallbackStreamKind::InputInsert : CallbackStreamKind::OutputInsert, channel, milliDb);
+}
+
 __declspec(dllexport) void __cdecl ElkaFx_SetPluginGraphEnabled(int kind, int channel, int enabled)
 {
     std::lock_guard lock(g_mutex);

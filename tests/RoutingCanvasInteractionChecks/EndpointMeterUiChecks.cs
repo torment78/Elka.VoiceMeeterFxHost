@@ -84,8 +84,8 @@ public partial class MainWindow
         var elements = _endpointVisualElements[endpoint.Key(CallbackMode.Input)].ToArray();
         double height = elements.OfType<Border>().Max(b => b.Height) + 40;
         var canvas = new Canvas { Width = 300, Height = height, Background = (Brush)FindResource("FieldBrush") };
-        double left = elements.OfType<Border>().Min(Canvas.GetLeft);
-        double right = elements.OfType<Border>().Max(Canvas.GetLeft);
+        double left = elements.OfType<Border>().Where(b => b.Tag is EndpointDragInfo).Min(Canvas.GetLeft);
+        double right = elements.OfType<Border>().Where(b => b.Tag is EndpointDragInfo).Max(Canvas.GetLeft);
         double top = elements.OfType<Border>().Min(Canvas.GetTop);
         var positions = elements.Select(e => (Element: e, X: Canvas.GetLeft(e), Y: Canvas.GetTop(e))).ToArray();
         foreach (var item in positions)

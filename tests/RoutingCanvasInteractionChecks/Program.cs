@@ -64,8 +64,10 @@ internal static class CanvasInteractionChecks
             window.Top = -20000;
             window.Show();
             if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
+            if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             window.CheckCanvasInteraction();
             window.CheckEndpointMeterUi();
+            window.CheckOutputBoostUi();
             window.CheckEndpointPeakUi();
             window.CheckHotkeyActions();
             window.CheckEndpointHotkeys();

@@ -171,6 +171,12 @@ internal sealed class ChannelSettingsSnapshot
     public bool[] Enabled { get; set; } = [];
     public double[] DelayMilliseconds { get; set; } = [];
     public double[] VolumePercent { get; set; } = [];
+    private double _outputBoostDb;
+    public double OutputBoostDb
+    {
+        get => _outputBoostDb;
+        set => _outputBoostDb = EndpointChannelSettings.ClampOutputBoost(value);
+    }
     public bool[] RouteEnabled { get; set; } = [];
     public bool[] RouteMuteNormal { get; set; } = [];
     public bool PostInsertSend { get; set; }
@@ -223,6 +229,13 @@ internal sealed class EndpointChannelSettings
     public bool[] Enabled { get; }
     public double[] DelayMilliseconds { get; }
     public double[] VolumePercent { get; }
+    private double _outputBoostDb;
+    public double OutputBoostDb
+    {
+        get => _outputBoostDb;
+        set => _outputBoostDb = ClampOutputBoost(value);
+    }
+    public static double ClampOutputBoost(double value) => double.IsFinite(value) ? Math.Clamp(value, -24.0, 24.0) : 0.0;
     public bool[] RouteEnabled { get; }
     public bool[] RouteMuteNormal { get; }
     public List<RouteDestinationSnapshot>[] RouteDestinations { get; }
@@ -253,6 +266,7 @@ internal sealed class EndpointChannelSettings
             Enabled = [.. Enabled],
             DelayMilliseconds = [.. DelayMilliseconds],
             VolumePercent = [.. VolumePercent],
+            OutputBoostDb = OutputBoostDb,
             RouteEnabled = [.. RouteEnabled],
             RouteMuteNormal = [.. RouteMuteNormal],
             PostInsertSend = PostInsertSend,
@@ -265,6 +279,7 @@ internal sealed class EndpointChannelSettings
 
     public void ApplySnapshot(ChannelSettingsSnapshot snapshot)
     {
+        OutputBoostDb = snapshot.OutputBoostDb;
         for (var offset = 0; offset < Endpoint.ChannelCount; offset++)
         {
             Enabled[offset] = offset < snapshot.Enabled.Length && snapshot.Enabled[offset];
@@ -871,6 +886,7 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
     private string _lastDirectRouteSignature = string.Empty;
     private string _lastPluginPassthroughRouteSignature = string.Empty;
     private readonly Dictionary<int, bool> _inputCallbackSuppressionCache = [];
+    private readonly Dictionary<(int Stream, int Channel), int> _outputBoostCache = [];
     private TimeSpan _lastProcessCpuTime;
     private long _lastProcessCpuTimestamp;
     private double _processCpuPercent;
@@ -1577,6 +1593,22 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 
     public bool IsInsertAsioRunning => _attached && ElkaFx_IsInsertAsioRunning() != 0;
     public bool IsInsertAsioOpen => _attached && ElkaFx_IsInsertAsioOpen() != 0;
+
+    public void ApplyOutputBoosts(IReadOnlyDictionary<(int Stream, int Channel), int> desired)
+    {
+        if (!_attached) return;
+        foreach (var key in _outputBoostCache.Keys.Where(key => !desired.ContainsKey(key)).ToArray())
+        {
+            ElkaFx_SetOutputBoostMilliDb(key.Stream, key.Channel, 0);
+            _outputBoostCache.Remove(key);
+        }
+        foreach (var (key, value) in desired)
+        {
+            if (_outputBoostCache.TryGetValue(key, out int previous) && previous == value) continue;
+            ElkaFx_SetOutputBoostMilliDb(key.Stream, key.Channel, value);
+            _outputBoostCache[key] = value;
+        }
+    }
 
     public void ApplyChannelSettings(EndpointChannelSettings settings)
     {
@@ -2518,6 +2550,9 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_SetTargetRange(int kind, int startChannel, int channelCount);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void ElkaFx_SetOutputBoostMilliDb(int stream, int channel, int milliDb);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void ElkaFx_SetChannelSettings(

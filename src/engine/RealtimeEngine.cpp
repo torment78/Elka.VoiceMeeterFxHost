@@ -305,6 +305,8 @@ RealtimeEngine::RealtimeEngine() noexcept
             positions[channel] = 0;
         for (auto& gains : smoothedChannelGains)
             gains[channel] = 1.0f;
+        for (auto& gains : smoothedOutputBoost)
+            gains[channel] = 1.0f;
         for (auto& delays : smoothedDelaySamples)
             delays[channel] = 0;
         for (auto& initialized : smoothedDelayInitialized)
@@ -433,6 +435,34 @@ int RealtimeEngine::getChannelGainPercent(CallbackStreamKind kind, int channel) 
         return 100;
 
     return gainBankFor(kind)[channel].load(std::memory_order_acquire);
+}
+
+void RealtimeEngine::setOutputBoostMilliDb(CallbackStreamKind kind, int channel, int milliDb) noexcept
+{
+    if ((kind != CallbackStreamKind::InputInsert && kind != CallbackStreamKind::OutputInsert) ||
+        channel < 0 || channel >= MaxChannels)
+        return;
+
+    const size_t stream = kind == CallbackStreamKind::InputInsert ? 0 : 1;
+    auto& bank = outputBoostMilliDb[stream];
+    const int value = std::clamp(milliDb, -24000, 24000);
+    if (bank[channel].exchange(value, std::memory_order_relaxed) == value)
+        return;
+
+    int count = 0;
+    for (const auto& gain : bank)
+        if (gain.load(std::memory_order_relaxed) != 0) ++count;
+    activeBoostChannelCounts[stream].store(count, std::memory_order_release);
+    if (stream == 0)
+        activeBoostChannelCounts[3].store(count, std::memory_order_release);
+}
+
+int RealtimeEngine::getOutputBoostMilliDb(CallbackStreamKind kind, int channel) const noexcept
+{
+    if ((kind != CallbackStreamKind::InputInsert && kind != CallbackStreamKind::OutputInsert) ||
+        channel < 0 || channel >= MaxChannels)
+        return 0;
+    return outputBoostMilliDb[kind == CallbackStreamKind::InputInsert ? 0 : 1][channel].load(std::memory_order_relaxed);
 }
 
 void RealtimeEngine::setChannelDelayMilliseconds(CallbackStreamKind kind, int channel, int milliseconds) noexcept
@@ -1515,6 +1545,7 @@ void RealtimeEngine::processInternal(
 
     applyDirectRoutes(buffer, kind, sourceReadOffset, enableInputOutputRoutes, suppressInputCallbackChannels, pluginOutputWritten);
     applyConfiguredGains(buffer, kind, delayStream, suppressInputCallbackChannels);
+    applyOutputBoost(buffer, kind, delayStream, suppressInputCallbackChannels);
     if (!pluginProcessingSkipped)
         applyPluginGraphGate(buffer, kind, suppressInputCallbackChannels, pluginOutputWritten);
     if (RealtimeAudioProbeDiagnosticsEnabled)
@@ -1769,6 +1800,8 @@ bool RealtimeEngine::hasProcessingWork(
 
     if (activeDelayChannelCounts[static_cast<size_t>(delayIndex)].load(std::memory_order_relaxed) > 0 ||
         activeGainChannelCounts[static_cast<size_t>(delayIndex)].load(std::memory_order_relaxed) > 0 ||
+        activeBoostChannelCounts[static_cast<size_t>(delayIndex)].load(std::memory_order_acquire) > 0 ||
+        outputBoostNeedsUnityRamp[static_cast<size_t>(delayIndex)] ||
         activePluginSlotCounts[static_cast<size_t>(pluginStreamIndex)].load(std::memory_order_relaxed) > 0 ||
         activePluginGraphChannelCounts[static_cast<size_t>(pluginStreamIndex)].load(std::memory_order_relaxed) > 0 ||
         pluginPassthroughBankFor(kind).routeCount.load(std::memory_order_acquire) > 0)
@@ -3439,6 +3472,49 @@ void RealtimeEngine::applyConfiguredGains(
 
         currentGain = targetGain;
     }
+}
+
+void RealtimeEngine::applyOutputBoost(
+    AudioBufferView buffer, CallbackStreamKind kind, int streamIndex, bool suppressInputCallbackChannels) noexcept
+{
+    if (kind == CallbackStreamKind::Main || buffer.samplesPerFrame <= 0)
+        return;
+    streamIndex = std::clamp(streamIndex, 0, DelayStreamCount - 1);
+    if (activeBoostChannelCounts[streamIndex].load(std::memory_order_acquire) == 0 &&
+        !outputBoostNeedsUnityRamp[streamIndex])
+        return;
+
+    const auto& bank = outputBoostMilliDb[kind == CallbackStreamKind::InputInsert ? 0 : 1];
+    auto& smoothed = smoothedOutputBoost[streamIndex];
+    const int channels = std::clamp(std::min(buffer.outputChannels,
+        buffer.inputChannels - getReadOffset(buffer, kind)), 0, MaxChannels);
+    bool needsUnityRamp = false;
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        auto& current = smoothed[ch];
+        if (isInputCallbackSuppressed(suppressInputCallbackChannels, ch) || buffer.write[ch] == nullptr)
+        {
+            current = 1.0f;
+            continue;
+        }
+        const int milliDb = bank[ch].load(std::memory_order_relaxed);
+        if (milliDb == 0 && current == 1.0f)
+            continue;
+
+        const float target = milliDb == 0 ? 1.0f : std::pow(10.0f, static_cast<float>(milliDb) / 20000.0f);
+        const float step = (target - current) / static_cast<float>(buffer.samplesPerFrame);
+        float gain = current;
+        for (int sample = 0; sample < buffer.samplesPerFrame; ++sample)
+        {
+            gain += step;
+            buffer.write[ch][sample] *= gain;
+        }
+        current = target;
+        needsUnityRamp |= target != 1.0f;
+    }
+    for (int ch = channels; ch < MaxChannels; ++ch)
+        smoothed[ch] = 1.0f;
+    outputBoostNeedsUnityRamp[streamIndex] = needsUnityRamp;
 }
 
 void RealtimeEngine::captureProbeRead(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept

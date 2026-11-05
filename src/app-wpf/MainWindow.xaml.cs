@@ -1845,6 +1845,7 @@ public partial class MainWindow : Window
 
     private void VstCanvasScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
+        if (e.OriginalSource is OutputBoostBadge) return;
         e.Handled = RoutingCanvasViewport.ScrollWheel(VstCanvasScrollViewer, MainPageScrollViewer,
             e.Delta, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
     }
@@ -4134,6 +4135,7 @@ public partial class MainWindow : Window
     {
         if (_startupEngineDelayActive)
         {
+            SyncOutputBoosts(CallbackMode.None);
             _engine.ForceDisconnectRealtimeCallback();
             return;
         }
@@ -4143,11 +4145,13 @@ public partial class MainWindow : Window
 
         if (IsInsertAsioPatchExclusiveActive())
         {
+            SyncOutputBoosts(CallbackMode.Input);
             _engine.ForceDisconnectRealtimeCallback();
             return;
         }
 
         var activeMode = ComputeActiveCallbackMode();
+        SyncOutputBoosts(activeMode);
         _engine.SetRequestedMode(activeMode);
     }
 
@@ -8591,6 +8595,11 @@ private void RefreshEndpointButtonSelection()
         endpointTitle.Padding = new Thickness(0, 0, textPaddingRight, 0);
         endpointTitle.TextAlignment = textAlignment;
         endpointStack.Children.Add(endpointTitle);
+        if (outputSide && !patchBypassed && EndpointOutputBoostStream(mode) >= 0)
+        {
+            endpointTitle.Margin = new Thickness(textLeft, 2, textRight, 0);
+            DrawOutputBoostBadge(endpoint, mode, x, y, hueStroke, endpointElements);
+        }
         if (patchBypassed) endpointStack.Children.Add(new TextBlock
         {
             Text = "Bus only",

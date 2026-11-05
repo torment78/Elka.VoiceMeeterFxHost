@@ -8,6 +8,8 @@ using Elka.VoiceMeeterFxHost.App;
 try
 {
     if (Native.IsRemoteReady() != 0) throw new Exception("Remote readiness unexpectedly initialized the host.");
+    Native.SetOutputBoost(2, 0, 24000); // Main must be rejected before creating a host.
+    if (Native.IsRemoteReady() != 0) throw new Exception("Main boost unexpectedly initialized the host.");
     var failures = Enumerable.Repeat(42, PluginCapacity.Slots).ToArray();
     if (Native.PluginFailures(failures, PluginCapacity.Slots) != 1 || failures.Any(value => value != 42) || Native.PluginFailures(failures, PluginCapacity.Slots - 1) != -1)
         throw new Exception("Plugin failure query initialized the host or changed an unknown/invalid snapshot.");
@@ -49,6 +51,8 @@ catch (Exception ex)
 internal static class Native
 {
     private const string Dll = "ElkaVoiceMeeterFxHost.Native.dll";
+    [DllImport(Dll, EntryPoint = "ElkaFx_SetOutputBoostMilliDb", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void SetOutputBoost(int stream, int channel, int milliDb);
     [DllImport(Dll, EntryPoint = "ElkaFx_GetPluginNodeFailures", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int PluginFailures([In, Out] int[] flags, int count);
     [DllImport(Dll, EntryPoint = "ElkaFx_SetPluginLevelWatches", CallingConvention = CallingConvention.Cdecl)]

@@ -163,6 +163,8 @@ public:
     bool isChannelEnabled(CallbackStreamKind kind, int channel) const noexcept;
     void setChannelGainPercent(CallbackStreamKind kind, int channel, int percent) noexcept;
     int getChannelGainPercent(CallbackStreamKind kind, int channel) const noexcept;
+    void setOutputBoostMilliDb(CallbackStreamKind kind, int channel, int milliDb) noexcept;
+    int getOutputBoostMilliDb(CallbackStreamKind kind, int channel) const noexcept;
     void setChannelDelayMilliseconds(CallbackStreamKind kind, int channel, int milliseconds) noexcept;
     int getChannelDelayMilliseconds(CallbackStreamKind kind, int channel) const noexcept;
     void setChannelPluginGraphEnabled(CallbackStreamKind kind, int channel, bool shouldEnable) noexcept;
@@ -207,6 +209,7 @@ public:
     RealtimeStats getStats() const noexcept;
 
 private:
+    friend struct OutputBoostTestAccess;
     static constexpr int MaxChannels = 64;
     static constexpr int DelayStreamCount = 4;
 
@@ -258,6 +261,7 @@ private:
     void applySameBufferDirectRoutes(AudioBufferView buffer, CallbackStreamKind kind, int readOffset, bool suppressInputCallbackChannels, std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void applyPluginGraphGate(AudioBufferView buffer, CallbackStreamKind kind, bool suppressInputCallbackChannels, const std::array<bool, MaxChannels>& pluginOutputWritten) noexcept;
     void applyConfiguredGains(AudioBufferView buffer, CallbackStreamKind kind, int streamIndex, bool suppressInputCallbackChannels) noexcept;
+    void applyOutputBoost(AudioBufferView buffer, CallbackStreamKind kind, int streamIndex, bool suppressInputCallbackChannels) noexcept;
     void captureProbeRead(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept;
     void captureProbeWrite(AudioBufferView buffer, CallbackStreamKind kind, int readOffset) noexcept;
     void publishTiming(double elapsedUsec, AudioBufferView buffer) noexcept;
@@ -319,6 +323,12 @@ private:
 
     GainBank inputGainPercent {};
     GainBank outputGainPercent {};
+    // Insert destinations only: Main callback deliberately has no boost bank.
+    std::array<GainBank, 2> outputBoostMilliDb {};
+    std::array<std::array<float, MaxChannels>, DelayStreamCount> smoothedOutputBoost {};
+    std::array<std::atomic<int>, DelayStreamCount> activeBoostChannelCounts {};
+    // Audio-thread owned. Retains the processing path for the final ramp back to unity.
+    std::array<bool, DelayStreamCount> outputBoostNeedsUnityRamp {};
     DelayBank inputDelayMilliseconds {};
     DelayBank outputDelayMilliseconds {};
     EnableBank inputEnabled {};

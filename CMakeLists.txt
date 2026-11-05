@@ -174,6 +174,11 @@ target_include_directories(WidgetLevelChecks PRIVATE src)
 target_compile_definitions(WidgetLevelChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(WidgetLevelChecks PRIVATE Avrt)
 
+add_executable(OutputBoostChecks EXCLUDE_FROM_ALL tests/OutputBoostChecks/main.cpp src/engine/RealtimeEngine.cpp)
+target_include_directories(OutputBoostChecks PRIVATE src)
+target_compile_definitions(OutputBoostChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(OutputBoostChecks PRIVATE Avrt)
+
 # Shared-container identity checks do not load plugins or connect to audio.
 add_executable(PluginContainerChecks EXCLUDE_FROM_ALL tests/PluginContainerChecks/main.cpp)
 target_include_directories(PluginContainerChecks PRIVATE src)

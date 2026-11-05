@@ -1,6 +1,7 @@
 #pragma once
 #include "plugins/RealtimePluginProcessor.h"
 #include "plugins/PluginCapacity.h"
+#include "plugins/SandboxProtocol.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <algorithm>
 #include <array>
@@ -21,6 +22,7 @@ struct SandboxFailureProbe final : RealtimePluginProcessor
 {
     @sandbox_ready@;
     HANDLE workerProcess = nullptr;
+    sandbox::SandboxAudioHeader* header = nullptr;
     bool process(AudioBufferView, const PluginRoutingView&) noexcept override { return false; }
     @sandbox_failure@
 };

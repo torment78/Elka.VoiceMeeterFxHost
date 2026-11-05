@@ -80,6 +80,7 @@ internal static class CanvasInteractionChecks
             window.CheckWidgetTileStates();
             window.CheckWidgetLevels();
             window.CheckPluginSavedData();
+            window.CheckSandboxModes();
             window.CheckPendingPluginRestores();
             window.CheckSavedDataComparison();
             window.CheckPluginFailuresUi();

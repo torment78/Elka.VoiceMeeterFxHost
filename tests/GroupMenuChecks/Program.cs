@@ -27,7 +27,7 @@ internal static class Program
         var node = fixture.Nodes[0];
         var menu = Menu(fixture.Window, node);
         var headers = menu.Items.OfType<MenuItem>().Select(item => item.Header is PluginNodePowerControls ? "Power controls" : (string)item.Header).ToArray();
-        Check(headers.SequenceEqual(new[] { "ID 1", PluginSavedDataControls.Label, "Reload saved settings now", "Open Editor", "Info", "Reload", "Power controls", "Properties",
+        Check(headers.SequenceEqual(new[] { "ID 1", PluginSavedDataControls.Label, "Reload saved settings now", "Open Editor", "Info", "Sandbox mode", "Reload", "Power controls", "Properties",
             "Minimize Pins", "Remove From Group", "Remove" }), "group VST menu parity and order");
         Check(!menu.Items.OfType<MenuItem>().First().IsEnabled, "ID is not clickable");
         Click(fixture, node, "Open Editor");

@@ -211,6 +211,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        NativeEngineClient.BeginSandboxLoad = () => new SandboxLoadProgress();
         InitializeComponent();
         InitializeTrayIcon();
 
@@ -7109,6 +7110,7 @@ private void RefreshEndpointButtonSelection()
                 savedNode.PluginStateBase64,
                 savedNode.PluginPresetBase64,
                 sandboxed: savedNode.Sandboxed || PluginProbeGuard.RequiresSandboxedHosting(choice),
+                sandboxMode: savedNode.SandboxMode,
                 mainInputLayoutId: savedNode.MainInputLayoutId,
                 outputLayoutId: savedNode.OutputLayoutId);
             if (restored is null)
@@ -7388,6 +7390,7 @@ private void RefreshEndpointButtonSelection()
         restored.BypassPowerLinked = saved.BypassPowerLinked;
         restored.PinsCollapsed = saved.PinsCollapsed;
         restored.LoadSettingsOnce = saved.LoadSettingsOnce;
+        restored.SandboxMode = saved.SandboxMode;
         restored.Sandboxed = restored.Sandboxed ||
                              saved.Sandboxed ||
                              PluginProbeGuard.RequiresSandboxedHosting(new PluginChoice(restored.PluginIndex, restored.Name, restored.PluginFormat, restored.PluginIdentifier));
@@ -7671,6 +7674,7 @@ private void RefreshEndpointButtonSelection()
             PinsCollapsed = node.PinsCollapsed,
             LoadSettingsOnce = node.LoadSettingsOnce,
             Sandboxed = node.Sandboxed,
+            SandboxMode = node.SandboxMode,
             MissingPlugin = node.MissingPlugin,
             MainInputLayoutId = node.MainInputLayoutId,
             MainInputLayoutName = node.MainInputLayoutName,
@@ -9617,6 +9621,7 @@ private void RefreshEndpointButtonSelection()
         menu.Items.Add(CreateNodeMenuItem("Open Editor", () => OpenPluginEditorWithSavedData(node)));
         menu.Items.Add(CreateNodeMenuItem("Info", () => ShowExposedPluginParameters(node)));
         menu.Items.Add(CreateNodeMenuItem("Reload", () => ReloadPluginNode(node)));
+        menu.Items.Add(SandboxModeControls.CreateMenu(node, ReloadPluginNode));
         menu.Items.Add(new PluginNodePowerControls(node, bypassed => SetNodeBypass(node, bypassed),
             enabled => SetNodeEnabled(node, enabled), linked => SetNodePowerLinked(node, linked)).AsMenuItem());
         menu.Items.Add(new Separator());
@@ -9736,7 +9741,7 @@ private void RefreshEndpointButtonSelection()
         };
         AuxiliaryWindowPlacement.SetKey(editor, $"NodeProperties:{_kind}:{node.InstanceId}:{node.PluginIdentifier}");
 
-        if (editor.ShowDialog() == true && (editor.HasLayoutChanges || !editor.LoadSettingsOptionChanged))
+        if (editor.ShowDialog() == true && (editor.HasLayoutChanges || editor.HasSandboxModeChanges || !editor.LoadSettingsOptionChanged))
         {
             ReconfigurePluginNode(
                 node,
@@ -9744,7 +9749,7 @@ private void RefreshEndpointButtonSelection()
                 editor.SidechainInputPins,
                 editor.OutputPins,
                 editor.MainInputLayoutId,
-                editor.OutputLayoutId);
+                editor.OutputLayoutId, sandboxMode: editor.SandboxMode);
         }
     }
 
@@ -10000,6 +10005,7 @@ private void RefreshEndpointButtonSelection()
                 member.PluginStateBase64,
                 member.PluginPresetBase64,
                 sandboxed: member.Sandboxed,
+                sandboxMode: member.SandboxMode,
                 mainInputLayoutId: member.MainInputLayoutId,
                 outputLayoutId: member.OutputLayoutId);
             if (copy is null)
@@ -10016,6 +10022,7 @@ private void RefreshEndpointButtonSelection()
             copy.PluginPresetBase64 = member.PluginPresetBase64;
             copy.PluginParameterStateBase64 = member.PluginParameterStateBase64;
             copy.Sandboxed = member.Sandboxed;
+            copy.SandboxMode = member.SandboxMode;
             copy.LoadSettingsOnce = member.LoadSettingsOnce;
             CompleteCreatedPluginStateRestore(copy, member, allowVerificationRetry: HasPendingSavedPluginData(member));
             copy.Enabled = member.Enabled;
@@ -10285,6 +10292,9 @@ private void RefreshEndpointButtonSelection()
 
     private void ReloadPluginNode(PluginNodeSnapshot node)
     {
+        var flags = _engine.FailedHelperPeers(node.Slot);
+        var peers = _settings.PluginNodes.Where(peer => peer != node && peer.Slot >= 0 &&
+            peer.Slot < flags.Length && flags[peer.Slot] != 0).ToArray();
         ReconfigurePluginNode(
             node,
             node.MainInputPins,
@@ -10293,6 +10303,9 @@ private void RefreshEndpointButtonSelection()
             node.MainInputLayoutId,
             node.OutputLayoutId,
             isReload: true);
+        foreach (var peer in peers)
+            ReconfigurePluginNode(peer, peer.MainInputPins, peer.SidechainInputPins, peer.OutputPins,
+                peer.MainInputLayoutId, peer.OutputLayoutId, isReload: true);
     }
 
     private void ReconfigurePluginNode(
@@ -10302,7 +10315,7 @@ private void RefreshEndpointButtonSelection()
         int outputPins,
         int mainInputLayoutId,
         int outputLayoutId,
-        bool isReload = false)
+        bool isReload = false, int? sandboxMode = null)
     {
         if (node.PluginIndex < 0)
         {
@@ -10362,6 +10375,7 @@ private void RefreshEndpointButtonSelection()
             node.PluginStateBase64,
             node.PluginPresetBase64,
             sandboxed: useSandboxedHost,
+            sandboxMode: sandboxMode ?? node.SandboxMode,
             mainInputLayoutId: mainInputLayoutId,
             outputLayoutId: outputLayoutId);
 
@@ -10396,6 +10410,7 @@ private void RefreshEndpointButtonSelection()
         node.Enabled = wasEnabled;
         node.Bypassed = wasBypassed;
         node.Sandboxed = replacement.Sandboxed;
+        node.SandboxMode = replacement.SandboxMode;
         CompleteRebuiltPluginStateRestore(node, pendingRestore);
         _selectedPluginNodeSlot = node.Slot;
         foreach (var group in _settings.PluginGroups)

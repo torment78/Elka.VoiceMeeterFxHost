@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -79,6 +80,7 @@ internal static class TimingChecks
         {
             Setters = { new Setter(Window.BackgroundProperty, new SolidColorBrush(Colors.Purple)) }
         });
+        CheckBusyDrawQueue(Check);
         var windows = new SignalMonitorWindow?[3];
         var controllers = new List<SignalMonitorController>();
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
@@ -212,4 +214,34 @@ internal static class TimingChecks
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+
+    private static void CheckBusyDrawQueue(Action<bool, string> check)
+    {
+        SignalMonitorMailbox? mailbox = null;
+        using var ready = new ManualResetEventSlim();
+        var window = new SignalMonitorWindow("Draw queue check", "Source", 0, false, 0, 2, Colors.SeaGreen,
+            (box, cancel) => { mailbox = box; ready.Set(); cancel.WaitHandle.WaitOne(); });
+        try
+        {
+            check(ready.Wait(3000), "Draw queue test reader started");
+            var bucketField = typeof(SignalMonitorWindow).GetField("_lastDrawBucket", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var queuedField = typeof(SignalMonitorWindow).GetField("_drawQueued", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var frame = new SignalMonitorFrame();
+            mailbox!.Publish(frame);
+            long acceptedBucket = (long)bucketField.GetValue(window)!;
+            check((int)queuedField.GetValue(window)! == 1, "First display request queues a draw");
+            // Hold this window's dispatcher across several display slots, as a native move can do.
+            Thread.Sleep(60);
+            frame.Timestamp = SignalMonitorBallistics.Now;
+            mailbox.Publish(frame);
+            check((long)bucketField.GetValue(window)! == acceptedBucket,
+                "A pending draw must not consume a newer display time slot");
+            window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+            check((int)queuedField.GetValue(window)! == 0, "Pending draw drains when dispatcher resumes");
+            mailbox.Publish(frame);
+            check((long)bucketField.GetValue(window)! > acceptedBucket && (int)queuedField.GetValue(window)! == 1,
+                "Reader can queue the unused time slot immediately after dispatcher resumes");
+        }
+        finally { window.Close(); }
+    }
 }

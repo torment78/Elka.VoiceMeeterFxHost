@@ -67,7 +67,13 @@ add_library(ElkaVoiceMeeterFxHost.RealtimeCore SHARED
     ${ELKA_REALTIME_CALLBACK_SOURCES}
 )
 
-foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore)
+# The helper hosts the existing native plugin layer directly, with no CLR or P/Invoke.
+add_executable(Elka.PluginWorker WIN32
+    src/plugin-worker/NativeWorker.cpp
+    src/plugins/PluginHostLayer.cpp
+)
+
+foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore Elka.PluginWorker)
     target_include_directories(${target} PRIVATE
         src
     )
@@ -106,7 +112,7 @@ target_compile_definitions(ElkaVoiceMeeterFxHost.RealtimeCore PRIVATE
 )
 
 if (ELKA_ENABLE_JUCE_PLUGIN_HOST)
-    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native)
+    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native Elka.PluginWorker)
         target_compile_definitions(${target} PRIVATE
             ELKA_ENABLE_JUCE_PLUGIN_HOST=1
             ELKA_ENABLE_VST2_HOST=$<BOOL:${ELKA_ENABLE_VST2_HOST}>
@@ -135,7 +141,7 @@ else()
 endif()
 
 if (MSVC)
-    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore)
+    foreach(target IN ITEMS ElkaVoiceMeeterFxHost.Native ElkaVoiceMeeterFxHost.RealtimeCore Elka.PluginWorker)
         target_compile_options(${target} PRIVATE
             /W4
             /permissive-
@@ -190,3 +196,8 @@ target_include_directories(AudioThreadPriorityChecks PRIVATE tests/AudioThreadPr
 
 include(tests/PluginFailureChecks/CMakeLists.txt)
 include(tests/PluginCapacityChecks/CMakeLists.txt)
+include(tests/SandboxPoolChecks/CMakeLists.txt)
+
+add_library(NativeWorkerProbeVst MODULE EXCLUDE_FROM_ALL tests/NativeWorkerChecks/ProbeVst.cpp)
+target_include_directories(NativeWorkerProbeVst PRIVATE "${ELKA_VST2_SDK_PATH}")
+target_link_libraries(NativeWorkerProbeVst PRIVATE User32)

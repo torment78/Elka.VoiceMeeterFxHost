@@ -570,6 +570,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         menu.Items.Add(CreateMenuItem("Open Editor", () => _openPluginEditor(node)));
         menu.Items.Add(CreateMenuItem("Info", () => _showExposedPluginParameters(node)));
+        menu.Items.Add(SandboxModeControls.CreateMenu(node, _reloadPluginNode));
         menu.Items.Add(CreateMenuItem("Reload", () =>
         {
             _reloadPluginNode(node);

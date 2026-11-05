@@ -10,8 +10,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Elka.VoiceMeeterFxHost.App", "src\app-wpf\Elka.VoiceMeeterFxHost.App.csproj", "{6D068FEF-4EA1-46E1-820E-00A3696C2E1A}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "plugin-worker", "plugin-worker", "{B5E39951-F8B3-4C5F-9C43-3F899BC8D07A}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Elka.PluginWorker", "src\plugin-worker\Elka.PluginWorker.csproj", "{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}"
+	ProjectSection(SolutionItems) = preProject
+		src\plugin-worker\NativeWorker.cpp = src\plugin-worker\NativeWorker.cpp
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -35,18 +36,6 @@ Global
 		{6D068FEF-4EA1-46E1-820E-00A3696C2E1A}.Release|x64.Build.0 = Release|Any CPU
 		{6D068FEF-4EA1-46E1-820E-00A3696C2E1A}.Release|x86.ActiveCfg = Release|Any CPU
 		{6D068FEF-4EA1-46E1-820E-00A3696C2E1A}.Release|x86.Build.0 = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|x64.Build.0 = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Debug|x86.Build.0 = Debug|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|Any CPU.Build.0 = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|x64.ActiveCfg = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|x64.Build.0 = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|x86.ActiveCfg = Release|Any CPU
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -55,6 +44,5 @@ Global
 		{10A60103-9838-E53F-383F-84602623CC1D} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{6D068FEF-4EA1-46E1-820E-00A3696C2E1A} = {10A60103-9838-E53F-383F-84602623CC1D}
 		{B5E39951-F8B3-4C5F-9C43-3F899BC8D07A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{B9A42107-3E5C-49B0-89D7-7401ED8F6D76} = {B5E39951-F8B3-4C5F-9C43-3F899BC8D07A}
 	EndGlobalSection
 EndGlobal

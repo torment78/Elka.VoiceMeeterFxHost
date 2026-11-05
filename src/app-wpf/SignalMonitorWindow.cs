@@ -284,7 +284,10 @@ internal sealed class SignalMonitorWindow : Window
         // with at most one queued update and never any synchronous call from the reader.
         if (_stopped || Dispatcher.HasShutdownStarted) return;
         long bucket = Stopwatch.GetTimestamp() / Math.Max(1, Stopwatch.Frequency / 60);
-        if (Interlocked.Exchange(ref _lastDrawBucket, bucket) == bucket || Interlocked.Exchange(ref _drawQueued, 1) != 0) return;
+        // A busy dispatcher has not accepted this time slot yet. Leave it available
+        // for the next reader wake-up instead of dropping it while an older draw waits.
+        if (Volatile.Read(ref _lastDrawBucket) == bucket || Interlocked.CompareExchange(ref _drawQueued, 1, 0) != 0) return;
+        Volatile.Write(ref _lastDrawBucket, bucket);
         Dispatcher.BeginInvoke(() =>
         {
             Interlocked.Exchange(ref _drawQueued, 0);

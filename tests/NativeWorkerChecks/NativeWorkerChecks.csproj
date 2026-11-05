@@ -5,10 +5,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>false</SelfContained>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>Elka.PluginWorker</AssemblyName>
-    <RootNamespace>Elka.PluginWorker</RootNamespace>
   </PropertyGroup>
 </Project>

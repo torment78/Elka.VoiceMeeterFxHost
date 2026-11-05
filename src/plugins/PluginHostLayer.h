@@ -21,8 +21,14 @@ bool scanPluginContainerToFile(const std::string& format, const std::string& pat
 bool probePluginFile(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, std::string& error, PluginLoadProgressCallback progress = {});
 int createWorkerPluginProcessor(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int blockSize, int inputPins, int outputPins, int inputLayoutId, int outputLayoutId, std::string& error);
 bool processWorkerPluginProcessor(int handle, float* planarData, int channelCount, int samples);
+// Obtain before starting an audio thread; destroy only after joining that thread.
+void* workerPluginAudioContext(int handle);
+bool processWorkerPluginAudioContext(void* context, float* planarData, int channelCount, int samples);
 bool openWorkerPluginEditor(int handle, const std::string& windowTitle, std::string& error);
 bool closeWorkerPluginEditor(int handle, std::string& error);
+bool workerPluginFailed(int handle);
+bool workerPluginEditorOpen(int handle);
+void cancelSandboxPluginLoad() noexcept;
 std::string workerPluginStateBase64(int handle, std::string& error);
 bool setWorkerPluginStateBase64(int handle, const std::string& stateBase64, std::string& error);
 std::string workerPluginPresetBase64(int handle, std::string& error);
@@ -117,7 +123,7 @@ public:
     bool loadDiscoveredPlugin(size_t index, int sampleRate, int maxBlockSize, int routeChannelCount);
     void unloadPlugin() noexcept;
     int addDiscoveredPluginNode(size_t index, int sampleRate, int maxBlockSize, int mainInputPins, int sidechainInputPins, int outputPins, int inputLayoutId, const std::string& inputLayoutName, int outputLayoutId, const std::string& outputLayoutName, int kind, int sourceStart, int sourceCount, const std::string& initialStateBase64 = {}, const std::string& initialPresetBase64 = {}, PluginLoadProgressCallback progress = {});
-    int addSandboxedDiscoveredPluginNode(size_t index, int sampleRate, int maxBlockSize, int mainInputPins, int sidechainInputPins, int outputPins, int inputLayoutId, const std::string& inputLayoutName, int outputLayoutId, const std::string& outputLayoutName, int kind, int sourceStart, int sourceCount, const std::string& initialStateBase64 = {}, const std::string& initialPresetBase64 = {}, PluginLoadProgressCallback progress = {});
+    int addSandboxedDiscoveredPluginNode(size_t index, int sampleRate, int maxBlockSize, int mainInputPins, int sidechainInputPins, int outputPins, int inputLayoutId, const std::string& inputLayoutName, int outputLayoutId, const std::string& outputLayoutName, int kind, int sourceStart, int sourceCount, const std::string& initialStateBase64 = {}, const std::string& initialPresetBase64 = {}, PluginLoadProgressCallback progress = {}, int sandboxMode = 0);
     void removePluginNode(int slot) noexcept;
     void clearPluginNodes() noexcept;
     bool openPluginEditor(int slot, const std::string& windowTitle);
@@ -142,6 +148,7 @@ public:
     void setPluginNodePowered(int slot, bool powered) noexcept;
     bool isPluginNodePowered(int slot) const noexcept;
     bool isPluginNodeFailed(int slot) const noexcept;
+    void failedHelperPeers(int slot, int* flags, int count) const noexcept;
     RealtimePluginProcessor* realtimeProcessor() noexcept;
     RealtimePluginProcessor* realtimeProcessorForSlot(int slot) noexcept;
     std::string loadedPluginName() const;

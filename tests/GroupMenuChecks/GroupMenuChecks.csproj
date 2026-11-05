@@ -12,8 +12,10 @@
     <Compile Include="../../src/app-wpf/PluginNodePins.cs" Link="PluginNodePins.cs" />
     <Compile Include="../../src/app-wpf/PluginNodePowerControls.cs" Link="PluginNodePowerControls.cs" />
     <Compile Include="../../src/app-wpf/PluginSavedDataControls.cs" Link="PluginSavedDataControls.cs" />
+    <Compile Include="../../src/app-wpf/SandboxModeControls.cs" Link="SandboxModeControls.cs" />
     <Compile Include="../../src/app-wpf/PluginStateVisuals.cs" Link="PluginStateVisuals.cs" />
     <Compile Include="../../src/app-wpf/Models.cs" Link="Models.cs" />
+    <Compile Include="../../src/app-wpf/PluginCapacity.cs" Link="PluginCapacity.cs" />
     <Compile Include="../../src/app-wpf/HostStatusSnapshot.cs" Link="HostStatusSnapshot.cs" />
     <Compile Include="../../src/app-wpf/AppDataPaths.cs" Link="AppDataPaths.cs" />
   </ItemGroup>

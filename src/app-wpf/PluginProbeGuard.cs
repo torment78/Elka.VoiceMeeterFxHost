@@ -119,9 +119,27 @@ internal static class PluginProbeGuard
             var outputTask = process.StandardOutput.ReadToEndAsync();
             var errorTask = process.StandardError.ReadToEndAsync();
             var waitTask = process.WaitForExitAsync();
-            var completed = await Task.WhenAny(waitTask, Task.Delay(timeout));
-            if (completed != waitTask)
+            var messageText = "Checking sandboxed VST...";
+            using var progress = new SandboxLoadProgress(() => Volatile.Read(ref messageText), () => TryKill(process));
+            var clock = Stopwatch.StartNew();
+            var deadline = timeout;
+            var waitingForWindow = false;
+            while (await Task.WhenAny(waitTask, Task.Delay(250)) != waitTask)
             {
+                if (clock.Elapsed < deadline) continue;
+                if (HasVisibleWindow(process.Id))
+                {
+                    waitingForWindow = true;
+                    Volatile.Write(ref messageText, "Waiting for plugin licence/activation. Finish the plugin dialog or cancel the load.");
+                    deadline = clock.Elapsed + TimeSpan.FromSeconds(1);
+                    continue;
+                }
+                if (waitingForWindow)
+                {
+                    waitingForWindow = false;
+                    deadline = clock.Elapsed + timeout;
+                    continue;
+                }
                 TryKill(process);
                 return new PluginProbeResult(
                     false,
@@ -149,6 +167,22 @@ internal static class PluginProbeGuard
     private static string NormalizeFormat(string format)
     {
         return format.Equals("VST2", StringComparison.OrdinalIgnoreCase) ? "VST" : format;
+    }
+
+    private delegate bool EnumWindow(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindow callback, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out int process);
+    private static bool HasVisibleWindow(int process)
+    {
+        var visible = false;
+        EnumWindows((window, _) =>
+        {
+            GetWindowThreadProcessId(window, out var owner);
+            if (owner != process || !IsWindowVisible(window)) return true;
+            visible = true; return false;
+        }, IntPtr.Zero);
+        return visible;
     }
 
     private static string WorkerExecutablePath() => PluginWorkerLocator.WorkerExecutablePath();

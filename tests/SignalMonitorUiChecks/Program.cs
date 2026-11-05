@@ -12,6 +12,7 @@ internal static class Program
         string output = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "ElkaSignalMonitorChecks");
         Directory.CreateDirectory(output);
         int timingChecks = args.Contains("--render-only", StringComparer.Ordinal) ? 0 : TimingChecks.Run();
+        if (args.Contains("--timing-only", StringComparer.Ordinal)) return;
         int historyChecks = HistoryChecks.Run();
         int peakChecks = PeakChecks.Run();
         int occlusionChecks = HistoryOcclusionChecks.Run();

@@ -536,6 +536,7 @@ internal sealed class PluginNodeSnapshot
     public bool BypassPowerLinked { get; set; }
     public bool PinsCollapsed { get; set; }
     public bool Sandboxed { get; set; }
+    public int SandboxMode { get; set; }
     public bool MissingPlugin { get; set; }
     public CallbackMode Mode { get; set; } = CallbackMode.Input;
 }
@@ -876,6 +877,7 @@ internal interface IPluginSavedData
 
 internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 {
+    internal static Func<IDisposable>? BeginSandboxLoad { get; set; }
     private const string DllName = "ElkaVoiceMeeterFxHost.Native.dll";
     private const int NativeConnectionRunning = 3;
     private bool _attached;
@@ -1814,7 +1816,7 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
         string? initialPresetBase64 = null,
         bool sandboxed = false,
         int? mainInputLayoutId = null,
-        int? outputLayoutId = null)
+        int? outputLayoutId = null, int sandboxMode = 0)
     {
         if ((mode & AllowedCallbackModes) != mode)
         {
@@ -1852,40 +1854,13 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
             !string.IsNullOrWhiteSpace(initialStateBase64) ||
             !string.IsNullOrWhiteSpace(initialPresetBase64);
 
+        using var loadProgress = sandboxed ? BeginSandboxLoad?.Invoke() : null;
         var result = sandboxed
-            ? hasInitialPluginData
-                ? ElkaFx_AddSandboxedPluginNodeWithState(
-                    choice.Index,
-                    (int)mode,
-                    mainInputPins,
-                    sidechainInputPins,
-                    outputPins,
-                    requestedMainInputLayoutId,
-                    requestedOutputLayoutId,
-                    x,
-                    y,
-                    initialStateBase64 ?? string.Empty,
-                    initialPresetBase64 ?? string.Empty,
-                    ref slot,
-                    ref loadedInputPins,
-                    ref loadedOutputPins,
-                    status,
-                    status.Capacity)
-                : ElkaFx_AddSandboxedPluginNode(
-                    choice.Index,
-                    (int)mode,
-                    mainInputPins,
-                    sidechainInputPins,
-                    outputPins,
-                    requestedMainInputLayoutId,
-                    requestedOutputLayoutId,
-                    x,
-                    y,
-                    ref slot,
-                    ref loadedInputPins,
-                    ref loadedOutputPins,
-                    status,
-                    status.Capacity)
+            ? ElkaFx_AddSandboxedPluginNodeWithMode(
+                choice.Index, (int)mode, mainInputPins, sidechainInputPins, outputPins,
+                requestedMainInputLayoutId, requestedOutputLayoutId, x, y,
+                initialStateBase64 ?? string.Empty, initialPresetBase64 ?? string.Empty,
+                ref slot, ref loadedInputPins, ref loadedOutputPins, status, status.Capacity, sandboxMode)
             : !hasInitialPluginData
             ? ElkaFx_AddPluginNode(
                 choice.Index,
@@ -1957,11 +1932,29 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
             SupportedInputLayouts = PluginLayoutChoice.DefaultChoices(requestedMainInputLayoutId, loadedMainInputPins),
             SupportedOutputLayouts = PluginLayoutChoice.DefaultChoices(requestedOutputLayoutId, loadedOutputPins),
             Sandboxed = sandboxed,
+            SandboxMode = Math.Clamp(sandboxMode, 0, 2),
             Mode = mode
         };
         ApplyPluginNodeLayoutInfo(node);
         return node;
     }
+
+    internal int[] FailedHelperPeers(int slot)
+    {
+        if (!_attached) return [];
+        var flags = new int[PluginCapacity.Slots];
+        try { return ElkaFx_GetFailedHelperPeers(slot, flags, flags.Length) == 0 ? flags : []; }
+        catch (EntryPointNotFoundException) { return []; }
+    }
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetFailedHelperPeers(int slot, [Out] int[] flags, int count);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_AddSandboxedPluginNodeWithMode(
+        int pluginIndex, int mode, int mainInputPins, int sidechainInputPins, int outputPins,
+        int inputLayoutId, int outputLayoutId, int x, int y, string initialStateBase64, string initialPresetBase64,
+        ref int slot, ref int inputPins, ref int outputPinsOut, StringBuilder status, int statusChars, int sandboxMode);
 
     private void ApplyPluginNodeLayoutInfo(PluginNodeSnapshot node)
     {

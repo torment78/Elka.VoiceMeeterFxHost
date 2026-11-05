@@ -14,6 +14,10 @@ try
     if (Native.PluginFailures(failures, PluginCapacity.Slots) != 1 || failures.Any(value => value != 42) || Native.PluginFailures(failures, PluginCapacity.Slots - 1) != -1)
         throw new Exception("Plugin failure query initialized the host or changed an unknown/invalid snapshot.");
     var before = new int[4];
+    if (Native.FailedHelperPeers(0, failures, PluginCapacity.Slots) != 1 || failures.Any(value => value != 42) ||
+        Native.FailedHelperPeers(0, failures, PluginCapacity.Slots - 1) != -1)
+        throw new Exception("Helper peer query initialized the host or changed an unknown snapshot.");
+    Native.CancelSandboxLoad();
     var after = new int[4];
     if (Native.PriorityInfo(before, after, 4, out var priorityMode) != 4 || priorityMode is < 0 or > 2 ||
         before.Any(value => value != -9999) || after.Any(value => value != -9999) ||
@@ -35,6 +39,8 @@ try
     var module = Process.GetCurrentProcess().Modules.Cast<ProcessModule>().Single(m =>
         string.Equals(m.ModuleName, "ElkaVoiceMeeterFxHost.Native.dll", StringComparison.OrdinalIgnoreCase));
     using var file = File.OpenRead(module.FileName);
+    if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_AddSandboxedPluginNodeWithMode", out _))
+        throw new Exception("Sandbox mode export is missing.");
     string hash = Convert.ToHexString(SHA256.HashData(file));
     if (args.Length != 1 || !hash.Equals(args[0], StringComparison.OrdinalIgnoreCase))
         throw new Exception($"Wrong native DLL: {module.FileName}, SHA256 {hash}");
@@ -51,6 +57,10 @@ catch (Exception ex)
 internal static class Native
 {
     private const string Dll = "ElkaVoiceMeeterFxHost.Native.dll";
+    [DllImport(Dll, EntryPoint = "ElkaFx_GetFailedHelperPeers", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int FailedHelperPeers(int slot, [In, Out] int[] flags, int count);
+    [DllImport(Dll, EntryPoint = "ElkaFx_CancelSandboxPluginLoad", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void CancelSandboxLoad();
     [DllImport(Dll, EntryPoint = "ElkaFx_SetOutputBoostMilliDb", CallingConvention = CallingConvention.Cdecl)]
     internal static extern void SetOutputBoost(int stream, int channel, int milliDb);
     [DllImport(Dll, EntryPoint = "ElkaFx_GetPluginNodeFailures", CallingConvention = CallingConvention.Cdecl)]

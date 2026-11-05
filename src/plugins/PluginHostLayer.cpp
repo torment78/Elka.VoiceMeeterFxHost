@@ -1,5 +1,7 @@
 #include "plugins/PluginHostLayer.h"
 #include "plugins/PluginContainerIdentity.h"
+#include "plugins/SandboxProtocol.h"
+#include "plugins/SandboxPoolProtocol.h"
 
 #include <algorithm>
 #include <array>
@@ -2570,43 +2572,8 @@ std::unique_ptr<HostedVst3Processor> createHostedProcessorFromFile(
 constexpr DWORD SandboxReadyTimeoutMs = 30000;
 constexpr DWORD SandboxControlTimeoutMs = 10000;
 constexpr DWORD SandboxStateTimeoutMs = 30000;
-constexpr DWORD SandboxMagic = 0x414B4C45; // ELKA
-constexpr DWORD SandboxVersion = 1;
-constexpr int SandboxHeaderBytes = 64;
-constexpr int SandboxStateBytes = 8 * 1024 * 1024;
-constexpr int SandboxMaxPins = 32;
-constexpr LONG SandboxCommandAudio = 1;
-constexpr LONG SandboxCommandOpenEditor = 2;
-constexpr LONG SandboxCommandGetState = 3;
-constexpr LONG SandboxCommandSetState = 4;
-constexpr LONG SandboxCommandGetPreset = 5;
-constexpr LONG SandboxCommandSetPreset = 6;
-constexpr LONG SandboxCommandGetParameters = 7;
-constexpr LONG SandboxCommandSetParameters = 8;
-constexpr LONG SandboxCommandGetParameterInfo = 9;
-constexpr LONG SandboxCommandSetControl = 10;
-constexpr LONG SandboxCommandCloseEditor = 11;
+using namespace sandbox;
 volatile LONG sandboxGlobalSequence = 0;
-
-struct SandboxAudioHeader
-{
-    LONG magic = static_cast<LONG>(SandboxMagic);
-    LONG version = static_cast<LONG>(SandboxVersion);
-    LONG maxChannels = 0;
-    LONG maxSamples = 0;
-    LONG inputPins = 0;
-    LONG outputPins = 0;
-    LONG sampleCount = 0;
-    volatile LONG requestId = 0;
-    volatile LONG responseId = 0;
-    volatile LONG status = 0;
-    volatile LONG command = 0;
-    volatile LONG textByteCount = 0;
-    LONG textCapacity = 0;
-    LONG reserved[3] {};
-};
-
-static_assert(sizeof(SandboxAudioHeader) <= SandboxHeaderBytes);
 
 std::wstring quoteWindowsArg(const std::wstring& value)
 {
@@ -2691,6 +2658,8 @@ private:
     bool locked = false;
 };
 
+#include "plugins/SandboxHelperPool.h"
+
 class SandboxedPluginProcessor final : public RealtimePluginProcessor
 {
 public:
@@ -2704,14 +2673,17 @@ public:
         int outputPins,
         int inputLayoutId,
         int outputLayoutId,
-        std::string& error)
+        std::string& error,
+        const std::string& manufacturer = {},
+        sandbox::Mode mode = sandbox::Mode::Auto,
+        PluginLoadProgressCallback progress = {})
         : inputPinCount(std::clamp(inputPins, 1, SandboxMaxPins)),
           outputPinCount(std::clamp(outputPins, 1, SandboxMaxPins)),
           processChannels(std::max(inputPinCount, outputPinCount)),
           maxBlockSize(realtimePluginBlockSize(blockSize)),
           processTimeoutMs(sandboxProcessTimeoutFor(sampleRate, timeoutBlockSize))
     {
-        start(format, fileOrIdentifier, sampleRate, inputLayoutId, outputLayoutId, error);
+        start(format, fileOrIdentifier, sampleRate, inputLayoutId, outputLayoutId, error, manufacturer, mode, progress);
     }
 
     ~SandboxedPluginProcessor() override
@@ -2726,13 +2698,15 @@ public:
 
     bool process(AudioBufferView buffer, const PluginRoutingView& routing) noexcept override
     {
+        if (workerProcess && WaitForSingleObject(workerProcess, 0) == WAIT_OBJECT_0)
+            ready.store(false, std::memory_order_relaxed);
         if (!ready.load(std::memory_order_relaxed) || header == nullptr || audioData == nullptr || requestEvent == nullptr || responseEvent == nullptr)
             return bypass(buffer, routing);
 
         if (buffer.samplesPerFrame <= 0 || buffer.samplesPerFrame > maxBlockSize)
             return bypass(buffer, routing);
 
-        ScopedSandboxIpcFlag ipc(ipcBusy);
+        ScopedSandboxIpcFlag ipc(audioBusy);
         if (!ipc.isLocked())
             return renderSilence(buffer, routing);
 
@@ -2763,14 +2737,11 @@ public:
         header->inputPins = inputPinCount;
         header->outputPins = outputPinCount;
         header->sampleCount = buffer.samplesPerFrame;
-        InterlockedExchange(&header->command, SandboxCommandAudio);
         const LONG request = InterlockedIncrement(&requestCounter);
         InterlockedExchange(&header->requestId, request);
-        ResetEvent(responseEvent);
         SetEvent(requestEvent);
 
-        const DWORD wait = WaitForSingleObject(responseEvent, processTimeoutMs);
-        if (wait != WAIT_OBJECT_0)
+        if (!waitForAudioReply(request))
         {
             lateAudioResponsePending = true;
             lateAudioRequestId = request;
@@ -2817,110 +2788,32 @@ public:
     }
 
     bool isReady() const noexcept { return ready.load(std::memory_order_relaxed); }
+    const void* helperIdentity() const noexcept { return helper.get(); }
+    bool helperExited() const noexcept { return helper && !helper->alive(); }
 
     bool hasFailed() const noexcept override
     {
         return !ready.load(std::memory_order_relaxed) ||
+            (header && InterlockedCompareExchange(&header->audioFailed, 0, 0) != 0) ||
             (workerProcess != nullptr && WaitForSingleObject(workerProcess, 0) == WAIT_OBJECT_0);
     }
 
     bool isEditorOpen() const noexcept
     {
-        return workerProcess && WaitForSingleObject(workerProcess, 0) == WAIT_TIMEOUT &&
-            PluginEditorWindow::isOpenForProcess(GetProcessId(workerProcess));
+        return workerProcess && WaitForSingleObject(workerProcess, 0) == WAIT_TIMEOUT && header &&
+            InterlockedCompareExchange(&header->editorOpen, 0, 0) != 0;
     }
 
     bool openEditor(const std::string& windowTitle, std::string& error) noexcept
     {
-        error.clear();
-        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
-        {
-            error = "Sandboxed plugin worker is not ready.";
-            return false;
-        }
-
-        ScopedSandboxIpcFlag ipc(ipcBusy, 250);
-        if (!ipc.isLocked())
-        {
-            error = "Sandboxed plugin worker is busy. Try opening the editor again.";
-            return false;
-        }
-
-        if (!drainLateAudioResponse(250))
-        {
-            error = "Sandboxed plugin worker is still finishing a late audio block. Try again.";
-            return false;
-        }
-
-        const auto titleBytes = std::min(windowTitle.size(), static_cast<size_t>(stateDataBytes - 1));
-        std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
-        std::memcpy(stateData, windowTitle.data(), titleBytes);
-        InterlockedExchange(&header->textByteCount, static_cast<LONG>(titleBytes));
-        InterlockedExchange(&header->command, SandboxCommandOpenEditor);
-        const LONG request = InterlockedIncrement(&requestCounter);
-        InterlockedExchange(&header->requestId, request);
-        ResetEvent(responseEvent);
-        SetEvent(controlEvent);
-
-        const DWORD wait = WaitForSingleObject(responseEvent, SandboxControlTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->responseId != request)
-        {
-            error = "Sandboxed plugin worker did not answer the editor request.";
-            return false;
-        }
-
-        if (header->status < 0)
-        {
-            error = "Sandboxed plugin editor could not be opened in the worker.";
-            return false;
-        }
-
-        return true;
+        std::string ignored;
+        return controlRequest(SandboxCommandOpenEditor, windowTitle, ignored, error, SandboxControlTimeoutMs);
     }
 
     bool closeEditor(std::string& error) noexcept
     {
-        error.clear();
-        if (!ready.load(std::memory_order_relaxed) || header == nullptr || controlEvent == nullptr || responseEvent == nullptr)
-        {
-            error = "Sandboxed plugin worker is not ready.";
-            return false;
-        }
-
-        ScopedSandboxIpcFlag ipc(ipcBusy, 1000);
-        if (!ipc.isLocked())
-        {
-            error = "Sandboxed plugin worker is busy. Try closing the editor again.";
-            return false;
-        }
-
-        if (!drainLateAudioResponse(250))
-        {
-            error = "Sandboxed plugin worker is still finishing a late audio block.";
-            return false;
-        }
-
-        InterlockedExchange(&header->textByteCount, 0);
-        InterlockedExchange(&header->command, SandboxCommandCloseEditor);
-        const LONG request = InterlockedIncrement(&requestCounter);
-        InterlockedExchange(&header->requestId, request);
-        ResetEvent(responseEvent);
-        SetEvent(controlEvent);
-
-        const DWORD wait = WaitForSingleObject(responseEvent, SandboxControlTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->responseId != request)
-        {
-            error = "Sandboxed plugin worker did not answer the editor close request.";
-            return false;
-        }
-
-        if (header->status < 0)
-        {
-            error = "Sandboxed plugin editor could not be closed in the worker.";
-            return false;
-        }
-
-        return true;
+        std::string ignored;
+        return controlRequest(SandboxCommandCloseEditor, {}, ignored, error, SandboxControlTimeoutMs);
     }
 
     std::string stateBase64(std::string& error)
@@ -2977,112 +2870,108 @@ public:
     }
 
 private:
-    bool captureTextBase64Command(LONG command, std::string& value, std::string& error, const char* label)
+    static bool waitForReply(HANDLE event, volatile LONG& reply, LONG expected, DWORD milliseconds) noexcept
     {
-        value.clear();
-        error.clear();
-        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
+        const auto deadline = GetTickCount64() + milliseconds;
+        for (;;)
         {
-            error = std::string("Sandboxed plugin worker is not ready for ") + label + " capture.";
+            if (InterlockedCompareExchange(&reply, 0, 0) == expected) return true;
+            const auto now = GetTickCount64();
+            const auto remaining = now >= deadline ? 0 : static_cast<DWORD>(deadline - now);
+            const auto wait = WaitForSingleObject(event, remaining);
+            if (wait != WAIT_OBJECT_0)
+                return InterlockedCompareExchange(&reply, 0, 0) == expected;
+            // An auto-reset event can still carry the previous reply's signal.
+            if (InterlockedCompareExchange(&reply, 0, 0) == expected) return true;
+            if (GetTickCount64() >= deadline) return false;
+        }
+    }
+
+    bool waitForAudioReply(LONG expected) noexcept
+    {
+        LARGE_INTEGER begin {}, now {};
+        QueryPerformanceCounter(&begin);
+        do
+        {
+            if (InterlockedCompareExchange(&header->responseId, 0, 0) == expected) return true;
+            _mm_pause();
+            QueryPerformanceCounter(&now);
+        } while (now.QuadPart - begin.QuadPart < spinTicks);
+        return waitForReply(responseEvent, header->responseId, expected, processTimeoutMs);
+    }
+
+    bool controlRequest(LONG command, const std::string& payload, std::string& result,
+                        std::string& error, DWORD timeout)
+    {
+        result.clear();
+        error.clear();
+        if (!ready.load(std::memory_order_relaxed) || helperExited() || !header || !stateData || !controlEvent || !controlResponseEvent)
+        {
+            error = "Sandboxed plugin worker is not ready.";
             return false;
         }
-
-        ScopedSandboxIpcFlag ipc(ipcBusy, 1000);
+        if (payload.size() >= static_cast<size_t>(stateDataBytes))
+        {
+            error = "Saved sandboxed plugin data is too large for the worker transfer buffer.";
+            return false;
+        }
+        ScopedSandboxIpcFlag ipc(controlBusy, 1000);
         if (!ipc.isLocked())
         {
-            error = std::string("Sandboxed plugin worker is busy. Try saving ") + label + " again.";
+            error = "Sandboxed plugin control channel is busy.";
             return false;
         }
-
-        if (!drainLateAudioResponse(250))
+        if (lateControlResponsePending &&
+            !waitForReply(controlResponseEvent, header->controlResponseId, lateControlRequestId, 250))
         {
-            error = "Sandboxed plugin worker is still finishing a late audio block.";
+            error = "Sandboxed plugin is still finishing an earlier control request.";
             return false;
         }
-
-        std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
-        InterlockedExchange(&header->textByteCount, 0);
-        InterlockedExchange(&header->command, command);
-        const LONG request = InterlockedIncrement(&requestCounter);
-        InterlockedExchange(&header->requestId, request);
-        ResetEvent(responseEvent);
+        lateControlResponsePending = false;
+        std::memcpy(stateData, payload.data(), payload.size());
+        stateData[payload.size()] = 0;
+        InterlockedExchange(&header->textByteCount, static_cast<LONG>(payload.size()));
+        InterlockedExchange(&header->controlCommand, command);
+        const LONG request = InterlockedIncrement(&controlRequestCounter);
+        InterlockedExchange(&header->controlRequestId, request);
         SetEvent(controlEvent);
-
-        const DWORD wait = WaitForSingleObject(responseEvent, SandboxStateTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->responseId != request)
+        if (!waitForReply(controlResponseEvent, header->controlResponseId, request, timeout))
         {
-            error = std::string("Sandboxed plugin worker did not answer the ") + label + " capture request.";
+            lateControlResponsePending = true;
+            lateControlRequestId = request;
+            error = "Sandboxed plugin did not answer the control request.";
             return false;
         }
-
-        if (header->status < 0)
+        if (header->controlStatus < 0)
         {
-            error = std::string("Sandboxed plugin ") + label + " capture failed in the worker.";
+            error = "Sandboxed plugin control request failed.";
             return false;
         }
-
-        const auto byteCount = std::clamp(static_cast<int>(header->textByteCount), 0, stateDataBytes);
-        value.assign(reinterpret_cast<const char*>(stateData), static_cast<size_t>(byteCount));
+        const auto count = header->textByteCount;
+        if (count < 0 || count >= stateDataBytes)
+        {
+            error = "Sandboxed plugin returned an invalid text length.";
+            return false;
+        }
+        result.assign(reinterpret_cast<const char*>(stateData), static_cast<size_t>(count));
         return true;
     }
 
-    bool applyTextBase64Command(LONG command, const std::string& value, std::string& error, const char* label)
+    bool captureTextBase64Command(LONG command, std::string& value, std::string& error, const char*)
     {
-        error.clear();
-        if (value.empty())
-            return true;
-
-        if (!ready.load(std::memory_order_relaxed) || header == nullptr || stateData == nullptr || stateDataBytes <= 1 || controlEvent == nullptr || responseEvent == nullptr)
-        {
-            error = std::string("Sandboxed plugin worker is not ready for ") + label + " restore.";
-            return false;
-        }
-
-        if (value.size() >= static_cast<size_t>(stateDataBytes))
-        {
-            error = std::string("Saved sandboxed plugin ") + label + " is too large for the worker transfer buffer.";
-            return false;
-        }
-
-        ScopedSandboxIpcFlag ipc(ipcBusy, 1000);
-        if (!ipc.isLocked())
-        {
-            error = std::string("Sandboxed plugin worker is busy. Try restoring ") + label + " again.";
-            return false;
-        }
-
-        if (!drainLateAudioResponse(250))
-        {
-            error = "Sandboxed plugin worker is still finishing a late audio block.";
-            return false;
-        }
-
-        std::fill_n(stateData, static_cast<size_t>(stateDataBytes), static_cast<unsigned char>(0));
-        std::memcpy(stateData, value.data(), value.size());
-        InterlockedExchange(&header->textByteCount, static_cast<LONG>(value.size()));
-        InterlockedExchange(&header->command, command);
-        const LONG request = InterlockedIncrement(&requestCounter);
-        InterlockedExchange(&header->requestId, request);
-        ResetEvent(responseEvent);
-        SetEvent(controlEvent);
-
-        const DWORD wait = WaitForSingleObject(responseEvent, SandboxStateTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->responseId != request)
-        {
-            error = std::string("Sandboxed plugin worker did not answer the ") + label + " restore request.";
-            return false;
-        }
-
-        if (header->status < 0)
-        {
-            error = std::string("Sandboxed plugin ") + label + " restore failed in the worker.";
-            return false;
-        }
-
-        return true;
+        return controlRequest(command, {}, value, error, SandboxStateTimeoutMs);
     }
 
-    void start(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int inputLayoutId, int outputLayoutId, std::string& error)
+    bool applyTextBase64Command(LONG command, const std::string& value, std::string& error, const char*)
+    {
+        error.clear();
+        if (value.empty()) return true;
+        std::string ignored;
+        return controlRequest(command, value, ignored, error, SandboxStateTimeoutMs);
+    }
+
+    void start(const std::string& format, const std::string& fileOrIdentifier, int sampleRate, int inputLayoutId, int outputLayoutId, std::string& error,
+               const std::string& manufacturer, sandbox::Mode mode, const PluginLoadProgressCallback& progress)
     {
         error.clear();
         const auto workerPath = configuredWorkerPath();
@@ -3094,10 +2983,12 @@ private:
 
         const DWORD pid = GetCurrentProcessId();
         const LONG sequence = InterlockedIncrement(&sandboxGlobalSequence);
+        helperInstanceId = sequence;
         const std::wstring baseName = L"Local\\ElkaFxSandbox_" + std::to_wstring(pid) + L"_" + std::to_wstring(sequence);
         mapName = baseName + L"_map";
         requestEventName = baseName + L"_request";
         controlEventName = baseName + L"_control";
+        controlResponseEventName = baseName + L"_control_response";
         responseEventName = baseName + L"_response";
         shutdownEventName = baseName + L"_shutdown";
 
@@ -3133,65 +3024,35 @@ private:
 
         requestEvent = CreateEventW(nullptr, FALSE, FALSE, requestEventName.c_str());
         controlEvent = CreateEventW(nullptr, FALSE, FALSE, controlEventName.c_str());
+        controlResponseEvent = CreateEventW(nullptr, FALSE, FALSE, controlResponseEventName.c_str());
         responseEvent = CreateEventW(nullptr, FALSE, FALSE, responseEventName.c_str());
         shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, shutdownEventName.c_str());
-        if (requestEvent == nullptr || controlEvent == nullptr || responseEvent == nullptr || shutdownEvent == nullptr)
+        if (!requestEvent || !controlEvent || !controlResponseEvent || !responseEvent || !shutdownEvent)
         {
             error = "Could not create sandbox synchronization events.";
             return;
         }
 
-        std::wstring commandLine = quoteWindowsArg(workerPath);
-        commandLine += L" host-v1 ";
-        commandLine += quoteWindowsArg(fromUtf8(format));
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(fromUtf8(fileOrIdentifier));
-        commandLine += L" ";
-        commandLine += std::to_wstring(std::clamp(sampleRate, 8000, 192000));
-        commandLine += L" ";
-        commandLine += std::to_wstring(maxBlockSize);
-        commandLine += L" ";
-        commandLine += std::to_wstring(inputPinCount);
-        commandLine += L" ";
-        commandLine += std::to_wstring(outputPinCount);
-        commandLine += L" ";
-        commandLine += std::to_wstring(inputLayoutId);
-        commandLine += L" ";
-        commandLine += std::to_wstring(outputLayoutId);
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(mapName);
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(requestEventName);
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(responseEventName);
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(shutdownEventName);
-        commandLine += L" ";
-        commandLine += quoteWindowsArg(controlEventName);
-
-        STARTUPINFOW startup {};
-        startup.cb = sizeof(startup);
-        PROCESS_INFORMATION processInfo {};
-        std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
-        mutableCommand.push_back(L'\0');
-        if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | HIGH_PRIORITY_CLASS, nullptr, nullptr, &startup, &processInfo))
+        helper = SandboxHelper::acquire(sandbox::groupKey(mode, fileOrIdentifier, manufacturer,
+            std::to_string(pid) + ":" + std::to_string(sequence)), error);
+        if (!helper) return;
+        workerProcess = helper->processHandle();
+        if (!helper->add(sequence, baseName, format, fileOrIdentifier, sampleRate, maxBlockSize,
+                         inputPinCount, outputPinCount, inputLayoutId, outputLayoutId, progress, error))
         {
-            error = "Could not start Elka.PluginWorker.exe.";
+            stop();
             return;
         }
-
-        workerProcess = processInfo.hProcess;
-        workerThread = processInfo.hThread;
-        AllowSetForegroundWindow(processInfo.dwProcessId);
-
-        const DWORD wait = WaitForSingleObject(responseEvent, SandboxReadyTimeoutMs);
-        if (wait != WAIT_OBJECT_0 || header->status <= 0)
+        if (InterlockedCompareExchange(&header->status, 0, 0) <= 0)
         {
-            error = "Sandboxed plugin worker did not become ready before timeout.";
+            error = "Sandbox instance protocol v2 initialization failed.";
             stop();
             return;
         }
 
+        LARGE_INTEGER frequency {};
+        QueryPerformanceFrequency(&frequency);
+        spinTicks = std::max<LONGLONG>(1, frequency.QuadPart * 30 / 1000000);
         ready.store(true, std::memory_order_relaxed);
     }
 
@@ -3201,18 +3062,16 @@ private:
         if (shutdownEvent != nullptr)
             SetEvent(shutdownEvent);
 
-        if (workerProcess != nullptr)
+        if (helper)
         {
-            const DWORD wait = WaitForSingleObject(workerProcess, 1500);
-            if (wait != WAIT_OBJECT_0)
-                TerminateProcess(workerProcess, 2);
+            helper->remove(helperInstanceId);
+            helper.reset();
         }
-
-        closeHandleIfValid(workerThread);
-        closeHandleIfValid(workerProcess);
+        workerProcess = nullptr;
         closeHandleIfValid(shutdownEvent);
         closeHandleIfValid(responseEvent);
         closeHandleIfValid(controlEvent);
+        closeHandleIfValid(controlResponseEvent);
         closeHandleIfValid(requestEvent);
 
         if (mappedView != nullptr)
@@ -3256,8 +3115,7 @@ private:
             return true;
         }
 
-        const DWORD wait = WaitForSingleObject(responseEvent, waitMilliseconds);
-        if (wait != WAIT_OBJECT_0)
+        if (!waitForReply(responseEvent, header->responseId, lateAudioRequestId, waitMilliseconds))
             return false;
 
         lateAudioResponsePending = false;
@@ -3366,22 +3224,30 @@ private:
     std::wstring mapName;
     std::wstring requestEventName;
     std::wstring controlEventName;
+    std::wstring controlResponseEventName;
     std::wstring responseEventName;
     std::wstring shutdownEventName;
     HANDLE mapping = nullptr;
     HANDLE requestEvent = nullptr;
     HANDLE controlEvent = nullptr;
+    HANDLE controlResponseEvent = nullptr;
     HANDLE responseEvent = nullptr;
     HANDLE shutdownEvent = nullptr;
     HANDLE workerProcess = nullptr;
-    HANDLE workerThread = nullptr;
+    std::shared_ptr<SandboxHelper> helper;
+    LONG helperInstanceId = 0;
     unsigned char* mappedView = nullptr;
     SandboxAudioHeader* header = nullptr;
     float* audioData = nullptr;
     unsigned char* stateData = nullptr;
     int stateDataBytes = 0;
     volatile LONG requestCounter = 0;
-    volatile LONG ipcBusy = 0;
+    volatile LONG audioBusy = 0;
+    volatile LONG controlBusy = 0;
+    volatile LONG controlRequestCounter = 0;
+    bool lateControlResponsePending = false;
+    LONG lateControlRequestId = 0;
+    LONGLONG spinTicks = 1;
     bool lateAudioResponsePending = false;
     LONG lateAudioRequestId = 0;
     int inputPinCount = 2;
@@ -3511,13 +3377,25 @@ int createWorkerPluginProcessor(
 
 bool processWorkerPluginProcessor(int handle, float* planarData, int channelCount, int samples)
 {
-#if ELKA_ENABLE_JUCE_PLUGIN_HOST
-    std::unique_lock lock(workerSessionsMutex);
-    const auto found = workerSessions.find(handle);
-    if (found == workerSessions.end() || found->second == nullptr || found->second->processor == nullptr)
-        return false;
+    return processWorkerPluginAudioContext(workerPluginAudioContext(handle), planarData, channelCount, samples);
+}
 
-    auto* session = found->second.get();
+void* workerPluginAudioContext(int handle)
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    std::lock_guard lock(workerSessionsMutex);
+    const auto found = workerSessions.find(handle);
+    return found == workerSessions.end() ? nullptr : found->second.get();
+#else
+    return nullptr;
+#endif
+}
+
+bool processWorkerPluginAudioContext(void* context, float* planarData, int channelCount, int samples)
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    auto* session = static_cast<WorkerPluginSession*>(context);
+    if (!session || !session->processor) return false;
     auto* processor = session->processor.get();
     const int safeChannelCount = std::clamp(channelCount, 1, SandboxMaxPins);
     const int safeSamples = std::clamp(samples, 0, session->maxBlockSize);
@@ -3542,8 +3420,6 @@ bool processWorkerPluginProcessor(int handle, float* planarData, int channelCoun
     view.inputChannels = safeChannelCount;
     view.outputChannels = safeChannelCount;
     view.samplesPerFrame = safeSamples;
-    lock.unlock();
-
     return processor->process(
         view,
         PluginRoutingView {
@@ -3554,6 +3430,36 @@ bool processWorkerPluginProcessor(int handle, float* planarData, int channelCoun
         });
 #else
     return false;
+#endif
+}
+
+bool workerPluginFailed(int handle)
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    std::lock_guard lock(workerSessionsMutex);
+    const auto found = workerSessions.find(handle);
+    return found == workerSessions.end() || !found->second || !found->second->processor || found->second->processor->hasFailed();
+#else
+    return true;
+#endif
+}
+
+bool workerPluginEditorOpen(int handle)
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    std::lock_guard lock(workerSessionsMutex);
+    const auto found = workerSessions.find(handle);
+    return found != workerSessions.end() && found->second && found->second->editorWindow &&
+        found->second->editorWindow->isVisible();
+#else
+    return false;
+#endif
+}
+
+void cancelSandboxPluginLoad() noexcept
+{
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    sandboxLoadCancelled.store(true, std::memory_order_relaxed);
 #endif
 }
 
@@ -4759,9 +4665,12 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
     int sourceCount,
     const std::string& initialStateBase64,
     const std::string& initialPresetBase64,
-    PluginLoadProgressCallback progress)
+    PluginLoadProgressCallback progress, int sandboxMode)
 {
     error.clear();
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    sandboxLoadCancelled.store(false, std::memory_order_relaxed);
+#endif
     (void)inputLayoutName;
     (void)outputLayoutName;
 
@@ -4816,7 +4725,7 @@ int PluginHostLayer::addSandboxedDiscoveredPluginNode(
         requestedOutputPins,
         inputLayoutId,
         outputLayoutId,
-        error);
+        error, summary.manufacturer, static_cast<sandbox::Mode>(std::clamp(sandboxMode, 0, 2)), progress);
 
     if (processor == nullptr || !processor->isReady())
     {
@@ -5650,6 +5559,21 @@ bool PluginHostLayer::isPluginNodeFailed(int slot) const noexcept
 #else
     (void) slot;
     return false;
+#endif
+}
+
+void PluginHostLayer::failedHelperPeers(int slot, int* flags, int count) const noexcept
+{
+    std::fill_n(flags, count, 0);
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    if (slot < 0 || slot >= MaxPluginNodes) return;
+    const auto* selected = dynamic_cast<SandboxedPluginProcessor*>(impl->nodeProcessors[slot].get());
+    if (!selected || !selected->helperExited()) return;
+    for (int i = 0; i < std::min(count, MaxPluginNodes); ++i)
+    {
+        const auto* peer = dynamic_cast<SandboxedPluginProcessor*>(impl->nodeProcessors[i].get());
+        flags[i] = peer && peer->helperIdentity() == selected->helperIdentity() ? 1 : 0;
+    }
 #endif
 }
 

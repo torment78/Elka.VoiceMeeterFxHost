@@ -31,7 +31,7 @@ The WPF project automatically configures and builds:
 
 - `ElkaVoiceMeeterFxHost.Native.dll`
 - `ElkaVoiceMeeterFxHost.RealtimeCore.dll`
-- `Elka.PluginWorker`
+- `Elka.PluginWorker.exe` (native C++, no managed worker project)
 - the WPF application
 
 It selects the `vs2026-x64` CMake preset first and `vs2022-x64` as the fallback.
@@ -61,6 +61,7 @@ worker payloads synchronized. For native-only diagnostics:
 cmake --preset vs2026-x64
 cmake --build --preset debug-vs2026 --target ElkaVoiceMeeterFxHost.Native
 cmake --build --preset debug-vs2026 --target ElkaVoiceMeeterFxHost.RealtimeCore
+cmake --build --preset debug-vs2026 --target Elka.PluginWorker
 ```
 
 Use `vs2022-x64` and its matching build preset when Visual Studio 2026 is not

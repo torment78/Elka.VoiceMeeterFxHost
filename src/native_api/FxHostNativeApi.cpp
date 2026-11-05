@@ -3015,7 +3015,7 @@ int addPluginNodeNative(
     int* outputPinsOut,
     wchar_t* status,
     int statusChars,
-    bool sandboxed = false)
+    bool sandboxed = false, int sandboxMode = 0)
 {
     try
     {
@@ -3070,7 +3070,7 @@ int addPluginNodeNative(
             narrowWide(initialPresetBase64),
             [](const std::string& stage, const std::string& detail) {
                 setPluginLoadProgress(true, stage, detail);
-            })
+            }, sandboxMode)
         : target.plugins.addDiscoveredPluginNode(
             static_cast<size_t>(std::max(0, pluginIndex)),
             sampleRate,
@@ -3411,6 +3411,31 @@ __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeFailures(int* flags, int c
     for (int slot = 0; slot < elka::PluginHostLayer::MaxPluginNodes; ++slot)
         flags[slot] = g_host->plugins.isPluginNodeFailed(slot) ? 1 : 0;
     return 0;
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetFailedHelperPeers(int slot, int* flags, int count)
+{
+    if (!flags || count < elka::PluginHostLayer::MaxPluginNodes) return -1;
+    std::unique_lock lock(g_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_host) return 1;
+    g_host->plugins.failedHelperPeers(slot, flags, elka::PluginHostLayer::MaxPluginNodes);
+    return 0;
+}
+
+__declspec(dllexport) void __cdecl ElkaFx_CancelSandboxPluginLoad()
+{
+    elka::cancelSandboxPluginLoad();
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_AddSandboxedPluginNodeWithMode(
+    int pluginIndex, int mode, int mainInputPins, int sidechainInputPins, int outputPins,
+    int inputLayoutId, int outputLayoutId, int x, int y,
+    const wchar_t* initialStateBase64, const wchar_t* initialPresetBase64,
+    int* slotOut, int* inputPinsOut, int* outputPinsOut, wchar_t* status, int statusChars, int sandboxMode)
+{
+    return addPluginNodeNative(pluginIndex, mode, mainInputPins, sidechainInputPins, outputPins,
+        inputLayoutId, outputLayoutId, x, y, initialStateBase64, initialPresetBase64,
+        slotOut, inputPinsOut, outputPinsOut, status, statusChars, true, sandboxMode);
 }
 
 __declspec(dllexport) int __cdecl ElkaFx_GetPluginNodeStateLength(int slot)

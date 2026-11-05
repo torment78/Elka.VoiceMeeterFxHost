@@ -81,13 +81,14 @@ Type: files; Name: "{app}\ElkaVoiceMeeterFxHost.Native.dll"
 #if !FileExists(SourceDir + "\ElkaVoiceMeeterFxHost.RealtimeCore.dll")
 Type: files; Name: "{app}\ElkaVoiceMeeterFxHost.RealtimeCore.dll"
 #endif
+#endif
+; The native worker is embedded too; old external workers must not shadow it.
 #if !FileExists(SourceDir + "\Elka.PluginWorker.exe")
 Type: files; Name: "{app}\Elka.PluginWorker.exe"
 Type: files; Name: "{app}\Elka.PluginWorker.dll"
 Type: files; Name: "{app}\Elka.PluginWorker.deps.json"
 Type: files; Name: "{app}\Elka.PluginWorker.runtimeconfig.json"
 Type: files; Name: "{app}\Elka.PluginWorker.pdb"
-#endif
 #endif
 
 [Icons]

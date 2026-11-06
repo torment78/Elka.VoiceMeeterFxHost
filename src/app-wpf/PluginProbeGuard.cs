@@ -77,6 +77,14 @@ internal static class PluginProbeGuard
     public static bool RequiresSandboxedHosting(PluginChoice choice)
     {
         if (ShouldProbe(choice)) return true;
+        return IsSandboxOnly(choice);
+    }
+
+    public static bool ShouldShowSandboxLoadProgress(PluginChoice choice, bool sandboxed) =>
+        sandboxed && (ShouldProbe(choice) || !IsSandboxOnly(choice));
+
+    private static bool IsSandboxOnly(PluginChoice choice)
+    {
         if (string.IsNullOrWhiteSpace(choice.Identifier)) return false;
         var text = $"{choice.Name} {choice.Identifier}".ToLowerInvariant();
         return SandboxOnlyMarkers.Any(text.Contains);

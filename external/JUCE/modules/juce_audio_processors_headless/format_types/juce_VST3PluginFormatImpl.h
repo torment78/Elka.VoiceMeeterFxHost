@@ -1311,6 +1311,12 @@ public:
         if (result.classIndex == numClasses)
             return {};
 
+        PClassInfo info{};
+        if (factory->getClassInfo (result.classIndex, &info) != kResultOk)
+            return {};
+
+        std::memcpy (result.classId.data(), info.cid, result.classId.size());
+
         return result;
     }
 
@@ -1322,6 +1328,28 @@ public:
     Steinberg::int32 getClassIndex() const
     {
         return classIndex;
+    }
+
+    bool refreshClassIndex()
+    {
+        const auto factory = getPluginFactory();
+        if (factory == nullptr)
+            return false;
+
+        const auto numClasses = factory->countClasses();
+        for (Steinberg::int32 i = 0; i < numClasses; ++i)
+        {
+            PClassInfo info{};
+            if (factory->getClassInfo (i, &info) == kResultOk
+                && std::memcmp (info.cid, classId.data(), classId.size()) == 0)
+            {
+                classIndex = i;
+                return true;
+            }
+        }
+
+        classIndex = numClasses;
+        return false;
     }
 
     String getName() const
@@ -1385,6 +1413,7 @@ private:
 
     RefCountedDllHandle::Ptr handle;
     Steinberg::int32 classIndex{};
+    std::array<char, sizeof (TUID)> classId{};
 
     //==============================================================================
     JUCE_LEAK_DETECTOR (VST3ModuleHandle)
@@ -1636,6 +1665,11 @@ struct VST3ComponentHolder
 
         if (pf3 != nullptr)
             pf3->setHostContext (host->getFUnknown());
+
+        // WaveShell can reorder its factory classes when the host context is set.
+        // Resolve the same class ID again instead of creating its former neighbour.
+        if (! module.refreshClassIndex())
+            return false;
 
         const auto classIdx = module.getClassIndex();
 

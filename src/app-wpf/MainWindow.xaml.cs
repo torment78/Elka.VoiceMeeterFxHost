@@ -211,7 +211,8 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        NativeEngineClient.BeginSandboxLoad = () => new SandboxLoadProgress();
+        NativeEngineClient.BeginSandboxLoad = choice => PluginProbeGuard.ShouldShowSandboxLoadProgress(choice, true)
+            ? new SandboxLoadProgress() : null;
         InitializeComponent();
         InitializeTrayIcon();
 

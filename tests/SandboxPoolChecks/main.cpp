@@ -166,9 +166,88 @@ void mismatch(const std::wstring& worker)
     check(rejected, "Pooled protocol version mismatch refused");
 }
 
+uint32_t presetClassHash(const std::string& preset)
+{
+    juce::MemoryBlock bytes;
+    check(bytes.fromBase64Encoding(juce::String::fromUTF8(preset.c_str())), "Preset decodes completely");
+    check(bytes.getSize() >= 48 && std::memcmp(bytes.getData(), "VST3", 4) == 0, "VST3 preset header");
+    const auto* classId = static_cast<const char*>(bytes.getData()) + 8;
+    uint32_t hash = 0;
+    for (int part = 0; part < 4; ++part)
+    {
+        uint32_t word = 0;
+        const auto* start = classId + part * 8;
+        const auto parsed = std::from_chars(start, start + 8, word, 16);
+        check(parsed.ec == std::errc() && parsed.ptr == start + 8, "Complete preset class ID");
+        hash = hash * 31 + word;
+    }
+    return hash;
+}
+
+void shellIdentity(const std::string& shell)
+{
+    juce::VST3PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> found;
+    format.findAllTypesForFile(found, juce::String::fromUTF8(shell.c_str()));
+    check(found.size() > 1, "Shared container has multiple plugin classes");
+    auto verify = [&](SandboxedPluginProcessor& node, const juce::PluginDescription& expected)
+    {
+        std::string error;
+        auto preset = node.presetBase64(error);
+        check(!preset.empty() && error.empty(), "Capture loaded component identity");
+        check(presetClassHash(preset) == static_cast<uint32_t>(expected.uniqueId), "Actual component class matches selected shell member");
+        const auto info = node.parameterInfo(error);
+        check(!info.empty() && error.empty(), "Loaded controller exposes parameters");
+        if (expected.name.startsWith("Vocal Bender"))
+        {
+            check(info.find("\tPitch\t") != std::string::npos && info.find("\tFormant\t") != std::string::npos,
+                "Vocal Bender component has its own controller, not Clarity's");
+            check(info.find("Reset Neural Network") == std::string::npos, "Clarity controller is not substituted for Vocal Bender");
+        }
+        std::cout << "Verified " << expected.name << " class=" << std::hex << expected.uniqueId << std::dec << std::endl;
+    };
+    auto loadMember = [&](const juce::PluginDescription& description, Mode mode)
+    {
+        return load(pluginContainerIdentifier(shell, static_cast<uint32_t>(description.uniqueId)), "VST3", "Waves", mode);
+    };
+    for (auto* description : found)
+    {
+        auto node = loadMember(*description, Mode::OwnProcess);
+        verify(*node, *description);
+    }
+    for (const bool reverse : {true, false})
+    {
+        std::vector<Instance> nodes;
+        std::vector<juce::PluginDescription*> order;
+        for (int i = 0; i < found.size(); ++i)
+        {
+            auto* description = found[reverse ? found.size() - 1 - i : i];
+            nodes.push_back(loadMember(*description, Mode::Auto));
+            order.push_back(description);
+            check(helper(nodes.front()) == helper(nodes.back()), "All shell members share one Auto helper");
+            verify(*nodes.back(), *description);
+        }
+        nodes[0].reset();
+        nodes[0] = loadMember(*order[0], Mode::Auto);
+        verify(*nodes[0], *order[0]);
+        std::string error;
+        check(nodes[0]->openEditor("Shell identity check", error), "Correct member editor opens");
+        check(nodes[0]->closeEditor(error), "Correct member editor closes");
+        verify(*nodes[0], *order[0]);
+        for (size_t i = 1; i < nodes.size(); ++i) verify(*nodes[i], *order[i]);
+        HANDLE process = nullptr;
+        check(DuplicateHandle(GetCurrentProcess(), helper(nodes[0])->processHandle(), GetCurrentProcess(), &process, SYNCHRONIZE, FALSE, 0), "Observe shared helper lifetime");
+        nodes.clear();
+        const auto exited = WaitForSingleObject(process, 5000) == WAIT_OBJECT_0;
+        CloseHandle(process);
+        check(exited, "Shared helper exits after last shell member removal");
+    }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
-    if (argc != 3 && argc != 7) return 64;
+    if (argc != 3 && argc != 4 && argc != 7) return 64;
+    if (argc == 4 && std::wstring(argv[2]) != L"--shell") return 64;
     try
     {
         juce::ScopedJuceInitialiser_GUI gui;
@@ -177,7 +256,8 @@ int wmain(int argc, wchar_t** argv)
         SetEnvironmentVariableW(L"APPDATA", scratch.c_str());
         SetEnvironmentVariableW(L"LOCALAPPDATA", scratch.c_str());
         SetEnvironmentVariableW(L"ELKA_PLUGIN_WORKER_EXE", argv[1]);
-        if (argc == 3) { mismatch(argv[1]); synthetic(toUtf8(argv[2])); }
+        if (argc == 4 && std::wstring(argv[2]) == L"--shell") shellIdentity(toUtf8(argv[3]));
+        else if (argc == 3) { mismatch(argv[1]); synthetic(toUtf8(argv[2])); }
         else
         {
             // Four shell instances, two instances of another maker, one own.

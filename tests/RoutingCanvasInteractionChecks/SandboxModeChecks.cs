@@ -18,6 +18,7 @@ public partial class MainWindow
         {
             Check(!PluginProbeGuard.ShouldProbe(waves), "WaveShell loads once without a separate probe");
             Check(PluginProbeGuard.RequiresSandboxedHosting(waves), "New and restored WaveShell nodes use a releasable helper");
+            Check(!PluginProbeGuard.ShouldShowSandboxLoadProgress(waves, true), "WaveShell helper load has no routine progress popup");
             var saved = new PluginNodeSnapshot { Name = waves.Name, PluginIdentifier = waves.Identifier, PluginFormat = waves.Format };
             Check(saved.SandboxMode == 0, "New WaveShell nodes default to Auto");
             for (var mode = 0; mode < 3; mode++)
@@ -34,8 +35,12 @@ public partial class MainWindow
             new PluginChoice(4, "FabFilter Pro-Q 4", "VST3", @"C:\Plugins\FabFilter Pro-Q 4.vst3"),
             new PluginChoice(5, "WaveShell without an identifier", "VST3", "")
         })
+        {
             Check(!PluginProbeGuard.ShouldProbe(ordinary) && !PluginProbeGuard.RequiresSandboxedHosting(ordinary),
                 "Ordinary/invalid plugins require neither probe nor sandbox");
+            Check(!PluginProbeGuard.ShouldShowSandboxLoadProgress(ordinary, false), "In-process plugins have no helper progress popup");
+            Check(PluginProbeGuard.ShouldShowSandboxLoadProgress(ordinary, true), "Explicitly sandboxed ordinary plugins retain cancellable load progress");
+        }
         foreach (var protectedPlugin in new[]
         {
             new PluginChoice(6, "1176", "VST3", @"C:\Plugins\uaudio_ua_1176.vst3"),
@@ -43,8 +48,11 @@ public partial class MainWindow
             new PluginChoice(8, "Universal Audio compressor", "VST3", @"C:\Plugins\compressor.vst3"),
             new PluginChoice(9, "Slate Digital VMR", "VST3", @"C:\Plugins\VMR.vst3")
         })
+        {
             Check(PluginProbeGuard.ShouldProbe(protectedPlugin) && PluginProbeGuard.RequiresSandboxedHosting(protectedPlugin),
                 "Existing UAD/Slate probe and sandbox requirements are unchanged");
+            Check(PluginProbeGuard.ShouldShowSandboxLoadProgress(protectedPlugin, true), "UAD/Slate retain cancellable helper load progress");
+        }
         Check(JsonSerializer.Deserialize<PluginNodeSnapshot>("{}")!.SandboxMode == 0, "Older nodes default Auto");
         for (var mode = 0; mode < 3; mode++)
         {

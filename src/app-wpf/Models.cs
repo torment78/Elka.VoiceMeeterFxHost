@@ -877,7 +877,7 @@ internal interface IPluginSavedData
 
 internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 {
-    internal static Func<IDisposable>? BeginSandboxLoad { get; set; }
+    internal static Func<PluginChoice, IDisposable?>? BeginSandboxLoad { get; set; }
     private const string DllName = "ElkaVoiceMeeterFxHost.Native.dll";
     private const int NativeConnectionRunning = 3;
     private bool _attached;
@@ -1854,7 +1854,7 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
             !string.IsNullOrWhiteSpace(initialStateBase64) ||
             !string.IsNullOrWhiteSpace(initialPresetBase64);
 
-        using var loadProgress = sandboxed ? BeginSandboxLoad?.Invoke() : null;
+        using var loadProgress = sandboxed ? BeginSandboxLoad?.Invoke(choice) : null;
         var result = sandboxed
             ? ElkaFx_AddSandboxedPluginNodeWithMode(
                 choice.Index, (int)mode, mainInputPins, sidechainInputPins, outputPins,

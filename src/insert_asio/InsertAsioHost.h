@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -17,13 +18,15 @@ class RealtimeEngine;
 class InsertAsioHost final : private juce::AudioIODeviceCallback
 {
 public:
-    explicit InsertAsioHost(RealtimeEngine& engine);
+    explicit InsertAsioHost(RealtimeEngine& engine, std::unique_ptr<juce::AudioIODeviceType> deviceType = {});
     ~InsertAsioHost() override;
 
     InsertAsioHost(const InsertAsioHost&) = delete;
     InsertAsioHost& operator=(const InsertAsioHost&) = delete;
 
     bool probe(int expectedChannelCount, std::wstring& status);
+    bool detectDriver(int expectedChannelCount, std::wstring& status);
+    bool driverInfo(std::wstring& name, int& inputs, int& outputs) const;
     bool start(int requestedSampleRate, int requestedBlockSize, int expectedChannelCount, std::wstring& status);
     void stop(std::wstring& status) noexcept;
     void status(std::wstring& status) const;
@@ -46,20 +49,27 @@ private:
 
     static std::wstring toWide(const juce::String& text);
     static bool isVoiceMeeterInsertDriverName(const juce::String& name);
-    struct DriverCandidate
+    struct DetectedInsertDriver
     {
         juce::String name;
         int inputChannels = 0;
         int outputChannels = 0;
+        juce::Array<double> sampleRates;
+        juce::Array<int> bufferSizes;
+        std::chrono::steady_clock::time_point detectedAt;
     };
 
-    std::vector<DriverCandidate> findInsertDriverCandidates(std::wstring& status);
-    DriverCandidate selectInsertDriverCandidate(int expectedChannelCount, std::wstring& status);
+    std::vector<DetectedInsertDriver> findInsertDriverCandidates(std::wstring& status);
+    DetectedInsertDriver selectInsertDriverCandidate(int expectedChannelCount, std::wstring& status);
+    bool detectDriverLocked(int expectedChannelCount, std::wstring& status);
+    bool openDriver(const DetectedInsertDriver& candidate, int requestedSampleRate,
+                    int requestedBlockSize, int expectedChannelCount, std::wstring& status);
 
     RealtimeEngine& realtimeEngine;
     mutable std::mutex deviceMutex;
     std::unique_ptr<juce::AudioIODeviceType> asioType;
     std::unique_ptr<juce::AudioIODevice> device;
+    DetectedInsertDriver detectedDriver;
     std::atomic<bool> running { false };
     std::atomic<int> sampleRate { 0 };
     std::atomic<int> blockSize { 0 };

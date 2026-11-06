@@ -44,6 +44,7 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--insert-asio")) { window.CheckInsertAsioUi(); return 0; }
             if (args.Contains("--quick-connect")) { window.CheckQuickConnectionChains(); return 0; }
             if (args.Contains("--widget-states")) { window.CheckWidgetTileStates(); return 0; }
             if (args.Contains("--widget-levels")) { window.CheckWidgetLevels(); return 0; }
@@ -67,6 +68,7 @@ internal static class CanvasInteractionChecks
             if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             if (args.Contains("--rollback")) { window.CheckRollbackUi(); return 0; }
             window.CheckCanvasInteraction();
+            window.CheckInsertAsioUi();
             window.CheckEndpointMeterUi();
             window.CheckOutputBoostUi();
             window.CheckRollbackUi();

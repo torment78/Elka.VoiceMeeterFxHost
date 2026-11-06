@@ -286,7 +286,7 @@ public partial class MainWindow : Window
         var startupDelaySeconds = ConfiguredStartupDelaySeconds();
         _startupEngineDelayActive = startupDelaySeconds > 0;
 
-        SyncInsertAsioEndpointKeysFromPatchInsertState(rebuildToggles: false, queueSave: false);
+        DetectStartupInsertAsioDriver();
         BuildInsertAsioEndpointToggles();
         SetInsertAsioAutoStartCheckBox(_settings.InsertAsioAutoStart);
         ApplyInsertAsioPatchAvailability();
@@ -974,8 +974,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var status = _engine.ProbeInsertAsio(_kind);
+        if (!SupportsInsertAsio || _engine.IsInsertAsioRunning || _engine.IsInsertAsioOpen)
+            return;
+        var status = _engine.DetectInsertAsio(_kind);
         InsertAsioStatusTextBlock.Text = status;
+        UpdateInsertAsioDriverDisplay();
         AppendLog(status);
     }
 
@@ -986,12 +989,14 @@ public partial class MainWindow : Window
 
     private void StartInsertAsioFromUi(bool rememberRunning)
     {
-        if (!InsertAsioPatchControlEnabled)
+        if (!InsertAsioPatchControlEnabled || !SupportsInsertAsio)
         {
             _settings.InsertAsioAutoStart = false;
             SetInsertAsioAutoStartCheckBox(false);
-            InsertAsioStatusTextBlock.Text = InsertAsioPatchDisabledMessage;
-            AppendLog(InsertAsioPatchDisabledMessage);
+            var message = SupportsInsertAsio ? InsertAsioPatchDisabledMessage
+                : "ASIO Patch requires VoiceMeeter Banana or Potato.";
+            InsertAsioStatusTextBlock.Text = message;
+            AppendLog(message);
             QueueSave();
             return;
         }
@@ -1066,10 +1071,12 @@ public partial class MainWindow : Window
 
     private void BuildInsertAsioEndpointToggles()
     {
+        SyncInsertAsioEndpointKeysFromPatchInsertState(updateToggles: false, queueSave: false);
         _updatingInsertAsioControls = true;
         try
         {
             InsertAsioEndpointTogglesPanel.Children.Clear();
+            _insertAsioToggles.Clear();
             _settings.InsertAsioEndpointKeys ??= [];
             if (!InsertAsioPatchControlEnabled)
             {
@@ -1088,10 +1095,10 @@ public partial class MainWindow : Window
                 var liveState = PatchInsertStateForEndpoint(endpoint);
                 var toggle = new CheckBox
                 {
-                    Content = liveState is null ? $"{endpoint.Name} (partial)" : endpoint.Name,
+                    Content = PatchInsertLabel(endpoint, liveState),
                     Tag = endpoint,
-                    IsThreeState = true,
-                    IsChecked = liveState ?? (_settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase) ? true : false),
+                    IsThreeState = false,
+                    IsChecked = liveState == true,
                     Foreground = (Brush)FindResource("RouteAccentBrush"),
                     Margin = new Thickness(0, 0, 12, 6),
                     ToolTip = "Live VoiceMeeter Patch.insert state for this input. Checked routes the input through ASIO Patch; unchecked leaves it on the normal callback path."
@@ -1099,7 +1106,7 @@ public partial class MainWindow : Window
 
                 toggle.Checked += InsertAsioEndpointToggle_Changed;
                 toggle.Unchecked += InsertAsioEndpointToggle_Changed;
-                toggle.Indeterminate += InsertAsioEndpointToggle_Changed;
+                _insertAsioToggles[key] = toggle;
                 InsertAsioEndpointTogglesPanel.Children.Add(toggle);
             }
         }
@@ -1118,14 +1125,13 @@ public partial class MainWindow : Window
 
         var enabled = toggle.IsChecked == true;
         SetInsertAsioEndpointArmed(endpoint, enabled);
-        SetPatchInsertForEndpoint(endpoint, enabled);
         QueueSave();
-        if (!_engine.IsInsertAsioRunning && enabled)
+        if (!InsertAsioPatchClient.IsInsertAsioRunning && enabled)
         {
             AppendLog($"{endpoint.Name}: Patch.insert enabled while ASIO Patch is stopped; normal callback audio for this input is routed through VoiceMeeter's insert path until ASIO Patch is started or this is unchecked.");
         }
 
-        ApplyInsertAsioPatchSelection();
+        ApplyInsertAsioPatchSelection(endpoint);
         RefreshAfterInsertAsioStateChange();
     }
 
@@ -1149,36 +1155,45 @@ public partial class MainWindow : Window
 
     private bool? PatchInsertStateForEndpoint(IoEndpoint endpoint)
     {
-        bool? state = null;
+        return _insertAsioEndpointStates.TryGetValue(endpoint.Key(CallbackMode.Input), out var state)
+            ? state : IsEndpointArmedForInsertAsio(endpoint);
+    }
+
+    private bool TryReadPatchInsertState(IoEndpoint endpoint, out bool? state)
+    {
+        state = null;
+        var mixed = false;
         for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
         {
-            var value = _engine.GetPatchInsertEnabled(channel);
+            var value = InsertAsioPatchClient.GetPatchInsertEnabled(channel);
             if (value < 0)
             {
-                continue;
+                return false;
             }
 
             var enabled = value != 0;
             state ??= enabled;
             if (state.Value != enabled)
             {
-                return null;
+                mixed = true;
             }
         }
 
-        return state ?? false;
+        if (mixed) state = null;
+        return true;
     }
 
     private void SetPatchInsertForEndpoint(IoEndpoint endpoint, bool enabled)
     {
-        var suppressCallback = _engine.IsInsertAsioRunning && enabled;
+        var key = endpoint.Key(CallbackMode.Input);
+        _pendingInsertAsioStates[key] = (enabled, Environment.TickCount64);
+        UpdatePatchInsertToggle(endpoint, enabled);
+        var suppressCallback = InsertAsioPatchClient.IsInsertAsioRunning && enabled;
         for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
         {
-            _engine.SetInputCallbackSuppressedChannel(channel, suppressCallback);
-            _engine.SetPatchInsertEnabled(channel, enabled);
+            InsertAsioPatchClient.SetInputCallbackSuppressedChannel(channel, suppressCallback);
+            InsertAsioPatchClient.SetPatchInsertEnabled(channel, enabled);
         }
-
-        _engine.RefreshVoicemeeterParameters();
     }
 
     private void DisableAllInsertAsioPatchChannels(bool clearEndpointKeys)
@@ -1190,43 +1205,54 @@ public partial class MainWindow : Window
 
         foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
         {
-            for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
-            {
-                _engine.SetInputCallbackSuppressedChannel(channel, false);
-                _engine.SetPatchInsertEnabled(channel, false);
-            }
+            SetPatchInsertForEndpoint(endpoint, false);
         }
-
-        _engine.RefreshVoicemeeterParameters();
     }
 
-    private bool SyncInsertAsioEndpointKeysFromPatchInsertState(bool rebuildToggles, bool queueSave)
+    private bool SyncInsertAsioEndpointKeysFromPatchInsertState(bool updateToggles, bool queueSave, long? nowMilliseconds = null)
     {
-        if (!InsertAsioPatchControlEnabled)
+        // Refresh once for the entire read batch; never instantiate UI controls here.
+        if (!InsertAsioPatchControlEnabled || !SupportsInsertAsio)
         {
             return false;
         }
 
         _settings.InsertAsioEndpointKeys ??= [];
+        var refreshed = InsertAsioPatchClient.RefreshVoicemeeterParameters();
         var changed = false;
-        var hasPartial = false;
+        var now = nowMilliseconds ?? Environment.TickCount64;
         foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
         {
             var key = endpoint.Key(CallbackMode.Input);
-            var liveState = PatchInsertStateForEndpoint(endpoint);
-            if (liveState is null)
+            bool? liveState = null;
+            var hasLiveState = refreshed && TryReadPatchInsertState(endpoint, out liveState);
+            if (hasLiveState) _insertAsioLiveStates[key] = liveState;
+            if (_pendingInsertAsioStates.TryGetValue(key, out var pending))
             {
-                hasPartial = true;
-                continue;
+                if (hasLiveState && liveState == pending.Desired)
+                    _pendingInsertAsioStates.Remove(key);
+                else if (now - pending.MarkedAt < 2000)
+                    continue;
+                else
+                {
+                    _pendingInsertAsioStates.Remove(key);
+                    AppendLog($"VoiceMeeter did not accept Patch.insert for {endpoint.Name}");
+                    // A disconnected Remote API must not keep a request pending forever.
+                    if (!hasLiveState) hasLiveState = _insertAsioLiveStates.TryGetValue(key, out liveState);
+                }
             }
+            if (!hasLiveState) continue;
+
+            if (updateToggles) UpdatePatchInsertToggle(endpoint, liveState);
+            else _insertAsioEndpointStates[key] = liveState;
 
             var currentlySaved = _settings.InsertAsioEndpointKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
-            if (liveState.Value == currentlySaved)
+            if ((liveState == true) == currentlySaved)
             {
                 continue;
             }
 
-            SetInsertAsioEndpointArmed(endpoint, liveState.Value);
+            SetInsertAsioEndpointArmed(endpoint, liveState == true);
             changed = true;
         }
 
@@ -1235,14 +1261,9 @@ public partial class MainWindow : Window
             QueueSave();
         }
 
-        if (rebuildToggles && (changed || hasPartial))
-        {
-            BuildInsertAsioEndpointToggles();
-        }
-
         return changed;
     }
-    private void ApplyInsertAsioPatchSelection()
+    private void ApplyInsertAsioPatchSelection(IoEndpoint? changedEndpoint = null)
     {
         if (!InsertAsioPatchControlEnabled)
         {
@@ -1250,19 +1271,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var insertAsioRunning = _engine.IsInsertAsioRunning;
         foreach (var endpoint in VoicemeeterIoLayout.GetEndpoints(CallbackMode.Input, _kind))
         {
-            var patchInsertEnabled = IsEndpointArmedForInsertAsio(endpoint);
-            var suppressCallback = insertAsioRunning && patchInsertEnabled;
-            for (var channel = endpoint.Range.Start; channel <= endpoint.Range.End; channel++)
-            {
-                _engine.SetInputCallbackSuppressedChannel(channel, suppressCallback);
-                _engine.SetPatchInsertEnabled(channel, patchInsertEnabled);
-            }
+            if (changedEndpoint is not null && endpoint != changedEndpoint) continue;
+            SetPatchInsertForEndpoint(endpoint, IsEndpointArmedForInsertAsio(endpoint));
         }
-
-        _engine.RefreshVoicemeeterParameters();
     }
 
     private void SyncInputCallbackSuppression()
@@ -1293,9 +1306,9 @@ public partial class MainWindow : Window
 
     private void RefreshAfterInsertAsioStateChange()
     {
-        _engine.RefreshVoicemeeterParameters();
+        SyncInsertAsioEndpointKeysFromPatchInsertState(updateToggles: true, queueSave: true);
         _lastSelectedPatchBypassState = null;
-        BuildInsertAsioEndpointToggles();
+        UpdateInsertAsioDriverDisplay();
         ApplyEngineState();
         var rebuildEndpointButtons = false;
         if (IsInsertAsioPatchExclusiveActive() && _selectedMode != CallbackMode.Input)
@@ -1958,6 +1971,9 @@ public partial class MainWindow : Window
         _settings.EditionWorkspaces ??= [];
         _settings.InsertAsioEndpointKeys ??= [];
         _settings.StartupDelaySeconds = SanitizeStartupDelaySeconds(_settings.StartupDelaySeconds);
+        _pendingInsertAsioStates.Clear();
+        _insertAsioEndpointStates.Clear();
+        _insertAsioLiveStates.Clear();
 
         var savedKind = _settings.Kind == VoicemeeterKind.Unknown
             ? VoicemeeterKind.Potato
@@ -3318,6 +3334,7 @@ public partial class MainWindow : Window
 
         RefreshVoicemeeterParametersIfNeeded();
         SyncInsertAsioPatchStateIfNeeded();
+        UpdateInsertAsioRedetectAvailability();
         UpdateHostStatusDisplay();
         InsertAsioStatusTextBlock.Text = InsertAsioPatchControlEnabled ? _engine.InsertAsioStatus() : InsertAsioPatchDisabledMessage;
         if (InsertAsioPatchControlEnabled)
@@ -3483,7 +3500,7 @@ public partial class MainWindow : Window
         }
 
         _lastInsertAsioPatchStateSyncAt = now;
-        SyncInsertAsioEndpointKeysFromPatchInsertState(rebuildToggles: true, queueSave: true);
+        SyncInsertAsioEndpointKeysFromPatchInsertState(updateToggles: true, queueSave: true);
     }
     private void MonitorRealtimeCallback()
     {

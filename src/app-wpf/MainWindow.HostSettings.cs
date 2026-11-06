@@ -184,13 +184,25 @@ public partial class MainWindow
             await rollbackView.LoadVersionsAsync();
         };
         root.Children.Add(rollback);
+        root.Children.Add(new TextBlock
+        {
+            Text = "ASIO Patch", Style = (Style)FindResource("MutedText"), Margin = new Thickness(0, 0, 0, 6)
+        });
+        var redetect = CreateSaveManagerButton("Re-detect ASIO driver");
+        redetect.Style = (Style)FindResource("AsioButton");
+        redetect.Margin = new Thickness(0, 0, 0, 18);
+        ToolTipService.SetShowOnDisabled(redetect, true);
+        redetect.Click += ProbeInsertAsioButton_Click;
+        _redetectInsertAsioButton = redetect;
+        UpdateInsertAsioRedetectAvailability();
+        root.Children.Add(redetect);
         window.Closed += (_, _) => rollbackView?.Dispose();
         var close = CreateSaveManagerButton("Close");
         close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Click += (_, _) => window.Close();
         root.Children.Add(close);
         try { window.ShowDialog(); }
-        finally { _hostSettingsWindow = null; }
+        finally { _hostSettingsWindow = null; _redetectInsertAsioButton = null; }
     }
 
     private void ShowEditorHotkeys(Window owner, PluginNodeSnapshot? selectedNode = null, PluginGroupSnapshot? selectedGroup = null,

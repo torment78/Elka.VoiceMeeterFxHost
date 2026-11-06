@@ -431,11 +431,6 @@
                                 <StackPanel Grid.Row="0"
                             Grid.Column="1"
                             Orientation="Horizontal">
-                                    <Button Content="Probe"
-                          Width="64"
-                          Padding="8,5"
-                          Style="{StaticResource AsioButton}"
-                          Click="ProbeInsertAsioButton_Click" />
                                     <Button Content="Start"
                           Width="64"
                           Padding="8,5"
@@ -449,13 +444,15 @@
                           Style="{StaticResource AsioButton}"
                           Click="StopInsertAsioButton_Click" />
                                 </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
+                                    <TextBlock x:Name="InsertAsioDriverTextBlock" Margin="0,8,0,0"
+                                               TextWrapping="Wrap" Style="{StaticResource MutedText}" />
                                 <TextBlock x:Name="InsertAsioStatusTextBlock"
-                           Grid.Row="1"
-                           Grid.ColumnSpan="2"
                            Text="Insert ASIO host stopped."
                            Margin="0,8,0,0"
                            TextWrapping="Wrap"
                            Style="{StaticResource MutedText}" />
+                                </StackPanel>
                                 <WrapPanel x:Name="InsertAsioEndpointTogglesPanel"
                            Grid.Row="2"
                            Grid.ColumnSpan="2"

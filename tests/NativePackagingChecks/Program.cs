@@ -8,6 +8,10 @@ using Elka.VoiceMeeterFxHost.App;
 try
 {
     if (Native.IsRemoteReady() != 0) throw new Exception("Remote readiness unexpectedly initialized the host.");
+    var driver = new System.Text.StringBuilder(1024);
+    if (Native.InsertDriverInfo(driver, driver.Capacity, out var driverInputs, out var driverOutputs) != -1 ||
+        driver.Length != 0 || driverInputs != 0 || driverOutputs != 0 || Native.IsRemoteReady() != 0)
+        throw new Exception("Insert ASIO cache query unexpectedly initialized the host or invented a driver.");
     Native.SetOutputBoost(2, 0, 24000); // Main must be rejected before creating a host.
     if (Native.IsRemoteReady() != 0) throw new Exception("Main boost unexpectedly initialized the host.");
     var failures = Enumerable.Repeat(42, PluginCapacity.Slots).ToArray();
@@ -41,6 +45,9 @@ try
     using var file = File.OpenRead(module.FileName);
     if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_AddSandboxedPluginNodeWithMode", out _))
         throw new Exception("Sandbox mode export is missing.");
+    if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_DetectInsertAsio", out _) ||
+        !NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_ProbeInsertAsio", out _))
+        throw new Exception("Insert ASIO detection exports are missing.");
     string hash = Convert.ToHexString(SHA256.HashData(file));
     if (args.Length != 1 || !hash.Equals(args[0], StringComparison.OrdinalIgnoreCase))
         throw new Exception($"Wrong native DLL: {module.FileName}, SHA256 {hash}");
@@ -57,6 +64,8 @@ catch (Exception ex)
 internal static class Native
 {
     private const string Dll = "ElkaVoiceMeeterFxHost.Native.dll";
+    [DllImport(Dll, EntryPoint = "ElkaFx_GetInsertAsioDriverInfo", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int InsertDriverInfo(System.Text.StringBuilder name, int chars, out int inputs, out int outputs);
     [DllImport(Dll, EntryPoint = "ElkaFx_GetFailedHelperPeers", CallingConvention = CallingConvention.Cdecl)]
     internal static extern int FailedHelperPeers(int slot, [In, Out] int[] flags, int count);
     [DllImport(Dll, EntryPoint = "ElkaFx_CancelSandboxPluginLoad", CallingConvention = CallingConvention.Cdecl)]

@@ -875,7 +875,19 @@ internal interface IPluginSavedData
     bool SetPluginNodeControl(int slot, string controlName, string valueText, out string status);
 }
 
-internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
+internal interface IInsertAsioPatchClient
+{
+    bool IsInsertAsioRunning { get; }
+    bool IsInsertAsioOpen { get; }
+    bool RefreshVoicemeeterParameters();
+    int GetPatchInsertEnabled(int channel);
+    bool SetPatchInsertEnabled(int channel, bool enabled);
+    void SetInputCallbackSuppressedChannel(int channel, bool suppressed);
+}
+
+internal sealed record InsertAsioDriverInfo(string Name, int Inputs, int Outputs);
+
+internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInsertAsioPatchClient
 {
     internal static Func<PluginChoice, IDisposable?>? BeginSandboxLoad { get; set; }
     private const string DllName = "ElkaVoiceMeeterFxHost.Native.dll";
@@ -1467,6 +1479,33 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
     public int GetPatchPostFxInsertEnabled()
     {
         return _attached ? ElkaFx_GetPatchPostFxInsertEnabled() : -1;
+    }
+
+    public string DetectInsertAsio(VoicemeeterKind kind)
+    {
+        if (!_attached) return _lastStatus;
+        var status = new StringBuilder(2048);
+        try
+        {
+            ElkaFx_DetectInsertAsio(VoicemeeterIoLayout.InputChannelCount(kind), status, status.Capacity);
+        }
+        catch (SEHException ex)
+        {
+            status.Clear().Append($"Insert ASIO detection failed: {ex.Message}");
+        }
+        return status.ToString();
+    }
+
+    public InsertAsioDriverInfo? GetInsertAsioDriverInfo()
+    {
+        if (!_attached) return null;
+        var name = new StringBuilder(1024);
+        try
+        {
+            return ElkaFx_GetInsertAsioDriverInfo(name, name.Capacity, out var inputs, out var outputs) == 0
+                ? new(name.ToString(), inputs, outputs) : null;
+        }
+        catch (SEHException) { return null; }
     }
 
     public string ProbeInsertAsio(VoicemeeterKind kind)
@@ -2604,6 +2643,12 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_ProbeInsertAsio(int expectedChannelCount, StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_DetectInsertAsio(int expectedChannelCount, StringBuilder status, int statusChars);
+
+    [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int ElkaFx_GetInsertAsioDriverInfo(StringBuilder name, int nameChars, out int inputs, out int outputs);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_StartInsertAsio(int expectedChannelCount, StringBuilder status, int statusChars);

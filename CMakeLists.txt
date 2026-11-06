@@ -198,6 +198,13 @@ include(tests/PluginFailureChecks/CMakeLists.txt)
 include(tests/PluginCapacityChecks/CMakeLists.txt)
 include(tests/SandboxPoolChecks/CMakeLists.txt)
 
+add_executable(InsertAsioChecks EXCLUDE_FROM_ALL tests/InsertAsioChecks/main.cpp
+    src/insert_asio/InsertAsioHost.cpp src/engine/RealtimeEngine.cpp src/engine/AudioThreadPriority.cpp)
+target_include_directories(InsertAsioChecks PRIVATE src)
+target_compile_definitions(InsertAsioChecks PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_ASIO=1 JUCE_ASIO_USE_EXTERNAL_SDK=0)
+target_link_libraries(InsertAsioChecks PRIVATE juce::juce_audio_devices Avrt)
+
 add_library(NativeWorkerProbeVst MODULE EXCLUDE_FROM_ALL tests/NativeWorkerChecks/ProbeVst.cpp)
 target_include_directories(NativeWorkerProbeVst PRIVATE "${ELKA_VST2_SDK_PATH}")
 target_link_libraries(NativeWorkerProbeVst PRIVATE User32)

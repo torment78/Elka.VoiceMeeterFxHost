@@ -67,8 +67,8 @@ juce::BigInteger allChannels(int count)
 }
 }
 
-InsertAsioHost::InsertAsioHost(RealtimeEngine& engine)
-    : realtimeEngine(engine)
+InsertAsioHost::InsertAsioHost(RealtimeEngine& engine, std::unique_ptr<juce::AudioIODeviceType> deviceType)
+    : realtimeEngine(engine), asioType(std::move(deviceType))
 {
 }
 
@@ -81,14 +81,60 @@ InsertAsioHost::~InsertAsioHost()
 bool InsertAsioHost::probe(int expectedChannelCount, std::wstring& status)
 {
     std::lock_guard lock(deviceMutex);
-    const auto candidate = selectInsertDriverCandidate(expectedChannelCount, status);
-    if (candidate.name.isEmpty())
+    if (running.load(std::memory_order_acquire) || device != nullptr)
+    {
+        // Never instantiate a second copy of a single-client driver.
+        status = L"ASIO Patch is running; showing the active driver. Stop ASIO Patch to re-detect.";
+        const auto name = detectedDriver.name.isNotEmpty() ? detectedDriver.name
+            : device != nullptr ? device->getName() : juce::String();
+        const auto inputs = detectedDriver.name.isNotEmpty() ? detectedDriver.inputChannels
+            : device != nullptr ? device->getInputChannelNames().size() : 0;
+        const auto outputs = detectedDriver.name.isNotEmpty() ? detectedDriver.outputChannels
+            : device != nullptr ? device->getOutputChannelNames().size() : 0;
+        status += L"\nDriver: " + toWide(name) + L" (" + std::to_wstring(inputs) + L" in / " +
+            std::to_wstring(outputs) + L" out)";
+        return name.isNotEmpty();
+    }
+    return detectDriverLocked(expectedChannelCount, status);
+}
+
+bool InsertAsioHost::detectDriver(int expectedChannelCount, std::wstring& status)
+{
+    std::lock_guard lock(deviceMutex);
+    return detectDriverLocked(expectedChannelCount, status);
+}
+
+bool InsertAsioHost::detectDriverLocked(int expectedChannelCount, std::wstring& status)
+{
+    if (running.load(std::memory_order_acquire) || device != nullptr)
+    {
+        status = L"Stop ASIO Patch to re-detect the driver";
+        return false;
+    }
+    detectedDriver = selectInsertDriverCandidate(expectedChannelCount, status);
+    if (detectedDriver.name.isEmpty())
         return false;
 
-    status += L"\nSelected Insert ASIO driver: " + toWide(candidate.name) +
-        L" (" + std::to_wstring(candidate.inputChannels) + L" in / " +
-        std::to_wstring(candidate.outputChannels) + L" out)";
+    status += L"\nSelected Insert ASIO driver: " + toWide(detectedDriver.name) +
+        L" (" + std::to_wstring(detectedDriver.inputChannels) + L" in / " +
+        std::to_wstring(detectedDriver.outputChannels) + L" out)";
     return true;
+}
+
+bool InsertAsioHost::driverInfo(std::wstring& name, int& inputs, int& outputs) const
+{
+    std::lock_guard lock(deviceMutex);
+    if (detectedDriver.name.isEmpty() && device != nullptr)
+    {
+        name = toWide(device->getName());
+        inputs = device->getInputChannelNames().size();
+        outputs = device->getOutputChannelNames().size();
+        return true;
+    }
+    name = toWide(detectedDriver.name);
+    inputs = detectedDriver.inputChannels;
+    outputs = detectedDriver.outputChannels;
+    return !name.empty();
 }
 
 bool InsertAsioHost::start(int requestedSampleRate, int requestedBlockSize, int expectedChannelCount, std::wstring& status)
@@ -107,10 +153,27 @@ bool InsertAsioHost::start(int requestedSampleRate, int requestedBlockSize, int 
         return false;
     }
 
-    const auto candidate = selectInsertDriverCandidate(expectedChannelCount, status);
-    if (candidate.name.isEmpty())
+    if (device != nullptr)
+    {
+        status = L"Stop ASIO Patch before restarting the open driver.";
         return false;
+    }
 
+    const bool cacheMatches = detectedDriver.name.isNotEmpty() &&
+        (expectedChannelCount <= 0 || (detectedDriver.inputChannels == expectedChannelCount &&
+                                       detectedDriver.outputChannels == expectedChannelCount));
+    if (cacheMatches && openDriver(detectedDriver, requestedSampleRate, requestedBlockSize, expectedChannelCount, status))
+        return true;
+
+    // The failed real device has been destroyed before scanning a fallback.
+    if (!detectDriverLocked(expectedChannelCount, status))
+        return false;
+    return openDriver(detectedDriver, requestedSampleRate, requestedBlockSize, expectedChannelCount, status);
+}
+
+bool InsertAsioHost::openDriver(const DetectedInsertDriver& candidate, int requestedSampleRate,
+                              int requestedBlockSize, int expectedChannelCount, std::wstring& status)
+{
     const auto name = candidate.name;
     std::unique_ptr<juce::AudioIODevice> nextDevice(asioType->createDevice(name, name));
     if (nextDevice == nullptr)
@@ -306,7 +369,7 @@ bool InsertAsioHost::isVoiceMeeterInsertDriverName(const juce::String& name)
            lower.contains("asio");
 }
 
-std::vector<InsertAsioHost::DriverCandidate> InsertAsioHost::findInsertDriverCandidates(std::wstring& status)
+std::vector<InsertAsioHost::DetectedInsertDriver> InsertAsioHost::findInsertDriverCandidates(std::wstring& status)
 {
     if (asioType == nullptr)
         asioType.reset(juce::AudioIODeviceType::createAudioIODeviceType_ASIO());
@@ -319,13 +382,13 @@ std::vector<InsertAsioHost::DriverCandidate> InsertAsioHost::findInsertDriverCan
 
     asioType->scanForDevices();
     const auto names = asioType->getDeviceNames();
-    std::vector<DriverCandidate> candidates;
+    std::vector<DetectedInsertDriver> candidates;
     for (const auto& name : names)
     {
         if (!isVoiceMeeterInsertDriverName(name))
             continue;
 
-        DriverCandidate candidate;
+        DetectedInsertDriver candidate;
         candidate.name = name;
 
         std::unique_ptr<juce::AudioIODevice> probeDevice(asioType->createDevice(name, name));
@@ -333,6 +396,9 @@ std::vector<InsertAsioHost::DriverCandidate> InsertAsioHost::findInsertDriverCan
         {
             candidate.inputChannels = probeDevice->getInputChannelNames().size();
             candidate.outputChannels = probeDevice->getOutputChannelNames().size();
+            candidate.sampleRates = probeDevice->getAvailableSampleRates();
+            candidate.bufferSizes = probeDevice->getAvailableBufferSizes();
+            candidate.detectedAt = std::chrono::steady_clock::now();
         }
 
         candidates.push_back(candidate);
@@ -368,13 +434,13 @@ std::vector<InsertAsioHost::DriverCandidate> InsertAsioHost::findInsertDriverCan
     return {};
 }
 
-InsertAsioHost::DriverCandidate InsertAsioHost::selectInsertDriverCandidate(int expectedChannelCount, std::wstring& status)
+InsertAsioHost::DetectedInsertDriver InsertAsioHost::selectInsertDriverCandidate(int expectedChannelCount, std::wstring& status)
 {
     auto candidates = findInsertDriverCandidates(status);
     if (candidates.empty())
         return {};
 
-    auto exact = std::find_if(candidates.begin(), candidates.end(), [expectedChannelCount](const DriverCandidate& candidate) {
+    auto exact = std::find_if(candidates.begin(), candidates.end(), [expectedChannelCount](const DetectedInsertDriver& candidate) {
         return expectedChannelCount > 0 &&
                candidate.inputChannels == expectedChannelCount &&
                candidate.outputChannels == expectedChannelCount;
@@ -382,7 +448,7 @@ InsertAsioHost::DriverCandidate InsertAsioHost::selectInsertDriverCandidate(int 
     if (exact != candidates.end())
         return *exact;
 
-    auto best = std::max_element(candidates.begin(), candidates.end(), [](const DriverCandidate& left, const DriverCandidate& right) {
+    auto best = std::max_element(candidates.begin(), candidates.end(), [](const DetectedInsertDriver& left, const DetectedInsertDriver& right) {
         const auto leftChannels = std::min(left.inputChannels, left.outputChannels);
         const auto rightChannels = std::min(right.inputChannels, right.outputChannels);
         return leftChannels < rightChannels;

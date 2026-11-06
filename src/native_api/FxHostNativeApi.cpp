@@ -1852,6 +1852,42 @@ __declspec(dllexport) void __cdecl ElkaFx_Shutdown()
         g_host.reset();
 }
 
+__declspec(dllexport) int __cdecl ElkaFx_DetectInsertAsio(int expectedChannelCount, wchar_t* status, int statusChars)
+{
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        std::wstring message;
+        const bool ok = host().insertAsio.detectDriver(expectedChannelCount, message);
+        writeWide(message, status, statusChars);
+        return ok ? 0 : -1;
+    }
+    catch (...)
+    {
+        writeWide(L"Insert ASIO detection failed.", status, statusChars);
+        return -1;
+    }
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_GetInsertAsioDriverInfo(wchar_t* name, int nameChars, int* inputs, int* outputs)
+{
+    if (name == nullptr || nameChars <= 0 || inputs == nullptr || outputs == nullptr)
+        return -1;
+    try
+    {
+        std::lock_guard lock(g_mutex);
+        std::wstring driver;
+        *inputs = *outputs = 0;
+        const bool ok = g_host && g_host->insertAsio.driverInfo(driver, *inputs, *outputs);
+        writeWide(driver, name, nameChars);
+        return ok ? 0 : -1;
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
 __declspec(dllexport) int __cdecl ElkaFx_ProbeInsertAsio(int expectedChannelCount, wchar_t* status, int statusChars)
 {
     try

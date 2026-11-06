@@ -48,12 +48,19 @@ internal static class PluginProbeCli
 
 internal static class PluginProbeGuard
 {
-    private static readonly string[] RiskMarkers =
+    private static readonly string[] ProbeMarkers =
     [
         "uaudio",
         "uad",
         "universal audio",
         "slate"
+    ];
+
+    // WaveShell keeps its WebView2 environment alive after editor teardown.
+    // A native helper releases it when the last plugin in that helper unloads.
+    private static readonly string[] SandboxOnlyMarkers =
+    [
+        "waveshell"
     ];
 
     public static bool ShouldProbe(PluginChoice choice)
@@ -64,10 +71,16 @@ internal static class PluginProbeGuard
         }
 
         var text = $"{choice.Name} {choice.Identifier}".ToLowerInvariant();
-        return RiskMarkers.Any(text.Contains);
+        return ProbeMarkers.Any(text.Contains);
     }
 
-    public static bool RequiresSandboxedHosting(PluginChoice choice) => ShouldProbe(choice);
+    public static bool RequiresSandboxedHosting(PluginChoice choice)
+    {
+        if (ShouldProbe(choice)) return true;
+        if (string.IsNullOrWhiteSpace(choice.Identifier)) return false;
+        var text = $"{choice.Name} {choice.Identifier}".ToLowerInvariant();
+        return SandboxOnlyMarkers.Any(text.Contains);
+    }
 
     public static async Task<PluginProbeResult> ProbeAsync(PluginChoice choice, TimeSpan timeout)
     {

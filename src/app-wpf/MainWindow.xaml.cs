@@ -6949,7 +6949,7 @@ private void RefreshEndpointButtonSelection()
         PluginNodeSnapshot? node = null;
         try
         {
-            var loadSandboxed = false;
+            var loadSandboxed = PluginProbeGuard.RequiresSandboxedHosting(choice);
             if (PluginProbeGuard.ShouldProbe(choice))
             {
                 AppendLog($"{choice.Name}: running isolated plugin probe before loading in the main host...");
@@ -6963,11 +6963,14 @@ private void RefreshEndpointButtonSelection()
                     return null;
                 }
 
-                if (PluginProbeGuard.RequiresSandboxedHosting(choice))
+                if (loadSandboxed)
                 {
-                    loadSandboxed = true;
                     AppendLog($"{choice.Name}: isolated probe passed; loading as a sandboxed worker node.");
                 }
+            }
+            else if (loadSandboxed)
+            {
+                AppendLog($"{choice.Name}: loading directly as a sandboxed worker node.");
             }
 
             var loadTask = Task.Run(() => _engine.AddPluginNode(

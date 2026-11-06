@@ -9,6 +9,42 @@ public partial class MainWindow
     internal void CheckSandboxModes()
     {
         static void Check(bool value, string message) { if (!value) throw new Exception(message); }
+        foreach (var waves in new[]
+        {
+            new PluginChoice(0, "Clarity Vx Stereo - Waves [VST3]", "VST3", @"C:\Plugins\WaveShell1-VST3 17.1_x64.vst3|elka-shell-v1|62711721"),
+            new PluginChoice(1, "Renamed Waves node", "VST3", @"C:\Plugins\WAVESHELL1-VST3 17.1_X64.VST3|elka-shell-v1|d8711721"),
+            new PluginChoice(2, "Waves VST2 node", "VST", @"C:\Plugins\WaveShell1-VST 17.1_x64.dll|elka-shell-v1|00000001")
+        })
+        {
+            Check(!PluginProbeGuard.ShouldProbe(waves), "WaveShell loads once without a separate probe");
+            Check(PluginProbeGuard.RequiresSandboxedHosting(waves), "New and restored WaveShell nodes use a releasable helper");
+            var saved = new PluginNodeSnapshot { Name = waves.Name, PluginIdentifier = waves.Identifier, PluginFormat = waves.Format };
+            Check(saved.SandboxMode == 0, "New WaveShell nodes default to Auto");
+            for (var mode = 0; mode < 3; mode++)
+            {
+                saved.SandboxMode = mode;
+                var restored = new PluginNodeSnapshot { PluginIdentifier = waves.Identifier, PluginFormat = waves.Format };
+                ApplySavedNodeVisualState(restored, saved);
+                Check(restored.Sandboxed && restored.SandboxMode == mode, "WaveShell restore keeps the selected Auto/Shared/Own process mode");
+            }
+        }
+        foreach (var ordinary in new[]
+        {
+            new PluginChoice(3, "ReaEQ", "VST", @"C:\Plugins\reaeq.dll"),
+            new PluginChoice(4, "FabFilter Pro-Q 4", "VST3", @"C:\Plugins\FabFilter Pro-Q 4.vst3"),
+            new PluginChoice(5, "WaveShell without an identifier", "VST3", "")
+        })
+            Check(!PluginProbeGuard.ShouldProbe(ordinary) && !PluginProbeGuard.RequiresSandboxedHosting(ordinary),
+                "Ordinary/invalid plugins require neither probe nor sandbox");
+        foreach (var protectedPlugin in new[]
+        {
+            new PluginChoice(6, "1176", "VST3", @"C:\Plugins\uaudio_ua_1176.vst3"),
+            new PluginChoice(7, "UAD 1176", "VST3", @"C:\Plugins\1176.vst3"),
+            new PluginChoice(8, "Universal Audio compressor", "VST3", @"C:\Plugins\compressor.vst3"),
+            new PluginChoice(9, "Slate Digital VMR", "VST3", @"C:\Plugins\VMR.vst3")
+        })
+            Check(PluginProbeGuard.ShouldProbe(protectedPlugin) && PluginProbeGuard.RequiresSandboxedHosting(protectedPlugin),
+                "Existing UAD/Slate probe and sandbox requirements are unchanged");
         Check(JsonSerializer.Deserialize<PluginNodeSnapshot>("{}")!.SandboxMode == 0, "Older nodes default Auto");
         for (var mode = 0; mode < 3; mode++)
         {
@@ -43,6 +79,6 @@ public partial class MainWindow
         using (var progress = new SandboxLoadProgress(() => "Synthetic licensing progress test", () => { }))
             Thread.Sleep(900);
         Thread.Sleep(250);
-        Console.WriteLine("PASS: 22 sandbox mode persistence, properties, menu and clone checks; independent load-progress UI opened and disposed.");
+        Console.WriteLine("PASS: sandbox mode persistence, properties, menu, clone and WaveShell isolation checks; independent load-progress UI opened and disposed.");
     }
 }

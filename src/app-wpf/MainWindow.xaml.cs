@@ -180,9 +180,12 @@ public partial class MainWindow : Window
 
     private sealed record PluginFolderListItem(string Path, bool IsDefault)
     {
+        public bool ScanEnabled { get; set; } = true;
+        public string Label => IsDefault ? $"{Path}  (default)" : Path;
+
         public override string ToString()
         {
-            return IsDefault ? $"{Path}  (default)" : Path;
+            return Label;
         }
     }
 
@@ -901,6 +904,7 @@ public partial class MainWindow : Window
 
         var folder = folderItem.Path;
         _settings.PluginScanFolders.RemoveAll(item => string.Equals(item, folder, StringComparison.OrdinalIgnoreCase));
+        _settings.DisabledPluginScanFolders.RemoveAll(item => string.Equals(item, folder, StringComparison.OrdinalIgnoreCase));
         PopulatePluginFolderList();
         QueueSave();
         AppendLog($"Removed plugin scan folder: {folder}");
@@ -911,6 +915,37 @@ public partial class MainWindow : Window
         RemovePluginFolderButton.IsEnabled = !PluginBrowserBusy &&
                                              PluginFoldersListBox.SelectedItem is PluginFolderListItem { IsDefault: false };
     }
+
+    private void PluginFolderScanCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: PluginFolderListItem folder } checkBox)
+        {
+            return;
+        }
+
+        if (_loading || PluginBrowserBusy)
+        {
+            folder.ScanEnabled = !_settings.DisabledPluginScanFolders.Contains(folder.Path, StringComparer.OrdinalIgnoreCase);
+            checkBox.IsChecked = folder.ScanEnabled;
+            return;
+        }
+
+        folder.ScanEnabled = checkBox.IsChecked == true;
+        _settings.DisabledPluginScanFolders.RemoveAll(path => string.Equals(path, folder.Path, StringComparison.OrdinalIgnoreCase));
+        if (!folder.ScanEnabled)
+        {
+            _settings.DisabledPluginScanFolders.Add(folder.Path);
+        }
+
+        SelectPluginFolder(folder.Path);
+        QueueSave();
+    }
+
+    private string[] EnabledPluginScanFolders() => PluginFolderListBoxItems()
+        .Where(static folder => folder.ScanEnabled)
+        .Select(static folder => folder.Path)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     private async void ScanButton_Click(object sender, RoutedEventArgs e)
     {
@@ -926,7 +961,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var folders = _settings.PluginScanFolders.ToArray();
+        var folders = EnabledPluginScanFolders();
+        if (folders.Length == 0)
+        {
+            AppendLog("No scan folders are enabled. Check a folder before scanning; the existing VST list has been kept.");
+            return;
+        }
+
         var formatFilter = SanitizePluginFormatFilter(_settings.PluginFormatFilter);
         _pluginScanInProgress = true;
         _pluginScanLabel = PluginFormatFilterLabel(formatFilter);
@@ -943,7 +984,7 @@ public partial class MainWindow : Window
         {
             var result = await Task.Run(() => _engine.ScanPlugins(folders, formatFilter));
             AppendLog(result);
-            PopulatePluginList();
+            PopulatePluginList(_engine.PluginChoices(), logSummary: true);
             QueueSavedPluginNodeRestore();
         }
         catch (Exception ex)
@@ -1962,6 +2003,7 @@ public partial class MainWindow : Window
         _settings.PluginGroups ??= [];
         _settings.CanvasConnections ??= [];
         _settings.PluginScanFolders ??= [];
+        _settings.DisabledPluginScanFolders ??= [];
         _settings.EndpointCanvasYOffsets ??= [];
         _settings.EndpointRouteHues ??= [];
         _settings.CustomRouteColors = RouteHueColor.NormalizePalette(_settings.CustomRouteColors);
@@ -2520,6 +2562,7 @@ public partial class MainWindow : Window
         }
 
         _settings.PluginScanFolders.Add(normalized);
+        _settings.DisabledPluginScanFolders.RemoveAll(path => string.Equals(path, normalized, StringComparison.OrdinalIgnoreCase));
         NormalizePluginScanFolders();
         PopulatePluginFolderList();
         SelectPluginFolder(normalized);
@@ -2529,22 +2572,33 @@ public partial class MainWindow : Window
 
     private void PopulatePluginFolderList()
     {
+        PopulatePluginFolderList(_engine.DefaultPluginFolders(SanitizePluginFormatFilter(_settings.PluginFormatFilter)));
+    }
+
+    private void PopulatePluginFolderList(IReadOnlyList<string> defaultFolders)
+    {
         var selectedPath = PluginFoldersListBox.SelectedItem is PluginFolderListItem selected
             ? selected.Path
             : string.Empty;
 
         PluginFoldersListBox.Items.Clear();
-        var defaultFolders = _engine.DefaultPluginFolders(SanitizePluginFormatFilter(_settings.PluginFormatFilter));
-        foreach (var folder in defaultFolders)
+        var defaults = NormalizePluginFolderPaths(defaultFolders);
+        foreach (var folder in defaults)
         {
-            PluginFoldersListBox.Items.Add(new PluginFolderListItem(folder, true));
+            PluginFoldersListBox.Items.Add(new PluginFolderListItem(folder, true)
+            {
+                ScanEnabled = !_settings.DisabledPluginScanFolders.Contains(folder, StringComparer.OrdinalIgnoreCase)
+            });
         }
 
         foreach (var folder in _settings.PluginScanFolders
-                     .Where(folder => defaultFolders.All(defaultFolder =>
+                     .Where(folder => defaults.All(defaultFolder =>
                          !string.Equals(defaultFolder, folder, StringComparison.OrdinalIgnoreCase))))
         {
-            PluginFoldersListBox.Items.Add(new PluginFolderListItem(folder, false));
+            PluginFoldersListBox.Items.Add(new PluginFolderListItem(folder, false)
+            {
+                ScanEnabled = !_settings.DisabledPluginScanFolders.Contains(folder, StringComparer.OrdinalIgnoreCase)
+            });
         }
 
         if (!string.IsNullOrWhiteSpace(selectedPath))
@@ -2552,7 +2606,8 @@ public partial class MainWindow : Window
             SelectPluginFolder(selectedPath);
         }
 
-        RemovePluginFolderButton.IsEnabled = PluginFoldersListBox.SelectedItem is PluginFolderListItem { IsDefault: false };
+        RemovePluginFolderButton.IsEnabled = !PluginBrowserBusy && PluginFoldersListBox.SelectedItem is PluginFolderListItem { IsDefault: false };
+        QueueStableVerticalScrollBarStyle(PluginFoldersListBox);
     }
 
     private IEnumerable<PluginFolderListItem> PluginFolderListBoxItems()
@@ -2568,7 +2623,13 @@ public partial class MainWindow : Window
 
     private void NormalizePluginScanFolders()
     {
-        _settings.PluginScanFolders = _settings.PluginScanFolders
+        _settings.PluginScanFolders = NormalizePluginFolderPaths(_settings.PluginScanFolders);
+        _settings.DisabledPluginScanFolders = NormalizePluginFolderPaths(_settings.DisabledPluginScanFolders);
+    }
+
+    private static List<string> NormalizePluginFolderPaths(IEnumerable<string> folders)
+    {
+        return folders
             .Where(static folder => !string.IsNullOrWhiteSpace(folder))
             .Select(NormalizePluginFolderPath)
             .Where(static folder => !string.IsNullOrWhiteSpace(folder))
@@ -2581,9 +2642,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            return System.IO.Path.GetFullPath(folder.Trim()).TrimEnd(
-                System.IO.Path.DirectorySeparatorChar,
-                System.IO.Path.AltDirectorySeparatorChar);
+            return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(folder.Trim()));
         }
         catch
         {
@@ -4122,7 +4181,7 @@ public partial class MainWindow : Window
         PluginSearchTextBox.IsEnabled = true;
         PluginSearchTextBox.IsReadOnly = !enabled;
         PluginSearchTextBox.Cursor = enabled ? Cursors.IBeam : Cursors.AppStarting;
-        PluginFoldersListBox.IsEnabled = true;
+        PluginFoldersListBox.IsEnabled = enabled;
         PluginFoldersListBox.Cursor = enabled ? Cursors.Arrow : Cursors.AppStarting;
         RemovePluginFolderButton.IsEnabled = enabled && PluginFoldersListBox.SelectedItem is PluginFolderListItem { IsDefault: false };
         PluginListBox.IsEnabled = true;
@@ -6672,15 +6731,30 @@ private void RefreshEndpointButtonSelection()
 
     private void PopulatePluginList()
     {
+        PopulatePluginList(_engine.PluginChoices());
+    }
+
+    private void PopulatePluginList(IReadOnlyList<PluginChoice> plugins, bool logSummary = false)
+    {
         var search = PluginSearchTextBox.Text.Trim();
         var formatFilter = SanitizePluginFormatFilter(_settings.PluginFormatFilter);
         PluginListBox.Items.Clear();
 
-        foreach (var plugin in _engine.PluginChoices().Where(plugin =>
+        foreach (var plugin in plugins.Where(plugin =>
                      PluginMatchesFormat(plugin, formatFilter)
                      && (search.Length == 0 || plugin.Name.Contains(search, StringComparison.OrdinalIgnoreCase))))
         {
             PluginListBox.Items.Add(plugin);
+        }
+
+        var visibleCount = PluginListBox.Items.Count;
+        PluginListEmptyState.Visibility = visibleCount == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PluginListEmptyText.Text = plugins.Count == 0 ? "No VSTs found" : $"No matching VSTs ({plugins.Count:N0} found)";
+        ShowAllPluginResultsButton.Visibility = visibleCount == 0 && plugins.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        if (logSummary)
+        {
+            AppendLog($"VST list: {visibleCount} of {plugins.Count} scanned VST(s) shown; format={formatFilter}, search=\"{search}\".");
         }
 
         RefreshQuickGroupPluginListSelection();
@@ -6690,6 +6764,21 @@ private void RefreshEndpointButtonSelection()
         }
 
         QueueStableVerticalScrollBarStyle(PluginListBox);
+    }
+
+    private void ShowAllPluginResultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PluginBrowserBusy)
+        {
+            return;
+        }
+
+        _settings.PluginFormatFilter = PluginFormatFilter.All;
+        PluginSearchTextBox.Clear();
+        UpdatePluginFormatButtons();
+        PopulatePluginFolderList();
+        PopulatePluginList();
+        QueueSave();
     }
 
     private void RefreshQuickGroupPluginListSelection()

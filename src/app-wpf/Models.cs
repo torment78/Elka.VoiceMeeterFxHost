@@ -673,6 +673,7 @@ internal sealed class FxHostSettings
     public string PluginSearchText { get; set; } = string.Empty;
     public PluginFormatFilter PluginFormatFilter { get; set; } = PluginFormatFilter.All;
     public List<string> PluginScanFolders { get; set; } = [];
+    public List<string> DisabledPluginScanFolders { get; set; } = [];
     public bool VbanControlEnabled { get; set; }
     public int VbanControlPort { get; set; } = 6981;
     public string VbanControlStreamName { get; set; } = "Command1";
@@ -1217,7 +1218,7 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInser
         return plugins;
     }
 
-    public string ScanPlugins(IEnumerable<string> customFolders, PluginFormatFilter formatFilter)
+    public string ScanPlugins(IEnumerable<string> enabledFolders, PluginFormatFilter formatFilter)
     {
         if (!_attached)
         {
@@ -1225,11 +1226,12 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInser
         }
 
         var status = new StringBuilder(64 * 1024);
-        var folderText = string.Join(";", customFolders
+        var folderText = string.Join(";", enabledFolders
             .Where(static folder => !string.IsNullOrWhiteSpace(folder))
             .Select(static folder => folder.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase));
-        var result = ElkaFx_ScanPluginFoldersEx(folderText, includeDefaults: 1, (int)formatFilter, status, status.Capacity);
+        // The UI supplies checked default folders as well as checked custom folders.
+        var result = ElkaFx_ScanPluginFoldersEx(folderText, includeDefaults: 0, (int)formatFilter, status, status.Capacity);
         _lastStatus = status.ToString();
         return result >= 0 ? _lastStatus : $"Scan failed: {_lastStatus}";
     }

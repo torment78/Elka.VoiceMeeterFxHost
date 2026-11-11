@@ -228,8 +228,19 @@
                                     <ListBox x:Name="PluginFoldersListBox"
                            Height="68"
                            ScrollViewer.VerticalScrollBarVisibility="Auto"
+                           Loaded="StableScrollHost_Loaded"
+                           ScrollViewer.ScrollChanged="StableScrollHost_ScrollChanged"
                            SelectionChanged="PluginFoldersListBox_SelectionChanged"
-                           ToolTip="Default and custom VST folders used by Scan." />
+                           ToolTip="Checked folders are included in the next Scan.">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <CheckBox Content="{Binding Label}"
+                                                          IsChecked="{Binding ScanEnabled, Mode=TwoWay}"
+                                                          VerticalAlignment="Center"
+                                                          Click="PluginFolderScanCheckBox_Click" />
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
                                     <Button x:Name="RemovePluginFolderButton"
                           Grid.Column="1"
                           Content="Remove"
@@ -239,8 +250,8 @@
                           Click="RemovePluginFolderButton_Click" />
                                 </Grid>
 
-                                <ListBox x:Name="PluginListBox"
-                         Grid.Row="2"
+                                <Grid Grid.Row="2">
+                                    <ListBox x:Name="PluginListBox"
                          SelectionMode="Extended"
                          Height="132"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -251,7 +262,23 @@
                                     <ListBox.Resources>
                                         <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource StableVerticalScrollBar}" />
                                     </ListBox.Resources>
-                                </ListBox>
+                                    </ListBox>
+                                    <StackPanel x:Name="PluginListEmptyState"
+                                                Visibility="Collapsed"
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center">
+                                        <TextBlock x:Name="PluginListEmptyText"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap" />
+                                        <Button x:Name="ShowAllPluginResultsButton"
+                                                Content="Show All"
+                                                HorizontalAlignment="Center"
+                                                Margin="0,6,0,0"
+                                                Visibility="Collapsed"
+                                                Click="ShowAllPluginResultsButton_Click" />
+                                    </StackPanel>
+                                </Grid>
 
                                 <StackPanel x:Name="VstNodesPanel"
                             Grid.Row="3"

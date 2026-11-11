@@ -64,10 +64,12 @@ internal static class CanvasInteractionChecks
             window.Left = -20000;
             window.Top = -20000;
             window.Show();
+            if (args.Contains("--plugin-browser")) { window.CheckPluginBrowser(); return 0; }
             if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
             if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             if (args.Contains("--rollback")) { window.CheckRollbackUi(); return 0; }
             window.CheckCanvasInteraction();
+            window.CheckPluginBrowser();
             window.CheckInsertAsioUi();
             window.CheckEndpointMeterUi();
             window.CheckOutputBoostUi();

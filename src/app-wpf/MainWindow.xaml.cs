@@ -704,6 +704,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (AsioPatchContentGrid.Visibility != Visibility.Visible)
+        {
+            AsioPatchControlsGrid.IsEnabled = false;
+            AsioPatchControlsGrid.Visibility = Visibility.Collapsed;
+            AsioPatchWarningPanel.Visibility = Visibility.Visible;
+        }
         ToggleCardContent(AsioPatchContentGrid);
     }
 

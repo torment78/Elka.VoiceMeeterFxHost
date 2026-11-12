@@ -431,6 +431,24 @@
                     Grid.Row="1"
                     Margin="0,10,0,0"
                     Visibility="Collapsed">
+                                <StackPanel x:Name="AsioPatchWarningPanel">
+                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,10">
+                                        <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                                   Foreground="{StaticResource VstAccentBrush}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <TextBlock Text="ASIO Patch or callbacks" FontSize="16" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource VstAccentBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="FX Host cannot run both at the same time. Starting ASIO Patch disconnects the normal callbacks."
+                                               TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <TextBlock Text="Returning to callbacks" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                    <TextBlock Text="Press Stop, turn off ASIO Patch Auto-start, and untick every input in ASIO Patch / VoiceMeeter Patch.insert. Inputs left ticked stay on the insert path instead of the normal callback path."
+                                               TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <TextBlock Text="OK only opens the controls. It does not start or stop audio."
+                                               TextWrapping="Wrap" Style="{StaticResource MutedText}" Margin="0,0,0,12" />
+                                    <Button x:Name="AsioPatchWarningOkButton" Content="OK" Width="80" HorizontalAlignment="Right"
+                                            Style="{StaticResource AsioButton}" Click="AsioPatchWarningOkButton_Click" />
+                                </StackPanel>
+                                <Grid x:Name="AsioPatchControlsGrid" Visibility="Collapsed" IsEnabled="False">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -484,6 +502,7 @@
                            Grid.Row="2"
                            Grid.ColumnSpan="2"
                            Margin="0,8,0,0" />
+                                </Grid>
                             </Grid>
                         </Grid>
                     </Border>

@@ -13,6 +13,7 @@ internal sealed class OutputBoostBadge : Border
     private Point _dragOrigin;
     private double _dragValue;
     public double Value { get; private set; }
+    internal string SettingsKey { get; init; } = string.Empty;
     public event Action<double>? ValueChanged;
     public event Action? CustomRequested;
 
@@ -63,13 +64,15 @@ internal sealed class OutputBoostBadge : Border
     internal void AdjustWheel(int delta, ModifierKeys modifiers) => SetValue(Value + delta / 120.0 *
         (modifiers.HasFlag(ModifierKeys.Control) ? 3 : modifiers.HasFlag(ModifierKeys.Shift) ? 0.1 : 0.5));
     internal void AdjustDrag(double startValue, double upwardPixels) => SetValue(startValue + upwardPixels * 0.1);
-    internal void SetValue(double value)
+    internal void SetValue(double value) => SetValueCore(value, notify: true);
+    internal void SetValueFromHost(double value) => SetValueCore(value, notify: false);
+    private void SetValueCore(double value, bool notify)
     {
         value = Math.Round(EndpointChannelSettings.ClampOutputBoost(value), 3);
         if (value == Value) return;
         Value = value;
         RefreshText();
-        ValueChanged?.Invoke(value);
+        if (notify) ValueChanged?.Invoke(value);
     }
     private static string FormatValue(double value) => value.ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + " dB";
     private void RefreshText()

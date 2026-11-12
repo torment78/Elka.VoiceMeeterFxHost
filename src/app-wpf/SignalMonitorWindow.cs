@@ -27,6 +27,12 @@ internal sealed class SignalMonitorWindow : Window
     private float? _displayPeak;
     private readonly SignalMonitorView _view;
     private readonly Border _outline;
+    private readonly Grid _surface;
+    private readonly string _endpointName;
+    private readonly Button _peakControl;
+    private SignalMonitorOutputFader? _outputFader;
+    private ColumnDefinition? _faderColumn;
+    private Color _hue;
     private readonly Task _reader;
     private readonly SignalMonitorFrame _displayFrame = new();
     private readonly SignalMonitorHistorySnapshot _displayHistory = new();
@@ -43,6 +49,7 @@ internal sealed class SignalMonitorWindow : Window
         Style = new Style(typeof(Window));
         _mailbox = new SignalMonitorMailbox(channelCount);
         _peakAddress = new EndpointMeterAddress(stream, outputSide, firstChannel, channelCount);
+        _endpointName = endpoint;
         _peakSession = peakSession ?? (testReader is null ? PeakHoldSession.Shared : null);
         Title = $"{endpoint} - {side} - Signal Monitor";
         Width = channelCount > 2 ? 760 : 660;
@@ -54,10 +61,10 @@ internal sealed class SignalMonitorWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Icon = new BitmapImage(new Uri("pack://application:,,,/Assets/VoicemeeterDelay.ico"));
         _view = new SignalMonitorView(endpoint, side, channelCount, hue) { HeaderRightInset = 150 };
-        var surface = new Grid();
+        var surface = _surface = new Grid();
         surface.Children.Add(_view);
         surface.Children.Add(CreateViewControls());
-        surface.Children.Add(CreatePeakControl());
+        surface.Children.Add(_peakControl = CreatePeakControl());
         _outline = new Border { BorderThickness = new Thickness(1), Child = surface, Padding = new Thickness(1) };
         Content = _outline;
         UpdateHue(hue);
@@ -251,9 +258,45 @@ internal sealed class SignalMonitorWindow : Window
 
     internal void UpdateHue(Color hue)
     {
+        _hue = hue;
         _outline.BorderBrush = new SolidColorBrush(hue);
         _peakDot.Stroke = _outline.BorderBrush;
         _view.SetHue(hue);
+        _outputFader?.SetHue(hue);
+    }
+
+    internal void ConfigureOutputBoost(double? value, Action<double> changed)
+    {
+        var header = new Grid { Height = 30, Margin = new Thickness(16, 7, 10, 0), VerticalAlignment = VerticalAlignment.Top };
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        _faderColumn = new ColumnDefinition { MinWidth = 104, MaxWidth = 190 };
+        header.ColumnDefinitions.Add(_faderColumn);
+        header.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 142 });
+        header.Children.Add(new TextBlock { Text = _endpointName, ToolTip = _endpointName, FontSize = 15,
+            FontWeight = FontWeights.SemiBold, Foreground = Brushes.WhiteSmoke, VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 8, 0) });
+        _view.DrawEndpointTitle = false;
+        _outputFader = new SignalMonitorOutputFader { VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        _outputFader.SetHue(_hue);
+        _outputFader.ValueChanged += level => { if (!_stopped) changed(level); };
+        Grid.SetColumn(_outputFader, 1); header.Children.Add(_outputFader);
+        _surface.Children.Remove(_peakControl);
+        _peakControl.Margin = new Thickness(0);
+        _peakControl.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(_peakControl, 2); header.Children.Add(_peakControl);
+        _surface.Children.Add(header);
+        UpdateOutputBoost(value);
+    }
+
+    internal void UpdateOutputBoost(double? value)
+    {
+        if (_stopped || _outputFader is null) return;
+        bool visible = value.HasValue;
+        _outputFader.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        _faderColumn!.MinWidth = visible ? 104 : 0;
+        _faderColumn.Width = visible ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        if (value is { } level) _outputFader.SetValueFromHost(level);
+        _view.InvalidateVisual();
     }
 
     private void ReadFrames(int handle, CancellationToken cancellation)
@@ -318,6 +361,7 @@ internal sealed class SignalMonitorWindow : Window
         _mailbox.Updated = null;
         _lifetime.Dispose();
         _view.ReleaseHistory();
+        _outputFader?.Detach();
         Content = null;
     }
 
@@ -348,6 +392,7 @@ internal static class NativeSignalMonitor
 internal sealed class SignalMonitorView : FrameworkElement
 {
     internal double HeaderRightInset { get; set; }
+    internal bool DrawEndpointTitle { get; set; } = true;
     internal long RenderedFrames { get; private set; }
     private static readonly string[] Labels = ["L", "R", "C", "LFE", "SL", "SR", "RL", "RR"];
     private static readonly Brush TextBrush = Frozen(Color.FromRgb(237, 243, 246));
@@ -467,7 +512,7 @@ internal sealed class SignalMonitorView : FrameworkElement
         double width = ActualWidth, height = ActualHeight;
         if (width < 100 || height < 100) return;
         dc.DrawRectangle(_header, null, new Rect(0, 0, width, 61));
-        Text(dc, _endpoint, 16, 11, 15, TextBrush, Math.Max(40, width - 32 - HeaderRightInset), true);
+        if (DrawEndpointTitle) Text(dc, _endpoint, 16, 11, 15, TextBrush, Math.Max(40, width - 32 - HeaderRightInset), true);
         Text(dc, $"{_side}  /  {_channels} channels", 16, 35, 11, _hue);
         bool live = SignalMonitorBallistics.Now - _ballistics.LastSignal < 0.4;
         string status = live ? $"{_ballistics.SampleRate:N0} Hz" : "Waiting for audio stream";

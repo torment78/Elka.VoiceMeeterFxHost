@@ -17,6 +17,7 @@ internal static class Program
         int peakChecks = PeakChecks.Run();
         int occlusionChecks = HistoryOcclusionChecks.Run();
         int windowChecks = WindowChecks.Run(output);
+        int faderChecks = OutputFaderChecks.Run(output);
         int checks = 0;
         foreach (int channels in new[] { 2, 8 })
         foreach (int seconds in new[] { 10, 15, 30 })
@@ -64,6 +65,6 @@ internal static class Program
             checks++;
         }
         Console.WriteLine($"{checks} stereo/eight-channel resize renders passed. No audio engine was started. Images: {output}");
-        Console.WriteLine($"Total: {checks + timingChecks + historyChecks + occlusionChecks + windowChecks + peakChecks} UI checks passed.");
+        Console.WriteLine($"Total: {checks + timingChecks + historyChecks + occlusionChecks + windowChecks + peakChecks + faderChecks} UI checks passed.");
     }
 }

@@ -28,7 +28,16 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.14 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.14).**
+**[0.8.3.23 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.23).**
+Destination Signal Monitors now have a compact output-volume fader in the header,
+available in both History and Spectrum. It uses the same -24 to +24 dB setting
+as the node control, with a numeric readout and double-click reset to 0 dB.
+Opening ASIO Patch shows a warning that must be acknowledged before using its
+controls, explaining why Patch and callbacks cannot run together and how to
+return to callbacks. Audio processing and routing are unchanged in this update.
+
+Earlier development improvements include:
+
 Endpoint and Signal Monitor peak holds now survive closing and reopening monitor
 windows during the session, until you reset them. Widget VST and group tiles
 show input and output dBFS readings, plus a red center value that latches above

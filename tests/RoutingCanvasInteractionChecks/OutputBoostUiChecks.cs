@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -87,10 +88,92 @@ public partial class MainWindow
         GetOrCreateChannelSettings(CallbackMode.Output, output).OutputBoostDb = -6;
         desired = DesiredOutputBoosts(CallbackMode.Output);
         Assert(desired.Count == 8 && Enumerable.Range(8, 8).All(ch => desired[(1, ch)] == -6000), "all eight output pins boosted");
+        CheckMonitorOutputBoost(endpoint, output);
         _saveTimer.Stop();
         _settingsByEndpoint.Clear();
         foreach (var pair in previousEndpoints) _settingsByEndpoint.Add(pair.Key, pair.Value);
         (_workspaceView, _vstCanvasMode, _vstInputCanvasRouteView, _kind) = previousView;
         Console.WriteLine("PASS: Output boost persistence, mapping, controls, bounds, canvas stability and layout.");
+    }
+
+    private void CheckMonitorOutputBoost(IoEndpoint input, IoEndpoint output)
+    {
+        var factory = _createSignalMonitorWindow;
+        var windows = new ConcurrentDictionary<(int, bool), SignalMonitorWindow>();
+        _createSignalMonitorWindow = (endpoint, side, stream, hue) =>
+        {
+            var monitor = new SignalMonitorWindow(endpoint.Name, side ? "Destination" : "Source", stream, side,
+                endpoint.Range.Start, endpoint.ChannelCount, hue, (_, token) => token.WaitHandle.WaitOne())
+                { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000 };
+            monitor.Loaded += (_, _) => windows[(stream, side)] = monitor;
+            return monitor;
+        };
+        try
+        {
+            _vstCanvasMode = CallbackMode.Input;
+            _vstInputCanvasRouteView = VstInputCanvasRouteView.InputReturn;
+            RebuildRoutingCanvas();
+            var elements = RoutingCanvas.Children.Cast<UIElement>().ToArray();
+            var graph = JsonSerializer.Serialize(_settings.CanvasConnections);
+            var inputSettings = GetOrCreateChannelSettings(CallbackMode.Input, input);
+            var outputSettings = GetOrCreateChannelSettings(CallbackMode.Output, output);
+            OpenSignalMonitor(CallbackMode.Input, input, true);
+            Assert(WaitFor(() => windows.ContainsKey((0, true))), "destination monitor starts on independent UI thread");
+            var monitor = windows[(0, true)];
+            double Read(SignalMonitorWindow w) => w.Dispatcher.Invoke(() => Descendants(w).OfType<SignalMonitorOutputFader>().Single().Value);
+            void Set(SignalMonitorWindow w, double value) => w.Dispatcher.Invoke(() => Descendants(w).OfType<Slider>().Single().Value = value);
+            Assert(Read(monitor) == inputSettings.OutputBoostDb, "monitor starts at saved endpoint gain");
+            Set(monitor, -8);
+            Assert(WaitFor(() => inputSettings.OutputBoostDb == -8), "monitor posts gain to main UI");
+            var badge = RoutingCanvas.Children.OfType<OutputBoostBadge>().Single(b => b.SettingsKey == inputSettings.Key);
+            Assert(badge.Value == -8, "monitor changes synchronize node readout");
+            badge.SetValue(0);
+            Assert(WaitFor(() => Read(monitor) == 0), "node reset synchronizes monitor after monitor-origin update");
+            monitor.Dispatcher.Invoke(() =>
+            {
+                var slider = Descendants(monitor).OfType<Slider>().Single();
+                for (int i = -24; i <= 24; i++) slider.Value = i;
+            });
+            Assert(WaitFor(() => inputSettings.OutputBoostDb == 24), "rapid fader movement keeps final value");
+            monitor.Dispatcher.Invoke(() => Descendants(monitor).OfType<Slider>().Single().RaiseEvent(
+                new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                    { RoutedEvent = Control.PreviewMouseDoubleClickEvent }));
+            Assert(WaitFor(() => inputSettings.OutputBoostDb == 0) && badge.Value == 0,
+                "monitor double-click resets endpoint gain and node readout");
+            Set(monitor, 24);
+            Assert(WaitFor(() => inputSettings.OutputBoostDb == 24), "fader still changes gain after double-click reset");
+            Assert(elements.SequenceEqual(RoutingCanvas.Children.Cast<UIElement>()), "monitor gain never rebuilds canvas");
+            OpenSignalMonitor(CallbackMode.Input, input, false);
+            OpenSignalMonitor(CallbackMode.Input, input, true, 2);
+            OpenSignalMonitor(CallbackMode.Output, output, true, 1);
+            Assert(WaitFor(() => windows.Count == 4), "source, main and output monitors coexist");
+            foreach (var key in new[] { (0, false), (2, true) })
+                Assert(windows[key].Dispatcher.Invoke(() => !Descendants(windows[key]).OfType<SignalMonitorOutputFader>().Any()),
+                    "source and Main monitors never expose output gain");
+            Set(windows[(1, true)], -3);
+            Assert(WaitFor(() => outputSettings.OutputBoostDb == -3) && inputSettings.OutputBoostDb == 24,
+                "output monitor targets output stream even on Input canvas");
+            _vstCanvasMode = CallbackMode.Output;
+            RefreshSignalMonitors();
+            Set(monitor, -4);
+            Assert(WaitFor(() => inputSettings.OutputBoostDb == -4) && outputSettings.OutputBoostDb == -3,
+                "changing canvas does not redirect existing monitor");
+            Assert(graph == JsonSerializer.Serialize(_settings.CanvasConnections), "monitor fader never changes routing");
+            Set(monitor, 9);
+            CloseSignalMonitors();
+            Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            Assert(inputSettings.OutputBoostDb == -4, "queued command from closed monitor is discarded");
+            windows.Clear();
+            OpenSignalMonitor(CallbackMode.Input, input, true, 0);
+            Assert(WaitFor(() => windows.ContainsKey((0, true))) && Read(windows[(0, true)]) == -4,
+                "reopened monitor restores current endpoint gain");
+        }
+        finally
+        {
+            CloseSignalMonitors();
+            _createSignalMonitorWindow = factory;
+            _saveTimer.Stop();
+        }
+        Console.WriteLine("PASS: Monitor fader cross-thread synchronization, close/reopen, stream isolation and unchanged routing.");
     }
 }

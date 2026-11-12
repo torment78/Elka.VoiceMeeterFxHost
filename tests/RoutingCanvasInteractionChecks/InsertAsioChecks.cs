@@ -1,4 +1,8 @@
+using System.IO;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Elka.VoiceMeeterFxHost.App;
 
@@ -34,6 +38,7 @@ public partial class MainWindow
         _settings.InsertAsioEndpointKeys = [];
         try
         {
+            CheckAsioPatchWarning(fake);
             _redetectInsertAsioButton = new Button();
             UpdateInsertAsioRedetectAvailability();
             Assert(_redetectInsertAsioButton.IsEnabled, "re-detect available when stopped");
@@ -120,5 +125,76 @@ public partial class MainWindow
             _insertAsioToggles.Clear();
             InsertAsioEndpointTogglesPanel.Children.Clear();
         }
+    }
+
+    private void CheckAsioPatchWarning(FakeInsertAsioPatchClient fake)
+    {
+        var originalContent = AsioPatchContentGrid.Visibility;
+        var originalControls = AsioPatchControlsGrid.Visibility;
+        var originalWarning = AsioPatchWarningPanel.Visibility;
+        var originalEnabled = AsioPatchControlsGrid.IsEnabled;
+        var originalMode = _engine.RequestedMode;
+        var originalAutoStart = _settings.InsertAsioAutoStart;
+        var originalKeys = _settings.InsertAsioEndpointKeys.ToArray();
+        int writes = fake.Writes.Count, refreshes = fake.Refreshes;
+        try
+        {
+            AsioPatchContentGrid.Visibility = Visibility.Collapsed;
+            AsioPatchToggleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(AsioPatchContentGrid.Visibility == Visibility.Visible && AsioPatchWarningPanel.Visibility == Visibility.Visible,
+                "opening Patch shows the inline warning");
+            Assert(AsioPatchControlsGrid.Visibility == Visibility.Collapsed && !AsioPatchControlsGrid.IsEnabled,
+                "Patch controls cannot be clicked or tabbed to before acknowledgement");
+            Assert(Descendants(AsioPatchControlsGrid).OfType<Button>().All(b => !b.IsEnabled) && !InsertAsioAutoStartCheckBox.IsEnabled,
+                "Start, Stop and Auto-start inherit the warning gate");
+            foreach (double dpi in new[] { 96.0, 144.0 })
+            {
+                if (IsLoaded) UpdateLayout();
+                else
+                {
+                    AsioPatchCard.Measure(new Size(545, double.PositiveInfinity));
+                    AsioPatchCard.Arrange(new Rect(new Size(545, AsioPatchCard.DesiredSize.Height)));
+                    AsioPatchCard.UpdateLayout();
+                }
+                var size = AsioPatchCard.RenderSize;
+                foreach (var control in Descendants(AsioPatchWarningPanel).OfType<FrameworkElement>().Where(c => c is TextBlock or Button))
+                {
+                    var bounds = control.TransformToAncestor(AsioPatchCard).TransformBounds(new Rect(control.RenderSize));
+                    Assert(new Rect(size).Contains(bounds), $"warning copy and OK fit inside the Patch section: {control.GetType().Name} {bounds}; card {size}");
+                }
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(size.Width * dpi / 96), (int)Math.Ceiling(size.Height * dpi / 96),
+                    dpi, dpi, PixelFormats.Pbgra32);
+                var drawing = new DrawingVisual();
+                using (var dc = drawing.RenderOpen()) dc.DrawRectangle(new VisualBrush(AsioPatchCard), null, new Rect(size));
+                bitmap.Render(drawing);
+                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                var path = Path.Combine(AppContext.BaseDirectory, $"asio-warning-{dpi}dpi.png");
+                using var file = File.Create(path); encoder.Save(file);
+                Console.WriteLine($"ASIO warning render: {path}");
+            }
+            AsioPatchWarningOkButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(AsioPatchWarningPanel.Visibility == Visibility.Collapsed && AsioPatchControlsGrid.Visibility == Visibility.Visible && AsioPatchControlsGrid.IsEnabled,
+                "OK reveals controls in the same section");
+            AsioPatchToggleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(AsioPatchContentGrid.Visibility == Visibility.Collapsed, "Patch section still collapses normally");
+            AsioPatchToggleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(AsioPatchWarningPanel.Visibility == Visibility.Visible && !AsioPatchControlsGrid.IsEnabled,
+                "reopening Patch requires acknowledgement again");
+            AsioPatchToggleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            AsioPatchToggleButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert(AsioPatchWarningPanel.Visibility == Visibility.Visible && AsioPatchControlsGrid.Visibility == Visibility.Collapsed,
+                "closing without OK never bypasses the warning");
+            Assert(fake.Writes.Count == writes && fake.Refreshes == refreshes && _engine.RequestedMode == originalMode &&
+                _settings.InsertAsioAutoStart == originalAutoStart && _settings.InsertAsioEndpointKeys.SequenceEqual(originalKeys),
+                "opening and dismissing warning never changes audio mode, insert selections or Auto-start");
+        }
+        finally
+        {
+            AsioPatchContentGrid.Visibility = originalContent;
+            AsioPatchControlsGrid.Visibility = originalControls;
+            AsioPatchControlsGrid.IsEnabled = originalEnabled;
+            AsioPatchWarningPanel.Visibility = originalWarning;
+        }
+        Console.WriteLine("PASS: ASIO Patch warning gate, acknowledge/reopen/cancel, layout and no audio-setting side effects.");
     }
 }

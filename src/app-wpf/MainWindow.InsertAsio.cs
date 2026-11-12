@@ -14,6 +14,13 @@ public partial class MainWindow
     private Button? _redetectInsertAsioButton;
     private bool SupportsInsertAsio => _kind is VoicemeeterKind.Banana or VoicemeeterKind.Potato;
 
+    private void AsioPatchWarningOkButton_Click(object sender, RoutedEventArgs e)
+    {
+        AsioPatchWarningPanel.Visibility = Visibility.Collapsed;
+        AsioPatchControlsGrid.IsEnabled = true;
+        AsioPatchControlsGrid.Visibility = Visibility.Visible;
+    }
+
     private static string PatchInsertLabel(IoEndpoint endpoint, bool? state) =>
         state is null ? $"{endpoint.Name} (partial) -" : endpoint.Name;
 

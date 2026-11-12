@@ -6,7 +6,7 @@ namespace Elka.VoiceMeeterFxHost.App;
 public partial class MainWindow
 {
     private sealed record EndpointMonitor(CallbackMode Mode, IoEndpoint Endpoint, bool OutputSide,
-        VoicemeeterKind Edition, SignalMonitorController Window);
+        int Stream, VoicemeeterKind Edition, SignalMonitorController Window);
     private readonly Dictionary<string, EndpointMonitor> _signalMonitors = [];
     private Func<IoEndpoint, bool, int, Color, SignalMonitorWindow> _createSignalMonitorWindow =
         (endpoint, outputSide, stream, hue) => new SignalMonitorWindow(endpoint.Name,
@@ -31,10 +31,31 @@ public partial class MainWindow
         try
         {
             Color hue = SignalMonitorHue(mode, endpoint, outputSide);
+            var edition = _kind;
+            bool hasOutputControl = MonitorSupportsOutputBoost(mode, outputSide, stream);
+            double? initialBoost = MonitorOutputBoostValue(mode, endpoint, outputSide, stream);
+            double requestedBoost = initialBoost ?? 0;
+            int boostQueued = 0;
             SignalMonitorController? window = null;
+            void ChangeOutputBoost(double value)
+            {
+                if (Dispatcher.HasShutdownStarted) return;
+                Volatile.Write(ref requestedBoost, value);
+                if (Interlocked.CompareExchange(ref boostQueued, 1, 0) != 0) return;
+                // Monitor windows own separate UI threads. Only the main UI changes settings/native targets.
+                Dispatcher.BeginInvoke(() =>
+                {
+                    Interlocked.Exchange(ref boostQueued, 0);
+                    if (_isShuttingDown || _kind != edition || window is null || window.IsClosing ||
+                        !_signalMonitors.TryGetValue(key, out var current) || !ReferenceEquals(current.Window, window) ||
+                        MonitorOutputBoostValue(mode, endpoint, outputSide, stream) is null) return;
+                    SetEndpointOutputBoost(mode, endpoint, Volatile.Read(ref requestedBoost), window);
+                });
+            }
             window = new SignalMonitorController(() =>
                 {
                     var monitor = _createSignalMonitorWindow(endpoint, outputSide, stream, hue);
+                    if (hasOutputControl) monitor.ConfigureOutputBoost(initialBoost, ChangeOutputBoost);
                     AuxiliaryWindowPlacement.SetKey(monitor, $"SignalMonitor:{key}");
                     return monitor;
                 },
@@ -47,8 +68,8 @@ public partial class MainWindow
                             _signalMonitors.Remove(key);
                         if (failure is not null) AppendLog($"Signal Monitor: {failure.Message}");
                     });
-                });
-            _signalMonitors.Add(key, new EndpointMonitor(mode, endpoint, outputSide, _kind, window));
+                }, initialBoost);
+            _signalMonitors.Add(key, new EndpointMonitor(mode, endpoint, outputSide, stream, edition, window));
         }
         catch (Exception ex) { AppendLog($"Signal Monitor: {ex.Message}"); }
     }
@@ -56,12 +77,23 @@ public partial class MainWindow
     private Color SignalMonitorHue(CallbackMode mode, IoEndpoint endpoint, bool outputSide) =>
         (HueStrokeBrush(EndpointDisplayHue(mode, endpoint, outputSide)) as SolidColorBrush)?.Color ?? Color.FromRgb(85, 194, 122);
 
+    private static bool MonitorSupportsOutputBoost(CallbackMode mode, bool outputSide, int stream) =>
+        outputSide && ((mode == CallbackMode.Input && stream == 0) || (mode == CallbackMode.Output && stream == 1));
+
+    private double? MonitorOutputBoostValue(CallbackMode mode, IoEndpoint endpoint, bool outputSide, int stream) =>
+        MonitorSupportsOutputBoost(mode, outputSide, stream) && !IsInputPatchBypassEndpoint(mode, endpoint, out _)
+            ? GetOrCreateChannelSettings(mode, endpoint).OutputBoostDb : null;
+
     private void RefreshSignalMonitors()
     {
         foreach (var item in _signalMonitors.Values.ToArray())
         {
             if (item.Edition != _kind) item.Window.Close();
-            else item.Window.UpdateHue(SignalMonitorHue(item.Mode, item.Endpoint, item.OutputSide));
+            else
+            {
+                item.Window.UpdateHue(SignalMonitorHue(item.Mode, item.Endpoint, item.OutputSide));
+                item.Window.UpdateOutputBoost(MonitorOutputBoostValue(item.Mode, item.Endpoint, item.OutputSide, item.Stream));
+            }
         }
     }
 

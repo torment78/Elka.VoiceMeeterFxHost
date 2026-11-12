@@ -270,6 +270,13 @@ highest captured sample amplitude since opening or reset, for example
 It is independent of the canvas circle. An open monitor has its own reader;
 closing it stops that reader and releases its tap.
 
+Destination monitors for **In -> In** and **Out -> Out** have a compact output
+volume fader between the endpoint name and Peak readout. It stays available in
+both History and Spectrum and controls the same **-24 to +24 dB** gain as the
+node's output-volume control. Changes stay synchronized between the two.
+Double-click the fader or its numeric value to reset to **0 dB**. Source monitors
+and the Main / In -> Out path do not have this gain control.
+
 These indicators measure sample peaks, not true peaks or confirmed clipping.
 Floating-point values can exceed 0 dBFS without being clipped inside the host;
 a later stage may still distort. The existing monitor taps provide best-effort
@@ -345,8 +352,8 @@ Installers are downloaded under `%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost\Updat
 ASIO Patch uses the VoiceMeeter Insert Virtual ASIO driver as an alternative to
 the normal callback path.
 
-1. Expand **ASIO Patch**.
-2. Use **Probe** to show the compatible Insert ASIO driver.
+1. Expand **ASIO Patch**, read the mode warning, and click **OK** to reveal its controls.
+2. Check the detected Insert ASIO driver. Re-detection is available in **Menu > Settings** while Patch is stopped.
 3. Select the input sections that should have `Patch.insert` enabled.
 4. Click **Start**.
 
@@ -358,6 +365,12 @@ callback operation. The input toggles reflect the live VoiceMeeter
 Use only one engine mode at a time. If VoiceMeeter changes sample rate or block
 size, the ASIO host follows the driver format and restarts its audio path when
 required.
+
+The warning appears each time this section is opened; acknowledging it does not
+start or stop audio. To return to callbacks, press **Stop**, leave ASIO Patch
+**Auto-start** off, and make sure all **Patch.insert** input boxes are unticked.
+An input left ticked remains routed through the insert path instead of the normal
+callback path.
 
 ## VBAN-TEXT And VFX Commands
 

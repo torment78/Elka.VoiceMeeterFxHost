@@ -36,19 +36,28 @@ public partial class MainWindow
     private void SyncOutputBoosts(CallbackMode activeMode) =>
         _engine.ApplyOutputBoosts(DesiredOutputBoosts(activeMode));
 
+    private void SetEndpointOutputBoost(CallbackMode mode, IoEndpoint endpoint, double value, SignalMonitorController? origin = null)
+    {
+        var settings = GetOrCreateChannelSettings(mode, endpoint);
+        settings.OutputBoostDb = value;
+        foreach (var badge in RoutingCanvas.Children.OfType<OutputBoostBadge>())
+            if (badge.SettingsKey == settings.Key) badge.SetValueFromHost(settings.OutputBoostDb);
+        foreach (var monitor in _signalMonitors.Values)
+            if (monitor.Mode == mode && monitor.Endpoint.Key(mode) == settings.Key)
+                monitor.Window.UpdateOutputBoost(MonitorOutputBoostValue(monitor.Mode, monitor.Endpoint, monitor.OutputSide, monitor.Stream),
+                    updateWindow: !ReferenceEquals(monitor.Window, origin));
+        SyncOutputBoosts(_startupEngineDelayActive ? CallbackMode.None :
+            IsInsertAsioPatchExclusiveActive() ? CallbackMode.Input : ComputeActiveCallbackMode());
+        QueueSave();
+    }
+
     private void DrawOutputBoostBadge(IoEndpoint endpoint, CallbackMode mode, double x, double y,
         Brush? accent, List<FrameworkElement> elements)
     {
         var settings = GetOrCreateChannelSettings(mode, endpoint);
         var badge = new OutputBoostBadge(settings.OutputBoostDb,
-            (Brush)FindResource("MutedTextBrush"), accent ?? (Brush)FindResource("RouteAccentBrush"));
-        badge.ValueChanged += value =>
-        {
-            settings.OutputBoostDb = value;
-            SyncOutputBoosts(_startupEngineDelayActive ? CallbackMode.None :
-                IsInsertAsioPatchExclusiveActive() ? CallbackMode.Input : ComputeActiveCallbackMode());
-            QueueSave();
-        };
+            (Brush)FindResource("MutedTextBrush"), accent ?? (Brush)FindResource("RouteAccentBrush")) { SettingsKey = settings.Key };
+        badge.ValueChanged += value => SetEndpointOutputBoost(mode, endpoint, value);
         badge.CustomRequested += () => ShowCustomOutputBoost(badge);
         Canvas.SetLeft(badge, x + VstEndpointCardWidth - badge.Width - 4);
         Canvas.SetTop(badge, y + 18);

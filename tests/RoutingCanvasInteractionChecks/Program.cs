@@ -44,6 +44,8 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--process-memory")) { ProcessMemoryChecks.Run(); return 0; }
+            if (args.Contains("--process-priority")) { HostProcessPriorityChecks.Run(); return 0; }
             if (args.Contains("--insert-asio")) { window.CheckInsertAsioUi(); return 0; }
             if (args.Contains("--quick-connect")) { window.CheckQuickConnectionChains(); return 0; }
             if (args.Contains("--widget-states")) { window.CheckWidgetTileStates(); return 0; }
@@ -68,6 +70,8 @@ internal static class CanvasInteractionChecks
             if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
             if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             if (args.Contains("--rollback")) { window.CheckRollbackUi(); return 0; }
+            ProcessMemoryChecks.Run();
+            HostProcessPriorityChecks.Run();
             window.CheckCanvasInteraction();
             window.CheckPluginBrowser();
             window.CheckInsertAsioUi();

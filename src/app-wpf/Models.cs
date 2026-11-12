@@ -682,6 +682,7 @@ internal sealed class FxHostSettings
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
     public bool NodeVuMetersEnabled { get; set; } = true;
+    public bool HighProcessPriority { get; set; } = true;
     public List<EditorHotkeySnapshot> EditorHotkeys { get; set; } = [];
     public FloatingPanelSettings FloatingPanel { get; set; } = new();
     public bool AdvancedModeEnabled { get; set; }
@@ -1057,10 +1058,22 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInser
         {
             Size = (uint)Marshal.SizeOf<ProcessMemoryCountersEx2>()
         };
-        if (GetProcessMemoryInfo(processHandle, ref counters, counters.Size) &&
-            (ulong)counters.PrivateWorkingSetSize <= long.MaxValue)
+        if (GetProcessMemoryInfo(processHandle, ref counters, counters.Size))
         {
-            privateWorkingSetBytes = (long)counters.PrivateWorkingSetSize;
+            return TryValidatePrivateWorkingSetBytes((ulong)counters.PrivateWorkingSetSize, out privateWorkingSetBytes);
+        }
+
+        privateWorkingSetBytes = 0;
+        return false;
+    }
+
+    internal static bool TryValidatePrivateWorkingSetBytes(ulong reportedBytes, out long privateWorkingSetBytes)
+    {
+        // Older Windows builds can fill the base counters but leave the EX2-only
+        // field at zero. Reject that value so the caller uses the working-set fallback.
+        if (reportedBytes > 0 && reportedBytes <= long.MaxValue)
+        {
+            privateWorkingSetBytes = (long)reportedBytes;
             return true;
         }
 

@@ -232,6 +232,23 @@ Use it after a sample-rate change or when a plugin has become unresponsive.
 
 ## Settings And Hotkeys
 
+From **0.8.3.22**, FX Host starts at Windows **High** process priority by default,
+including when upgrading from older settings. **Menu > Settings > High Process
+Priority** switches between High and Normal immediately and remembers the choice.
+This changes the main FX Host process, not individual thread priorities. Guarded
+MMCSS scheduling and the plugin helpers' existing audio-thread setup are unchanged.
+It is not Realtime process priority and does not guarantee glitch-free playback.
+
+The installer's **Performance Options** page also offers an optional **Always run
+installed VoiceMeeter editions at High priority** checkbox. It applies
+to installed Standard, Banana and Potato executables, both 32-bit and 64-bit, even
+when VoiceMeeter is not running. Administrator approval is required by Setup.
+Restart VoiceMeeter after installation for this launch setting to take effect;
+Setup does not restart it or change its audio settings. Re-run Setup and untick the
+option, or uninstall FX Host, to restore the previous launch-priority values. Later
+priority changes made by another tool are preserved. Power-throttling exclusions
+are separate options.
+
 In development version **0.8.3.9**, open **Menu > Settings** to toggle **Node VU
 Meters**. Hardware inputs show L/R meters; virtual inputs and buses show two
 channels when compact and eight when expanded. The meters target 60 Hz with

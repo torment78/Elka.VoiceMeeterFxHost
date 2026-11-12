@@ -145,6 +145,12 @@ public partial class MainWindow
         QueueSave();
     }
 
+    private void ApplyHostProcessPriority()
+    {
+        HostProcessPriority.TryApply(_settings.HighProcessPriority, out var message);
+        AppendLog(message);
+    }
+
     private void ShowHostSettings(Window owner)
     {
         if (_hostSettingsWindow is { } existing) { existing.Activate(); return; }
@@ -164,6 +170,21 @@ public partial class MainWindow
             ApplySaveManagerToggleState(meters, _settings.NodeVuMetersEnabled);
         };
         root.Children.Add(meters);
+        var priority = CreateSaveManagerToggleButton("High Process Priority", _settings.HighProcessPriority);
+        priority.Margin = new Thickness(0, 10, 0, 0);
+        priority.ToolTip = "Windows process priority for FX Host. Off uses Normal priority. Audio-thread MMCSS scheduling is unchanged.";
+        priority.Click += (_, _) =>
+        {
+            var enabled = !_settings.HighProcessPriority;
+            if (HostProcessPriority.TryApply(enabled, out var message))
+            {
+                _settings.HighProcessPriority = enabled;
+                ApplySaveManagerToggleState(priority, enabled);
+                QueueSave();
+            }
+            AppendLog(message);
+        };
+        root.Children.Add(priority);
         var hotkeys = CreateSaveManagerButton("Hotkey");
         hotkeys.Style = (Style)FindResource("VbanButton");
         hotkeys.Margin = new Thickness(0, 10, 0, 18);

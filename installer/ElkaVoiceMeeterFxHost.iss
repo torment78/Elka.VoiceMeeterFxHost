@@ -308,6 +308,8 @@ begin
   end;
 end;
 
+#include "VoicemeeterPriority.iss"
+
 procedure AddBrandLogo(var Logo: TBitmapImage; ParentPage: TNewNotebookPage; LeftEdge: Integer);
 begin
   Logo := TBitmapImage.Create(WizardForm);
@@ -345,16 +347,16 @@ begin
   PerformanceOptionsPage := CreateInputOptionPage(
     wpSelectTasks,
     'Performance Options',
-    'Disable Windows power throttling',
-    'Setup already has administrator approval. Select the applications that Windows should keep at full performance.',
+    'Power throttling and process priority',
+    'Setup already has administrator approval. VoiceMeeter priority applies on its next launch and every launch afterwards. Untick it here or uninstall FX Host to restore the previous setting.',
     False,
     False);
-  PerformanceOptionsPage.Add('Elka VoiceMeeter FX Host (recommended)');
+  PerformanceOptionsPage.Add('Disable power throttling for FX Host (recommended)');
   PerformanceOptionsPage.Values[0] := True;
 
   if RunningVoicemeeterName <> '' then
   begin
-    PerformanceOptionsPage.Add(RunningVoicemeeterName + ' (running; detected by Remote API)');
+    PerformanceOptionsPage.Add('Disable power throttling for ' + RunningVoicemeeterName + ' (running)');
     PerformanceOptionsPage.Values[1] := False;
   end
   else
@@ -363,6 +365,23 @@ begin
     PerformanceOptionsPage.Values[1] := False;
     PerformanceOptionsPage.CheckListBox.ItemEnabled[1] := False;
   end;
+  PerformanceOptionsPage.Add('Always run installed VoiceMeeter editions at High priority');
+  PerformanceOptionsPage.Values[2] := HasManagedVoicemeeterPriority;
+  PerformanceOptionsPage.CheckListBox.ItemEnabled[2] := HasInstalledVoicemeeterForPriority or HasManagedVoicemeeterPriority;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    if not ConfigureVoicemeeterPriority(PerformanceOptionsPage.Values[2]) then
+      SuppressibleMsgBox('Some VoiceMeeter priority settings could not be changed. See the Setup log. FX Host installation will continue.', mbError, MB_OK, IDOK);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    if not ConfigureVoicemeeterPriority(False) then
+      SuppressibleMsgBox('Some VoiceMeeter priority settings could not be restored. See the uninstall log.', mbError, MB_OK, IDOK);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

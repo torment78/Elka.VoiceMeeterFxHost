@@ -274,6 +274,7 @@ public partial class MainWindow : Window
         };
 
         LoadSettings();
+        ApplyHostProcessPriority();
         ApplySavedWindowPlacement();
         ShouldStartHiddenToTray = StartupTrayOptions.StartHiddenToTray || _settings.StartToTray;
         if (ShouldStartHiddenToTray)

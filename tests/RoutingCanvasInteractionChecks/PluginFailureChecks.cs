@@ -43,7 +43,8 @@ public partial class MainWindow
         var savedNodes = _settings.PluginNodes; var savedGroups = _settings.PluginGroups;
         var savedConnections = _settings.CanvasConnections; var savedMode = _vstCanvasMode; var savedView = _workspaceView;
         var savedReader = _pluginFailureReader;
-        var savedIcon = _trayIcon; var savedHandle = _trayIconHandle;
+        var savedTray = _trayController;
+        Drawing.Icon? baseTrayIcon = null, failedTrayIcon = null;
         var node = new PluginNodeSnapshot { Slot = 2, InstanceId = 3, PluginIndex = -1, Name = "Convolution reverb", X = 360, Y = 150 };
         var member = new PluginNodeSnapshot { Slot = 3, InstanceId = 4, Name = "Sandbox effect", X = 550, Y = 150 };
         var missing = new PluginNodeSnapshot { Slot = 5, InstanceId = 6, Name = "Missing plugin", MissingPlugin = true };
@@ -53,9 +54,8 @@ public partial class MainWindow
             _pluginFailureReader = reader;
             _settings.PluginNodes = [node, member, missing]; _settings.PluginGroups = [group]; _settings.CanvasConnections = [];
             _workspaceView = WorkspaceView.Vst; _vstCanvasMode = CallbackMode.Input;
-            _trayIconHandle = (Drawing.Icon)Drawing.SystemIcons.Application.Clone();
-            _trayIcon = new Forms.NotifyIcon { Icon = _trayIconHandle, Visible = false, ContextMenuStrip = new Forms.ContextMenuStrip() };
-            TrayMenuTheme.Apply(_trayIcon.ContextMenuStrip);
+            _trayController = new TrayController(() => { }, () => { }, () => { }, visible: false);
+            WithTray(icon => baseTrayIcon = icon.Icon);
             InitializePluginFailureMonitor();
             Check(_pluginFailureTimer!.Interval == TimeSpan.FromSeconds(1) && _pluginFailureTimer.IsEnabled, "Failure timer runs once per second, including hidden windows");
             _pluginFailureTimer.Stop();
@@ -82,22 +82,26 @@ public partial class MainWindow
             Check(EngineStatus.FailureText.Visibility == Visibility.Visible && EngineStatus.FailureText.Text.Contains("2 VSTs FAILED"), "Status line has separate failure note");
             EngineStatus.Update(HostStatusSnapshot.Empty);
             Check(EngineStatus.FailureText.Visibility == Visibility.Visible, "Ordinary engine status refresh does not erase failure note");
-            Check(ReferenceEquals(_trayIcon.Icon, _trayFailureIcon) && _trayIcon.Text.Contains("2 VSTs FAILED"), "Tray badge and hover warning set");
+            WithTray(icon =>
+            {
+                failedTrayIcon = icon.Icon;
+                Check(!ReferenceEquals(icon.Icon, baseTrayIcon) && icon.Text.Contains("2 VSTs FAILED"), "Tray badge and hover warning set");
+            });
             var logAfter = LogTextBox.Text;
             Check(logAfter[logStart..].Contains("unprocessed or be silent"), "Failure message does not falsely guarantee pass-through");
             CheckPluginFailures();
             Check(LogTextBox.Text == logAfter, "Persistent failure does not spam logs");
             SelectPluginNode(node.Slot, rebuildCanvas: false);
             Check(ReferenceEquals(card.BorderBrush, FailureBrush), "Selected failed node remains red");
-            RefreshTrayFailureMenuItems(_trayIcon.ContextMenuStrip);
+            UpdateTrayFailureBadge();
             var menuCalls = calls;
-            RefreshTrayFailureMenuItems(_trayIcon.ContextMenuStrip);
-            Check(calls == menuCalls && _trayIcon.ContextMenuStrip.Items.OfType<Forms.ToolStripMenuItem>().Count(item => item.Text!.StartsWith("Reload ")) == 2,
-                "Tray menu uses cached results without duplicate entries or engine calls");
+            UpdateTrayFailureBadge();
+            WithTray(icon => Check(calls == menuCalls && icon.ContextMenuStrip!.Items.OfType<Forms.ToolStripMenuItem>().Count(item => item.Text!.StartsWith("Reload ")) == 2,
+                "Tray menu uses cached results without duplicate entries or engine calls"));
             Check(node.Enabled && !node.Bypassed && member.Enabled && !member.Bypassed, "Failure reporting never powers, bypasses or reloads automatically");
-            var reload = _trayIcon.ContextMenuStrip.Items.OfType<Forms.ToolStripMenuItem>().Single(item => item.Text == $"Reload {node.Name}");
             logStart = LogTextBox.Text.Length;
-            reload.PerformClick(); PumpFloatingAnimation();
+            WithTray(icon => icon.ContextMenuStrip!.Items.OfType<Forms.ToolStripMenuItem>().Single(item => item.Text == $"Reload {node.Name}").PerformClick());
+            PumpFloatingAnimation();
             Check(LogTextBox.Text[logStart..].Contains($"{node.Name}: remove and re-add this older node") && calls == menuCalls,
                 "Tray click explicitly invokes existing reload path without an extra native poll");
             Check(IsPluginFailed(node), "Unsuccessful reload does not falsely clear failure");
@@ -106,7 +110,7 @@ public partial class MainWindow
             RenderFailureCard(groupCard, "failed-group-card.png");
             foreach (var size in new[] { 16, 24, 32, 48 })
             {
-                using var icon = TrayIconBadge.Render(_trayIconHandle, new Drawing.Size(size, size));
+                using var icon = TrayIconBadge.Render(Drawing.SystemIcons.Application, new Drawing.Size(size, size));
                 var red = 0;
                 for (var py = 0; py < size; py++) for (var px = 0; px < size; px++)
                 {
@@ -118,14 +122,15 @@ public partial class MainWindow
 
             result = 1; Array.Clear(source);
             CheckPluginFailures();
-            Check(IsPluginFailed(node) && IsPluginFailed(member) && ReferenceEquals(_trayIcon.Icon, _trayFailureIcon), "Busy poll preserves all visible warnings");
+            WithTray(icon => Check(IsPluginFailed(node) && IsPluginFailed(member) && ReferenceEquals(icon.Icon, failedTrayIcon), "Busy poll preserves all visible warnings"));
             result = 0;
             CheckPluginFailures();
-            Check(!IsPluginFailed(node) && !IsPluginFailed(member) && EngineStatus.FailureText.Visibility == Visibility.Collapsed &&
-                  ReferenceEquals(_trayIcon.Icon, _trayIconHandle), "Healthy replacement clears all marks and restores base tray icon");
+            Check(!IsPluginFailed(node) && !IsPluginFailed(member) && EngineStatus.FailureText.Visibility == Visibility.Collapsed,
+                "Healthy replacement clears UI marks");
+            WithTray(icon => Check(ReferenceEquals(icon.Icon, baseTrayIcon), "Healthy replacement restores base tray icon"));
             Check(!Descendants(card).OfType<TextBlock>().Any(t => t.Text.Contains("FAILED")) && !ReferenceEquals(groupCard.BorderBrush, FailureBrush), "Healthy labels and group outline restored in place");
-            RefreshTrayFailureMenuItems(_trayIcon.ContextMenuStrip);
-            Check(_trayIcon.ContextMenuStrip.Items.Count == 0, "Recovered VSTs leave no stale reload menu entries");
+            UpdateTrayFailureBadge();
+            WithTray(icon => Check(!icon.ContextMenuStrip!.Items.Cast<Forms.ToolStripItem>().Any(item => Equals(item.Tag, "failed-vst")), "Recovered VSTs leave no stale reload menu entries"));
             source[2] = 1; CheckPluginFailures();
             var replacement = ClonePluginNodeSnapshot(node); _settings.PluginNodes[0] = replacement;
             Check(!IsPluginFailed(replacement), "Reused slot does not inherit old instance warning");
@@ -141,8 +146,8 @@ public partial class MainWindow
         {
             _draggingNode = null;
             DisposePluginFailureMonitor();
-            _trayIcon?.ContextMenuStrip?.Dispose(); _trayIcon?.Dispose(); _trayIconHandle?.Dispose();
-            _trayIcon = savedIcon; _trayIconHandle = savedHandle;
+            _trayController?.Dispose();
+            _trayController = savedTray;
             _failedPluginNodes.Clear(); EngineStatus.SetFailure(null);
             _pluginFailureReader = savedReader;
             _settings.PluginNodes = savedNodes; _settings.PluginGroups = savedGroups; _settings.CanvasConnections = savedConnections;
@@ -150,6 +155,16 @@ public partial class MainWindow
             RebuildRoutingCanvas(); _saveTimer.Stop();
         }
         void Check(bool pass, string message) { Assert(pass, message); checks++; }
+        void WithTray(Action<Forms.NotifyIcon> action)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _trayController!.Post(icon =>
+            {
+                try { action(icon); completion.SetResult(); }
+                catch (Exception ex) { completion.SetException(ex); }
+            });
+            completion.Task.WaitAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
+        }
     }
 
     private static void RenderFailureCard(FrameworkElement card, string name)

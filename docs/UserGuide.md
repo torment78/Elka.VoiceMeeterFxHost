@@ -394,6 +394,13 @@ current Windows user. **Start to Tray** avoids showing the main window whenever
 the app is launched, whether Windows starts it automatically or it is opened
 manually.
 
+With **Close to Tray** enabled, the window X hides FX Host and audio keeps
+running. Use the tray's **Shutdown** command to exit. The tray runs independently
+of the main window so Shutdown remains available if the window freezes. An
+explicit shutdown allows five seconds for normal cleanup, then forces FX Host
+to exit if it is stuck. This fallback may lose plugin changes since the last
+successful save; it does not restart VoiceMeeter or fix an audio driver fault.
+
 Supported VoiceMeeter versions can show a custom **FX Host** button. The button
 opens or restores the app on one click and hides it back to the tray on the
 next click while the window is open. This does not stop audio processing and

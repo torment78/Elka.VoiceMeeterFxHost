@@ -30,7 +30,9 @@ internal static class CanvasInteractionChecks
         });
         if (args.Contains("--widget-memory")) return WidgetMemoryChecks.Run(args.Contains("--stress") ? 100 : 20);
         if (args.Contains("--window-placement")) { WindowPlacementChecks.Run(); return 0; }
-        var window = new MainWindow(new CanvasTestSession());
+        var shutdownWorker = Array.IndexOf(args, "--shutdown-worker");
+        var window = new MainWindow(new CanvasTestSession(allowShutdown: shutdownWorker >= 0));
+        if (shutdownWorker >= 0) return window.RunShutdownScenario(args[shutdownWorker + 1], app);
         if (args.Contains("--profile-layout"))
         {
             window.StartLayoutObservation(args.Contains("--fixed-extent"));
@@ -44,6 +46,7 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--shutdown")) { ShutdownChecks.Run(); return 0; }
             if (args.Contains("--process-memory")) { ProcessMemoryChecks.Run(); return 0; }
             if (args.Contains("--process-priority")) { HostProcessPriorityChecks.Run(); return 0; }
             if (args.Contains("--insert-asio")) { window.CheckInsertAsioUi(); return 0; }
@@ -110,7 +113,10 @@ internal static class CanvasInteractionChecks
 
 namespace Elka.VoiceMeeterFxHost.App
 {
-    internal sealed class CanvasTestSession;
+    internal sealed class CanvasTestSession(bool allowShutdown = false)
+    {
+        internal bool AllowShutdown => allowShutdown;
+    }
 
     public partial class MainWindow
     {
@@ -175,7 +181,7 @@ namespace Elka.VoiceMeeterFxHost.App
                 if (InitializeVstCanvasLayoutWidth()) RebuildRoutingCanvas();
                 else UpdateVstCanvasSize();
             };
-            Closing += (_, _) => Environment.Exit(0);
+            if (!session.AllowShutdown) Closing += (_, _) => Environment.Exit(0);
             RebuildRoutingCanvas();
         }
 

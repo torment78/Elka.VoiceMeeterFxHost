@@ -2,18 +2,14 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Drawing = System.Drawing;
-using Forms = System.Windows.Forms;
 
 namespace Elka.VoiceMeeterFxHost.App;
 
 public partial class MainWindow
 {
-    private const string FailedTrayMenuTag = "failed-vst";
     private readonly Dictionary<int, PluginNodeSnapshot> _failedPluginNodes = [];
     private PluginFailureReader _pluginFailureReader = new();
     private DispatcherTimer? _pluginFailureTimer;
-    private Drawing.Icon? _trayFailureIcon;
 
     private void InitializePluginFailureMonitor()
     {
@@ -23,8 +19,6 @@ public partial class MainWindow
         };
         _pluginFailureTimer.Tick += (_, _) => CheckPluginFailures();
         _pluginFailureTimer.Start();
-        if (_trayIcon?.ContextMenuStrip is { } menu)
-            menu.Opening += (_, _) => RefreshTrayFailureMenuItems(menu);
     }
 
     private bool IsPluginFailed(PluginNodeSnapshot node) => !node.MissingPlugin &&
@@ -117,50 +111,22 @@ public partial class MainWindow
 
     private void UpdateTrayFailureBadge()
     {
-        if (_trayIcon is null || _trayIconHandle is null) return;
-        if (_failedPluginNodes.Count == 0)
-        {
-            _trayIcon.Icon = _trayIconHandle;
-            _trayIcon.Text = "Elka VoiceMeeter FX Host";
-        }
-        else
-        {
-            _trayFailureIcon ??= TrayIconBadge.CreateWarning(_trayIconHandle);
-            _trayIcon.Icon = _trayFailureIcon;
-            _trayIcon.Text = $"Elka VoiceMeeter FX Host - {FailedPluginSummary()}";
-        }
-    }
-
-    private void RefreshTrayFailureMenuItems(Forms.ContextMenuStrip menu)
-    {
-        foreach (var stale in menu.Items.Cast<Forms.ToolStripItem>().Where(item => Equals(item.Tag, FailedTrayMenuTag)).ToArray())
-        {
-            menu.Items.Remove(stale);
-            stale.Dispose();
-        }
-        var failed = _settings.PluginNodes.Where(IsPluginFailed).ToList();
-        if (failed.Count == 0) return;
-        var index = 0;
-        menu.Items.Insert(index++, new Forms.ToolStripMenuItem($"{FailedPluginSummary()}:") { Enabled = false, Tag = FailedTrayMenuTag });
-        foreach (var node in failed)
+        // Snapshot names and commands on WPF. The tray must never enumerate
+        // mutable settings or invoke a plugin/native call when its menu opens.
+        var failed = _settings.PluginNodes.Where(IsPluginFailed).Select(node =>
         {
             var slot = node.Slot;
-            var item = new Forms.ToolStripMenuItem($"Reload {node.Name}") { Tag = FailedTrayMenuTag, ToolTipText = $"VST ID {node.InstanceId}" };
-            item.Click += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+            return new TrayReloadItem(node.Name, node.InstanceId, () => PostTrayAction(() =>
             {
                 if (!_isShuttingDown && node.Slot == slot && _settings.PluginNodes.Contains(node) && IsPluginFailed(node))
                     ReloadPluginNode(node);
             }));
-            menu.Items.Insert(index++, item);
-        }
-        menu.Items.Insert(index, new Forms.ToolStripSeparator { Tag = FailedTrayMenuTag });
+        }).ToArray();
+        _trayController?.UpdateFailures(failed);
     }
 
     private void DisposePluginFailureMonitor()
     {
         _pluginFailureTimer?.Stop();
-        if (_trayIcon is not null && _trayIconHandle is not null) _trayIcon.Icon = _trayIconHandle;
-        _trayFailureIcon?.Dispose();
-        _trayFailureIcon = null;
     }
 }

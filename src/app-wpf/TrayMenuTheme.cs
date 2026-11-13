@@ -8,12 +8,18 @@ namespace Elka.VoiceMeeterFxHost.App;
 internal static class TrayMenuTheme
 {
     internal static void Apply(Forms.ContextMenuStrip menu)
+        => Capture()(menu);
+
+    internal static Action<Forms.ContextMenuStrip> Capture()
     {
         var colors = new MenuColors();
-        menu.BackColor = colors.Panel;
-        menu.ForeColor = colors.Text;
-        menu.ShowImageMargin = false;
-        menu.Renderer = new MenuRenderer(colors);
+        return menu =>
+        {
+            menu.BackColor = colors.Panel;
+            menu.ForeColor = colors.Text;
+            menu.ShowImageMargin = false;
+            menu.Renderer = new MenuRenderer(colors);
+        };
     }
 
     private sealed class MenuRenderer(MenuColors colors) : Forms.ToolStripProfessionalRenderer(colors)

@@ -106,8 +106,8 @@ public partial class MainWindow : Window
     private DateTimeOffset _lastVoicemeeterParameterRefreshAt;
     private int _realtimeCallbackRecoveryAttempts;
     private bool _pendingRealtimeFormatRecovery;
-    private Forms.NotifyIcon? _trayIcon;
-    private System.Drawing.Icon? _trayIconHandle;
+    private TrayController? _trayController;
+    private readonly ShutdownWatchdog _shutdownWatchdog = ShutdownWatchdog.Create();
     private WindowState _windowStateBeforeTray = WindowState.Normal;
 
     internal bool ShouldStartHiddenToTray { get; private set; }
@@ -336,29 +336,25 @@ public partial class MainWindow : Window
 
     private void InitializeTrayIcon()
     {
-        if (_trayIcon is not null)
-        {
-            return;
-        }
-
-        _trayIconHandle = CreateTrayIcon();
-        var menu = new Forms.ContextMenuStrip();
-        TrayMenuTheme.Apply(menu);
-        menu.Items.Add("Open", null, (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray)));
-        menu.Items.Add("Widget", null, (_, _) => Dispatcher.BeginInvoke(new Action(ToggleFloatingPluginPanel)));
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Shutdown", null, (_, _) => Dispatcher.BeginInvoke(new Action(ShutdownFromTray)));
-
-        _trayIcon = new Forms.NotifyIcon
-        {
-            Text = "Elka VoiceMeeter FX Host",
-            Icon = _trayIconHandle,
-            ContextMenuStrip = menu,
-            Visible = true
-        };
-        _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(RestoreFromTray));
+        _trayController ??= new TrayController(
+            () => PostTrayAction(RestoreFromTray),
+            () => PostTrayAction(ToggleFloatingPluginPanel),
+            RequestShutdownFromTray);
     }
 
+    private void PostTrayAction(Action action)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        Dispatcher.BeginInvoke(new Action(() => { if (!_isShuttingDown) action(); }));
+    }
+
+    private void RequestShutdownFromTray()
+    {
+        // Arm on the independent tray thread BEFORE asking the main dispatcher.
+        _shutdownWatchdog.Arm();
+        if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+            Dispatcher.BeginInvoke(new Action(ShutdownFromTray), DispatcherPriority.Send);
+    }
 
     private int ConfiguredStartupDelaySeconds()
     {
@@ -429,21 +425,6 @@ public partial class MainWindow : Window
         InsertAsioEndpointTogglesPanel.IsEnabled = false;
     }
 
-    private static System.Drawing.Icon CreateTrayIcon()
-    {
-        var processPath = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(processPath) && System.IO.File.Exists(processPath))
-        {
-            var icon = System.Drawing.Icon.ExtractAssociatedIcon(processPath);
-            if (icon is not null)
-            {
-                return icon;
-            }
-        }
-
-        return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
-    }
-
     private void HideToTray(bool showHint = true)
     {
         CaptureWindowPlacement();
@@ -454,11 +435,7 @@ public partial class MainWindow : Window
 
         if (showHint && !_trayCloseHintShown)
         {
-            _trayIcon?.ShowBalloonTip(
-                2500,
-                "Elka VoiceMeeter FX Host",
-                "Still running in the tray. Right-click the tray icon to open or shut down.",
-                Forms.ToolTipIcon.Info);
+            _trayController?.ShowCloseHint();
             _trayCloseHintShown = true;
         }
     }
@@ -594,28 +571,17 @@ public partial class MainWindow : Window
 
     private void ShutdownFromTray()
     {
+        _shutdownWatchdog.Arm();
+        if (_isShuttingDown) return;
         _isShuttingDown = true;
-        if (_trayIcon is not null)
-        {
-            _trayIcon.Visible = false;
-        }
-
         Close();
     }
 
     private void DisposeTrayIcon()
     {
         DisposePluginFailureMonitor();
-        if (_trayIcon is not null)
-        {
-            _trayIcon.Visible = false;
-            _trayIcon.ContextMenuStrip?.Dispose();
-            _trayIcon.Dispose();
-            _trayIcon = null;
-        }
-
-        _trayIconHandle?.Dispose();
-        _trayIconHandle = null;
+        _trayController?.Dispose();
+        _trayController = null;
     }
 
     private sealed class CanvasPinInfo
@@ -14043,18 +14009,30 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        _shutdownWatchdog.Arm();
+        _shutdownWatchdog.SetStage("closing the main window");
         base.OnClosing(e);
         if (e.Cancel)
         {
+            _shutdownWatchdog.Cancel();
+            _isShuttingDown = false;
             return;
         }
 
         _isShuttingDown = true;
+        // Preserve the current layout and last captured plugin data before any
+        // native call can block. The normal full save below still captures live data.
+        _shutdownWatchdog.SetStage("saving the cached workspace");
+        PrepareSettingsForSave();
+        FxHostSettingsStore.Save(_settings);
+        _shutdownWatchdog.SetStage("removing the VoiceMeeter button");
         RemoveVoicemeeterCustomButton();
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        _shutdownWatchdog.Arm();
+        _shutdownWatchdog.SetStage("stopping meters and diagnostics");
         ClearPendingPluginRestores();
         StopEndpointMeters();
         StopEndpointPeakWatches();
@@ -14062,7 +14040,9 @@ private void RefreshEndpointButtonSelection()
         _isShuttingDown = true;
         _updateLifetime.Cancel();
         _updateLifetime.Dispose();
+        _shutdownWatchdog.SetStage("removing the VoiceMeeter button");
         RemoveVoicemeeterCustomButton();
+        _shutdownWatchdog.SetStage("applying pending channel changes");
         FlushQueuedChannelChanges();
         _channelApplyTimer.Stop();
         _pluginRestoreTimer.Stop();
@@ -14071,12 +14051,17 @@ private void RefreshEndpointButtonSelection()
         StopPluginStateAutosave();
         _startupDelayTimer?.Stop();
         CloseFloatingPluginPanel();
+        _shutdownWatchdog.SetStage("saving live plugin settings");
         SaveSettings();
+        _shutdownWatchdog.SetStage("closing auxiliary windows");
         _vbanTextListener?.Dispose();
         _vfxCommandsWindow?.Close();
-        DisposeTrayIcon();
         CloseSignalMonitors();
+        _shutdownWatchdog.SetStage("stopping the native audio engine");
         _engine.Dispose();
+        DisposeTrayIcon();
+        _shutdownWatchdog.SetStage("finishing application shutdown");
+        RuntimeLog.Write("FX Host shutdown cleanup completed.");
         base.OnClosed(e);
     }
 }

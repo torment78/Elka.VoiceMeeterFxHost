@@ -20,9 +20,25 @@ public partial class MainWindow
         await Task.Delay(TimeSpan.FromSeconds(10));
         foreach (var node in failed)
         {
-            if (_isShuttingDown || PluginBrowserBusy) return;
-            if (_settings.PluginNodes.Contains(node) && node.MissingPlugin)
+            if (_isShuttingDown) return;
+            if (await WaitForPluginRestoreRetryAsync(node))
                 await RetryUnavailablePluginNodeAsync(node);
+        }
+    }
+
+    private async Task<bool> WaitForPluginRestoreRetryAsync(PluginNodeSnapshot node, Func<Task>? waitStep = null)
+    {
+        // Wait at most five minutes per node; removed/replaced nodes must not be retried.
+        for (var waited = 0; ; waited++)
+        {
+            if (_isShuttingDown || !node.MissingPlugin || !_settings.PluginNodes.Contains(node)) return false;
+            if (!PluginBrowserBusy) return true;
+            if (waited >= 300)
+            {
+                AppendLog($"{node.Name}: automatic retry skipped because VST loading stayed busy. Use Reload.");
+                return false;
+            }
+            await (waitStep?.Invoke() ?? Task.Delay(TimeSpan.FromSeconds(1)));
         }
     }
 
@@ -30,7 +46,12 @@ public partial class MainWindow
 
     private async Task RetryUnavailablePluginNodeAsync(PluginNodeSnapshot node)
     {
-        if (_isShuttingDown || PluginBrowserBusy || !node.MissingPlugin || !_settings.PluginNodes.Contains(node)) return;
+        if (_isShuttingDown || !node.MissingPlugin || !_settings.PluginNodes.Contains(node)) return;
+        if (PluginBrowserBusy)
+        {
+            AppendLog($"{node.Name}: another VST scan or load is running, try Reload again when it has finished.");
+            return;
+        }
         var choice = SavedPluginChoice(node, _engine.PluginChoices());
         if (choice is null)
         {

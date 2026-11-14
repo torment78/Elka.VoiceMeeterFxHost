@@ -106,8 +106,11 @@ authorization. The in-app log reports the current operation.
 
 From **0.8.3.25**, drag a VST2 `.dll` file or a `.vst3` file/bundle from File
 Explorer onto the canvas or onto an existing VST group card. FX Host scans that item,
-keeps the existing browser list, adds its parent scan folder and loads it at
-the drop location. A shell containing several effects opens **Choose VST**.
+keeps the existing browser list and loads it at the drop location. A shell
+containing several effects opens **Choose VST**. From **0.8.3.26**, the parent
+scan folder is remembered only after a successful load, never on cancellation
+or failure. Drive roots and general folders (profile, Desktop, Documents,
+Downloads, Windows and Program Files) are not automatically added.
 
 Use the actual installed plugin, not a shortcut or an ordinary folder. Plugins
 must match the x64 host; VST2 requires a VST2-enabled build. Dropping does not
@@ -135,6 +138,9 @@ remain as unavailable placeholders with their saved data, group membership and
 cables, rather than disappearing. A timed-out load is scheduled for one delayed
 retry. Right-click the unavailable node and choose **Reload** to try manually.
 If the plugin is missing from the scan list, rescan its installed location first.
+From **0.8.3.26**, the automatic retry waits up to five minutes per node if a
+scan or another load is busy. The log explains when a retry is skipped or a
+manual Reload must wait.
 
 ## Back And VST Settings History
 

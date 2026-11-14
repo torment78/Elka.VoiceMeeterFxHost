@@ -28,11 +28,16 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.25 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.25).**
+**[0.8.3.26 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.26).**
+
+This update hardens Back history when a VST rejects its settings, writes only
+new history snapshots, prevents tray double-clicks from immediately hiding
+the window, and waits for busy plugin loads before retrying a failed restore.
 
 - Drag a VST2 `.dll` or VST3 file/bundle straight from File Explorer onto the
-  canvas or into a group. FX Host reads it, adds its scan folder and offers the
-  individual effect when a shell contains several plugins.
+  canvas or into a group. FX Host offers the individual effect when a shell
+  contains several plugins. A dedicated scan folder is remembered only after
+  a successful load; general folders such as Desktop and Downloads are excluded.
 - The canvas **Back** arrow restores up to ten recent checkpoints, including
   captured VST settings. Right-click the arrow to choose an earlier point.
 - Single-left-click the tray icon to show FX Host; click again to hide it.
@@ -43,7 +48,7 @@ signed binaries; SHA-256 checksums accompany the release.
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.25](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.26](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
 for use. This release does not change audio sample processing or routing algorithms.
 

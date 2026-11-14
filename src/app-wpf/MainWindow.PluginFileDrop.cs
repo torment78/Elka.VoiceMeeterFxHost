@@ -51,11 +51,51 @@ public partial class MainWindow
                 AppendLog($"{Path.GetFileName(path)}: no loadable VST was found. The existing VST list has been kept.");
                 continue;
             }
-            AddPluginScanFolder(Path.GetDirectoryName(path)!);
             var choiceToLoad = matches.Length == 1 ? matches[0] : ChooseDroppedPlugin(matches);
             if (choiceToLoad is null) continue;
-            await AddPluginNodeAsync(choiceToLoad, position, group);
+            var loadedNode = await AddPluginNodeAsync(choiceToLoad, position, group);
+            RememberDroppedPluginFolder(path, loadedNode);
             position.Offset(28, 28);
+        }
+    }
+
+    private void RememberDroppedPluginFolder(string path, PluginNodeSnapshot? loadedNode)
+    {
+        if (loadedNode is not { MissingPlugin: false }) return;
+        if (Path.GetDirectoryName(path) is { } folder && IsReasonableDroppedPluginFolder(folder))
+            AddPluginScanFolder(folder);
+    }
+
+    private static bool IsReasonableDroppedPluginFolder(string folder)
+    {
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+            if (string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? string.Empty), StringComparison.OrdinalIgnoreCase))
+                return false;
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            // Downloads can be redirected independently of the user profile.
+            var downloads = Microsoft.Win32.Registry.GetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+                "{374DE290-123F-4565-9164-39C4925E467B}", null) as string;
+            string[] general =
+            [
+                profile,
+                Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                Path.Combine(profile, "Downloads"),
+                downloads is null ? string.Empty : Environment.ExpandEnvironmentVariables(downloads),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            ];
+            return !general.Where(static value => !string.IsNullOrEmpty(value))
+                .Any(value => string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetFullPath(value)), StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
         }
     }
 

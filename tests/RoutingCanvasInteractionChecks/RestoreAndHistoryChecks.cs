@@ -17,6 +17,8 @@ public partial class MainWindow
         try
         {
             CheckSingleTrayClick();
+            CheckIncrementalHistoryFiles();
+            CheckBusyRestoreRetry();
             _settings = new FxHostSettings(); _settingsByEndpoint.Clear();
             var waves = new PluginNodeSnapshot { Slot = 3, InstanceId = 7, Name = "NS1 Stereo", PluginIndex = 1,
                 PluginIdentifier = @"C:\Plugins\WaveShell.vst3|elka-shell-v1|123", PluginFormat = "VST3",
@@ -134,6 +136,7 @@ public partial class MainWindow
             var internalDrop = new DataObject(typeof(PluginChoice), new PluginChoice(0, "Test", "VST3"));
             Assert(PluginChoiceFromDrag(internalDrop) is not null && DroppedPluginPaths(internalDrop).Length == 0,
                 "Internal plugin dragging still uses the selected plugin");
+            CheckDroppedPluginFolders(vst);
             Console.WriteLine("PASS: failed Waves restore retention, manual retry, saved-data round trip, 10-step Back/history menu, plugin editor checkpoints, snapshot files, gesture grouping and external VST2/VST3 drop validation.");
         }
         finally
@@ -156,11 +159,14 @@ public partial class MainWindow
         {
             try
             {
-                var mouseUp = typeof(System.Windows.Forms.NotifyIcon).GetMethod("OnMouseUp", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-                mouseUp.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 0, 0, 0)]);
-                mouseUp.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 0, 0, 0)]);
-                mouseUp.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Right, 1, 0, 0, 0)]);
-                if (toggles != 2 || opens != 0) throw new Exception("Tray must toggle once per left click and never on right click");
+                var mouseClick = typeof(System.Windows.Forms.NotifyIcon).GetMethod("OnMouseClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                mouseClick.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 0, 0, 0)]);
+                mouseClick.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 0, 0, 0)]);
+                mouseClick.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Right, 1, 0, 0, 0)]);
+                if (toggles != 1 || opens != 0) throw new Exception("Tray double-click must toggle only once and never on right click");
+                Thread.Sleep(System.Windows.Forms.SystemInformation.DoubleClickTime + 30);
+                mouseClick.Invoke(icon, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 0, 0, 0)]);
+                if (toggles != 2) throw new Exception("A separate left click must toggle again");
                 icon.ContextMenuStrip!.Items.OfType<System.Windows.Forms.ToolStripMenuItem>().Single(i => i.Text == "Open").PerformClick();
                 if (opens != 1 || toggles != 2) throw new Exception("Tray menu Open remains an explicit open action");
             }
@@ -168,6 +174,96 @@ public partial class MainWindow
             finally { finished.Set(); }
         });
         Assert(finished.Wait(TimeSpan.FromSeconds(10)) && error is null, $"Independent tray single-click toggle: {error}");
+    }
+
+    private void CheckDroppedPluginFolders(string vst)
+    {
+        _settings.PluginScanFolders.Clear();
+        PopulatePluginFolderList([]);
+        RememberDroppedPluginFolder(vst, null);
+        RememberDroppedPluginFolder(vst, new PluginNodeSnapshot { MissingPlugin = true });
+        Assert(_settings.PluginScanFolders.Count == 0, "Cancelled selection or failed load cannot add a scan folder");
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var general = new[] { Path.GetPathRoot(vst)!, profile,
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Path.Combine(profile, "Downloads"),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) };
+        foreach (var folder in general.Where(f => !string.IsNullOrEmpty(f)))
+        {
+            Assert(!IsReasonableDroppedPluginFolder(folder.ToUpperInvariant() + Path.DirectorySeparatorChar),
+                $"Dropped VST cannot register general folder: {folder}");
+            RememberDroppedPluginFolder(Path.Combine(folder, "Test.vst3"), new PluginNodeSnapshot());
+        }
+        Assert(_settings.PluginScanFolders.Count == 0, "Successful loads from general folders still add no scan folder");
+        RememberDroppedPluginFolder(vst, new PluginNodeSnapshot());
+        Assert(_settings.PluginScanFolders.SequenceEqual(new[] { Path.GetDirectoryName(vst)! }),
+            "Successful drop from a dedicated plugin folder remembers that folder");
+    }
+
+    private void CheckIncrementalHistoryFiles()
+    {
+        var directory = Path.Combine(AppDataPaths.LocalRoot, "IncrementalSnapshots", Guid.NewGuid().ToString("N"));
+        var store = new CanvasHistoryStore(directory);
+        var history = new CanvasEditHistory();
+        CanvasEditSnapshot Snapshot(int i) => new() { Nodes = [new() { WorkspaceId = "same-vst", X = i,
+            PluginStateBase64 = new string('x', 1024 * 1024) }] };
+        history.Record(Snapshot(0)); history.Record(Snapshot(1));
+        store.Write(history); store.PendingWrite.GetAwaiter().GetResult();
+        var first = Directory.GetFiles(directory, "*.json").Single();
+        var unchangedTime = new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(first, unchangedTime);
+        history.Record(Snapshot(2)); store.Write(history); store.PendingWrite.GetAwaiter().GetResult();
+        Assert(Directory.GetFiles(directory, "*.json").Length == 2 && File.GetLastWriteTimeUtc(first) == unchangedTime,
+            "A new edit writes one new snapshot without rewriting the retained large state");
+        store.Write(history); store.PendingWrite.GetAwaiter().GetResult();
+        Assert(File.GetLastWriteTimeUtc(first) == unchangedTime, "Repeated writes do not serialize an existing snapshot again");
+        File.Delete(first); store.Write(history); store.PendingWrite.GetAwaiter().GetResult();
+        Assert(File.Exists(first), "Missing snapshot file is recreated");
+        for (var i = 3; i <= 16; i++) { history.Record(Snapshot(i)); store.Write(history); }
+        store.PendingWrite.GetAwaiter().GetResult();
+        var files = Directory.GetFiles(directory, "*.json");
+        Assert(files.Length == CanvasEditHistory.Capacity && !File.Exists(first), "Coalesced writes retain ten snapshots and prune expired files");
+        Assert(files.Select(f => JsonSerializer.Deserialize<CanvasEditSnapshot>(File.ReadAllText(f))!.Nodes.Single().X)
+            .Order().SequenceEqual(history.Undo.Select(s => s.Nodes.Single().X).Order()),
+            "On-disk snapshots match the latest Undo collection after coalescing");
+        history.Clear(); store.Write(history); store.PendingWrite.GetAwaiter().GetResult();
+        Assert(Directory.GetFiles(directory, "*.json").Length == 0, "Reset prunes all old snapshot files");
+    }
+
+    private void CheckBusyRestoreRetry()
+    {
+        var settings = _settings;
+        var scanBusy = _pluginScanInProgress;
+        var shuttingDown = _isShuttingDown;
+        var node = new PluginNodeSnapshot { Name = "Busy Waves", MissingPlugin = true };
+        try
+        {
+            _settings = new FxHostSettings { PluginNodes = [node] };
+            _pluginScanInProgress = true;
+            RetryUnavailablePluginNodeAsync(node).GetAwaiter().GetResult();
+            Assert(LogTextBox.Text.Contains("another VST scan or load is running, try Reload again"), "Manual Reload explains why a busy host cannot load yet");
+            var waits = 0;
+            Assert(WaitForPluginRestoreRetryAsync(node, () =>
+            {
+                if (++waits == 3) _pluginScanInProgress = false;
+                return Task.CompletedTask;
+            }).GetAwaiter().GetResult() && waits == 3, "Automatic retry waits for the scan instead of abandoning the node");
+            _pluginScanInProgress = true; waits = 0;
+            Assert(!WaitForPluginRestoreRetryAsync(node, () => { waits++; return Task.CompletedTask; }).GetAwaiter().GetResult() && waits == 300,
+                "Automatic retry is bounded to 300 one-second waits");
+            Assert(LogTextBox.Text.Contains("automatic retry skipped because VST loading stayed busy. Use Reload."), "Expired retry gives manual recovery instructions");
+            Assert(!WaitForPluginRestoreRetryAsync(node, () => { _isShuttingDown = true; return Task.CompletedTask; }).GetAwaiter().GetResult(),
+                "Shutdown ends a queued retry");
+            _isShuttingDown = false;
+            Assert(!WaitForPluginRestoreRetryAsync(node, () =>
+            {
+                _settings.PluginNodes = [ClonePluginNodeSnapshot(node)];
+                return Task.CompletedTask;
+            }).GetAwaiter().GetResult(), "A removed or replaced node is never retried");
+        }
+        finally { _settings = settings; _pluginScanInProgress = scanBusy; _isShuttingDown = shuttingDown; }
     }
 
     private sealed class NoHistoryStateReads : IPluginSavedData

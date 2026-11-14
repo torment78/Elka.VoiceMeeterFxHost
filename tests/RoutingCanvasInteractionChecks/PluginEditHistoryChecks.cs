@@ -91,6 +91,43 @@ public partial class MainWindow
         Assert(fake.FullReads == reads && _pluginHistoryWatches.Count == 0, "Startup restore is not mistaken for a user edit");
         EndPluginSavedDataPending(node);
         ResetCanvasHistory();
+        CheckRejectedHistorySettings(node, fake);
+    }
+
+    private void CheckRejectedHistorySettings(PluginNodeSnapshot node, HistoryPluginData fake)
+    {
+        var removed = new PluginNodeSnapshot { Slot = 8, MissingPlugin = true, Name = "Remove during Back" };
+        var recovered = new PluginNodeSnapshot { Slot = 9, MissingPlugin = true, Name = "Recover during Back" };
+        node.PluginStateBase64 = fake.State = "current state retained";
+        _settings.PluginNodes = [node, removed];
+        _settings.PluginGroups.Clear(); _settings.CanvasConnections.Clear();
+        _canvasHistory.ReplaceCurrent(CaptureCanvasEdit());
+        var target = CaptureCanvasEdit();
+        target.Nodes = [recovered, ClonePluginNodeSnapshot(node)];
+        target.Nodes[1].PluginStateBase64 = "rejected old state";
+        target.Nodes[1].X = 710;
+        target.PluginEdits[node.WorkspaceId] = "different settings revision";
+        target.Groups = [new() { Name = "Recovered group", MemberSlots = [node.Slot, recovered.Slot] }];
+        target.Connections = [new() { Kind = ConnectionNodeToNode, FromSlot = node.Slot, FromPin = 0,
+            ToSlot = recovered.Slot, ToPin = 0, FromKind = PinNodeOutput, ToKind = PinNodeInput }];
+        _canvasHistory.Undo.Add(target);
+        fake.RejectWrites = true;
+        try
+        {
+            ApplyCanvasHistory(target);
+            Assert(_settings.PluginNodes.Count == 2 && _settings.PluginNodes.Contains(node) &&
+                _settings.PluginNodes.All(n => n.WorkspaceId != removed.WorkspaceId), "Rejected settings still commit the restored node list after removal/recreation");
+            var restored = _settings.PluginNodes.Single(n => n.WorkspaceId == recovered.WorkspaceId);
+            Assert(_settings.PluginGroups.Single().MemberSlots.SequenceEqual(new[] { node.Slot, restored.Slot }) &&
+                _settings.CanvasConnections.Single().ToSlot == restored.Slot && EffectivePluginRoutes().Count() == 1,
+                "Rejected settings still finish group/cable remapping and route reconciliation");
+            Assert(node.X == 710 && _canvasHistory.Undo.Count == 0 && _canvasHistorySuspended == 0,
+                "Back finishes and remains usable after settings rejection");
+            Assert(fake.State == "current state retained" && node.PluginStateBase64 == fake.State,
+                "Rejected state is not copied into the saved node data");
+            Assert(LogTextBox.Text.Contains("the VST did not accept its earlier settings"), "Partial settings failure is logged");
+        }
+        finally { fake.RejectWrites = false; ResetCanvasHistory(); }
     }
 
     private sealed class HistoryPluginData : IPluginSavedData
@@ -98,13 +135,13 @@ public partial class MainWindow
         internal string State = "initial EQ";
         internal float Value = 0.2f;
         internal int FullReads, StateWrites, PresetWrites;
-        internal bool FailPresetRead;
+        internal bool FailPresetRead, RejectWrites;
         public bool TryGetPluginNodeState(int slot, out string state) { FullReads++; state = State; return true; }
         public bool TryGetPluginNodePreset(int slot, out string state) { state = State + " preset"; return !FailPresetRead; }
         public bool TryGetPluginNodeParameterState(int slot, out string state) { state = ParameterSnapshotFixture.Snapshot(Value); return true; }
-        public bool SetPluginNodeState(int slot, string? state) { StateWrites++; State = state!; return true; }
+        public bool SetPluginNodeState(int slot, string? state) { StateWrites++; if (RejectWrites) return false; State = state!; return true; }
         public bool SetPluginNodePreset(int slot, string? state) { PresetWrites++; return true; }
-        public bool SetPluginNodeParameterState(int slot, string? state) { Value = PluginParameterSnapshot.Parse(state!)![0]; return true; }
+        public bool SetPluginNodeParameterState(int slot, string? state) { if (RejectWrites) return false; Value = PluginParameterSnapshot.Parse(state!)![0]; return true; }
         public bool SetPluginNodeControl(int slot, string control, string value, out string status)
         {
             Value = float.Parse(value, System.Globalization.CultureInfo.InvariantCulture); status = "Applied"; return true;

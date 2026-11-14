@@ -1,5 +1,30 @@
 # Development Changes
 
+## 0.8.3.26 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Back history:** a VST rejecting its earlier settings no longer interrupts
+  the graph restore. Nodes, groups and cables finish restoring; the rejection
+  is logged without claiming that the plugin accepted those settings.
+- **Snapshot writes:** each Back checkpoint keeps its own file. Only new or
+  missing snapshot files are written, and expired checkpoints are removed.
+  Moving a node no longer rewrites all ten files with their cached VST data.
+- **Tray clicks:** a double-click is treated as one toggle, so it cannot open
+  the main window and immediately hide it. Right-click still opens the menu.
+- **File drops:** a containing scan folder is remembered only after a plugin
+  is selected and successfully loaded. Cancelled or failed loads add no folder.
+  Drive roots, the user profile, Desktop, Documents, Downloads, Windows and
+  Program Files folders are not automatically registered for scanning.
+- **Waves restore retry:** timed-out startup loads wait for an active scan or
+  load to finish, for up to five minutes per node. An expired retry gives a
+  manual Reload instruction; manual Reload also explains when the host is busy.
+
+Audio sample processing, routing algorithms, callback scheduling, gain/delay
+and the shutdown watchdog are unchanged. This is a recovery/history update,
+not a change to vendor licensing or plugin compatibility requirements.
+
 ## 0.8.3.25 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

@@ -56,6 +56,9 @@ public:
        #if JUCE_WINDOWS
         if (auto hwnd = static_cast<HWND>(getWindowHandle())) RemovePropW(hwnd, EditorProperty);
        #endif
+        // Destroy the plugin view while its full host window (including resize
+        // controls and virtual callbacks) still exists, not in a base destructor.
+        clearContentComponent();
     }
 
     static juce::File placementFileFor(const juce::AudioPluginInstance& plugin, const juce::String& title)

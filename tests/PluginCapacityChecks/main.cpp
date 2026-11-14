@@ -196,16 +196,67 @@ void realHostChecks()
         check(!host.isPluginNodeFailed(Capacity - 1), "Highest real slot failure query works");
         host.clearPluginNodes(); check(live() == 0, "All actual instances released");
     }
+    const auto lazyBundle = folder.getChildFile("capacity-test-data/Unrelated.vst3");
+    // Each run starts empty; previous direct-file fixtures must not enter this scan.
+    const auto dropFolder = folder.getChildFile("capacity-test-data/TargetedDrop-" + juce::Uuid().toString());
+    lazyBundle.createDirectory(); dropFolder.createDirectory();
+    auto* lazyEntry = cache.createNewChildElement("LAZY_CANDIDATE");
+    lazyEntry->setAttribute("path", lazyBundle.getFullPathName());
+    lazyEntry->setAttribute("format", "VST3");
+    lazyEntry->setAttribute("name", "Unrelated cached VST3");
+    check(cache.writeTo(cacheFile), "Isolated lazy cache entry written");
+    {
+        PluginHostLayer host;
+        check(host.plugins().size() == 2, "Both full and lazy cache entries loaded");
+        host.scanPluginPaths({dropFolder.getFullPathName().toStdString()}, true, 2);
+        check(host.plugins().size() == 2, "Targeted append scan preserves unrelated full and lazy entries");
+        const auto droppedDll = dropFolder.getChildFile("Dropped VST2.dll");
+        check(pluginFile.copyFileTo(droppedDll), "Isolated direct-file VST2 fixture copied");
+        host.scanPluginPaths({droppedDll.getFullPathName().toStdString()}, true, 3);
+        check(host.plugins().size() == 3 && host.plugins().back().format == "VST",
+              "Targeted DLL scan inventories one VST2 without losing existing plugins");
+        const int slot = host.addDiscoveredPluginNode(2, 48000, Frames, 2, 0, 2, 1, "Stereo", 1, "Stereo", 0, 0, 2);
+        check(slot >= 0 && host.pluginNodes().size() == 1, "Dropped VST2 candidate resolves to a loadable plugin node");
+        host.clearPluginNodes();
+        host.scanPluginPaths({droppedDll.getFullPathName().toStdString()}, true, 3);
+        check(host.plugins().size() == 3, "Repeated file drop does not duplicate scanned plugins");
+        const auto vst3File = dropFolder.getChildFile("Single file.vst3");
+        check(vst3File.replaceWithText("inventory fixture"), "Single-file VST3 fixture written");
+        host.scanPluginPaths({vst3File.getFullPathName().toStdString()}, true, 3);
+        check(host.plugins().size() == 4 && host.plugins().back().format == "VST3",
+              "Single-file VST3 is inventoried rather than rejected as a missing folder");
+        const auto bundle = dropFolder.getChildFile("Bundle.vst3");
+        check(bundle.createDirectory().wasOk() && pluginFile.copyFileTo(bundle.getChildFile("internal.dll")), "VST3 bundle fixture written");
+        host.scanPluginPaths({bundle.getFullPathName().toStdString()}, true, 3);
+        check(host.plugins().size() == 5 && host.plugins().back().format == "VST3",
+              "Dropped bundle is one VST3, never its internal DLLs as VST2s");
+    }
     FreeLibrary(module);
     std::cout << Capacity << " actual synthetic VST2 instances loaded, processed and released through JUCE and PluginHostLayer.\n";
 }
+
+void checkInstalledDrop(const juce::File& file)
+{
+    check(file.existsAsFile(), "Requested installed plugin file exists");
+    PluginHostLayer host;
+    host.scanPluginPaths({file.getFullPathName().toStdString()}, true, 3);
+    size_t index = 0;
+    for (; index < host.plugins().size(); ++index)
+        if (juce::File(juce::String::fromUTF8(host.plugins()[index].fileOrIdentifier.c_str())) == file) break;
+    check(index < host.plugins().size(), "Actual dropped plugin is present in the scanned list");
+    const auto slot = host.addDiscoveredPluginNode(index, 48000, Frames, 2, 0, 2, 1, "Stereo", 1, "Stereo", 0, 0, 2);
+    check(slot >= 0, "Actual dropped plugin loads from its own list entry");
+    std::cout << "Installed-file drop: " << host.pluginNodes().front().name << "; no editor or audio started.\n";
+    host.clearPluginNodes();
 }
-int main()
+}
+int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juce;
     try
     {
         engineChecks(); realHostChecks();
+        if (argc > 1) checkInstalledDrop(juce::File(juce::String::fromUTF8(argv[1])));
         std::cout << "PASS: " << checks << " plugin capacity checks. No VoiceMeeter connection or audio device.\n";
         return 0;
     }

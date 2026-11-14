@@ -46,6 +46,7 @@ internal static class CanvasInteractionChecks
         }
         try
         {
+            if (args.Contains("--restore-history")) { window.CheckRestoreAndHistory(); return 0; }
             if (args.Contains("--shutdown")) { ShutdownChecks.Run(); return 0; }
             if (args.Contains("--process-memory")) { ProcessMemoryChecks.Run(); return 0; }
             if (args.Contains("--process-priority")) { HostProcessPriorityChecks.Run(); return 0; }
@@ -99,6 +100,7 @@ internal static class CanvasInteractionChecks
             window.CheckPluginStateAutosave();
             SettingsWriteChecks.Run();
             window.CheckCanvasStateVisuals();
+            window.CheckRestoreAndHistory();
             WindowPlacementChecks.Run();
             Console.WriteLine("PASS: real-window canvas interaction checks; native audio blocked, settings writes isolated to scratch files.");
             return 0;

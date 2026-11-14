@@ -50,6 +50,16 @@ bool audio(SandboxedPluginProcessor& node, float gain, bool verify = true)
 }
 void synthetic(const std::string& plugin)
 {
+    // No visible licensing dialog: the former 30-second ADD deadline killed this
+    // constructor. Exercise the WaveShell cold-load policy with a synthetic VST.
+    const auto coldFile = std::filesystem::absolute("artifacts/sandbox-pool-checks/WaveShell-ColdTest.dll");
+    std::filesystem::create_directories(coldFile.parent_path());
+    std::filesystem::copy_file(plugin, coldFile, std::filesystem::copy_options::overwrite_existing);
+    SetEnvironmentVariableW(L"ELKA_TEST_COLD_LOAD_MS", L"32000");
+    auto cold = load(coldFile.string(), "VST2", "cold-test", Mode::OwnProcess);
+    check(cold->isReady() && audio(*cold, .5f), "WaveShell cold construction survives 30 seconds without a dialog");
+    cold.reset();
+    SetEnvironmentVariableW(L"ELKA_TEST_COLD_LOAD_MS", nullptr);
     using sandbox::groupKey;
     check(groupKey(Mode::Auto, "C:/A.dll|elka-shell-v1|00000001", "Waves", "1") ==
         groupKey(Mode::Auto, "c:\\a.dll|elka-shell-v1|00000002", "Waves", "2"), "Shell UIDs share container key");

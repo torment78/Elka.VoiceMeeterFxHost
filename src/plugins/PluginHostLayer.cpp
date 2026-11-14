@@ -1409,6 +1409,25 @@ std::vector<juce::String> collectPluginCandidates(
             return candidates;
         }
 
+        if (std::filesystem::is_regular_file(rootPath))
+        {
+            // A dropped file is a single candidate, never a folder to enumerate.
+            if (!scanVst3 && pathExtensionIs(rootPath, ".dll") && !hasVst3Ancestor(rootPath))
+            {
+                const auto candidate = toUtf8(rootPath.wstring());
+                if (isUnsupported32BitBinary(rootPath))
+                    report << "  Skipping 32-bit VST2 DLL in x64 host: " << candidate << "\n";
+                else
+                {
+                    candidates.emplace_back(candidate);
+                    if (progress) progress("Found " + formatText + " candidate", candidate, 1, 1);
+                }
+            }
+            return candidates;
+        }
+
+        if (!scanVst3 && pathExtensionIs(rootPath, ".vst3")) return candidates;
+
         int visited = 0;
         for (std::filesystem::recursive_directory_iterator it(rootPath, options), end; it != end; ++it)
         {
@@ -1767,11 +1786,12 @@ void scanFormatIntoList(
         if (progress)
             progress("Scanning " + formatText + " folder", path, 0, 0);
 
-        if (!std::filesystem::is_directory(std::filesystem::path(path)))
+        const auto scanPath = std::filesystem::path(juce::String::fromUTF8(path.c_str()).toWideCharPointer());
+        if (!std::filesystem::is_directory(scanPath) && !std::filesystem::is_regular_file(scanPath))
         {
-            report << "Skip missing folder: " << path << "\n";
+            report << "Skip missing path: " << path << "\n";
             if (progress)
-                progress("Skipped missing " + formatText + " folder", path, 0, 0);
+                progress("Skipped missing " + formatText + " path", path, 0, 0);
             continue;
         }
 
@@ -3963,7 +3983,7 @@ int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool
     {
         const auto& description = impl->descriptions[index];
         const auto lazy = index < impl->lazyDescriptions.size() ? impl->lazyDescriptions[index] : static_cast<unsigned char>(0);
-        if (lazy != 0)
+        if (lazy != 0 && (!append || pluginIsInAnyPath(description, paths)))
         {
             ++removedLazy;
             continue;

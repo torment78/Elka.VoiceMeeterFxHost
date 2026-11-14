@@ -59,7 +59,13 @@ public:
         const auto sequence = ++requestCounter;
         InterlockedExchange(&header->requestId, sequence);
         SetEvent(request);
-        if (!wait(sequence, SandboxReadyTimeoutMs, true, progress, error))
+        // WaveShell's cold constructor can exceed 30 seconds during Windows startup.
+        // This is a control-thread load deadline, not an audio callback timeout.
+        auto lowerIdentifier = identifier;
+        std::transform(lowerIdentifier.begin(), lowerIdentifier.end(), lowerIdentifier.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const DWORD loadTimeout = lowerIdentifier.find("waveshell") != std::string::npos ? 90000 : SandboxReadyTimeoutMs;
+        if (!wait(sequence, loadTimeout, true, progress, error))
         {
             if (alive() && InterlockedCompareExchange(&header->responseId, 0, 0) == sequence)
                 return false; // A completed, rejected ADD must not terminate existing peers.
@@ -163,7 +169,7 @@ private:
                     waitingForWindow = false;
                     deadline = GetTickCount64() + timeout;
                 }
-                else { error = "Sandbox helper did not finish its request before timeout."; return false; }
+                else { error = "Sandbox helper did not finish its request before timeout (" + std::to_string(timeout) + " ms)."; return false; }
             }
             const HANDLE handles[] { response, process };
             if (WaitForMultipleObjects(2, handles, FALSE, 100) == WAIT_FAILED)

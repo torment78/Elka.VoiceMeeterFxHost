@@ -509,6 +509,7 @@ internal sealed record PluginLayoutChoice(int Id, string Name, int Channels)
 
 internal sealed class PluginNodeSnapshot
 {
+    public string WorkspaceId { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "VST";
     public int PluginIndex { get; set; } = -1;
     public string PluginFormat { get; set; } = string.Empty;
@@ -538,6 +539,7 @@ internal sealed class PluginNodeSnapshot
     public bool Sandboxed { get; set; }
     public int SandboxMode { get; set; }
     public bool MissingPlugin { get; set; }
+    public string RestoreError { get; set; } = string.Empty;
     public CallbackMode Mode { get; set; } = CallbackMode.Input;
 }
 
@@ -1245,6 +1247,15 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInser
             .Distinct(StringComparer.OrdinalIgnoreCase));
         // The UI supplies checked default folders as well as checked custom folders.
         var result = ElkaFx_ScanPluginFoldersEx(folderText, includeDefaults: 0, (int)formatFilter, status, status.Capacity);
+        _lastStatus = status.ToString();
+        return result >= 0 ? _lastStatus : $"Scan failed: {_lastStatus}";
+    }
+
+    public string ScanDroppedPlugin(string path)
+    {
+        if (!_attached) return _lastStatus;
+        var status = new StringBuilder(64 * 1024);
+        var result = ElkaFx_AddPluginScanPath(path, status, status.Capacity);
         _lastStatus = status.ToString();
         return result >= 0 ? _lastStatus : $"Scan failed: {_lastStatus}";
     }
@@ -2724,6 +2735,9 @@ internal sealed class NativeEngineClient : IDisposable, IPluginSavedData, IInser
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginScanProgress(StringBuilder buffer, int bufferChars);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    private static extern int ElkaFx_AddPluginScanPath(string path, StringBuilder status, int statusChars);
 
     [DllImport(DllName, CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
     private static extern int ElkaFx_GetPluginLoadProgress(StringBuilder buffer, int bufferChars);

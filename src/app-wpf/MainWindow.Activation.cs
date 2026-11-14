@@ -49,6 +49,12 @@ public partial class MainWindow
             return;
         }
 
+        ToggleFxHostWindow();
+    }
+
+    private void ToggleFxHostWindow()
+    {
+        if (_isShuttingDown) return;
         if (IsVisible && ShowInTaskbar && WindowState != WindowState.Minimized)
         {
             HideToTray(showHint: false);

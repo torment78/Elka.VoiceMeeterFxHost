@@ -28,7 +28,26 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.24 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.24).**
+**[0.8.3.25 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.25).**
+
+- Drag a VST2 `.dll` or VST3 file/bundle straight from File Explorer onto the
+  canvas or into a group. FX Host reads it, adds its scan folder and offers the
+  individual effect when a shell contains several plugins.
+- The canvas **Back** arrow restores up to ten recent checkpoints, including
+  captured VST settings. Right-click the arrow to choose an earlier point.
+- Single-left-click the tray icon to show FX Host; click again to hide it.
+  Right-click still opens the tray menu.
+- Slow Waves startup loads get more time. Failed restores keep their saved
+  data, group membership and cables, with a timed-out-load retry and manual Reload.
+- Setup requests a normal-user launch after installation. Plugin editor
+  teardown is also hardened; the reported intermittent vendor-editor crash
+  has not been reproduced in isolated checks.
+
+See [what changed in 0.8.3.25](docs/DevelopmentChanges.md) for details and limits,
+and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
+for use. This release does not change audio sample processing or routing algorithms.
+
+The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**
 available if an audio or plugin call stalls the window. An explicit shutdown
 allows five seconds for normal cleanup, then forces FX Host to exit if needed.
@@ -176,7 +195,8 @@ does not claim to fix them; their cause is not yet confirmed.
 4. Open **VST / Route**.
 5. Use **Scan** once, or add a custom plugin folder and scan it.
 6. Add a VST by double-clicking it, dragging it to the canvas, or selecting it
-   and pressing `Enter`.
+   and pressing `Enter`. In the dev build, you can also drop a VST file directly
+   from File Explorer without scanning its whole folder first.
 7. Connect a left source pin to the VST input.
 8. Connect the VST output to a right destination pin.
 9. Repeat the route for the other channel when building a stereo chain.

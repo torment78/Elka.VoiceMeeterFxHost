@@ -45,6 +45,8 @@ try
     using var file = File.OpenRead(module.FileName);
     if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_AddSandboxedPluginNodeWithMode", out _))
         throw new Exception("Sandbox mode export is missing.");
+    if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_AddPluginScanPath", out _))
+        throw new Exception("Targeted VST2/VST3 drop scan export is missing.");
     if (!NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_DetectInsertAsio", out _) ||
         !NativeLibrary.TryGetExport(module.BaseAddress, "ElkaFx_ProbeInsertAsio", out _))
         throw new Exception("Insert ASIO detection exports are missing.");

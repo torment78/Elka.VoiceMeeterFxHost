@@ -102,6 +102,19 @@ format without performing a heavy full plugin load for every list item.
 Plugin loading can take longer when a vendor performs licensing or online
 authorization. The in-app log reports the current operation.
 
+### Drop A Plugin File (Development Build)
+
+From **0.8.3.25**, drag a VST2 `.dll` file or a `.vst3` file/bundle from File
+Explorer onto the canvas or onto an existing VST group card. FX Host scans that item,
+keeps the existing browser list, adds its parent scan folder and loads it at
+the drop location. A shell containing several effects opens **Choose VST**.
+
+Use the actual installed plugin, not a shortcut or an ordinary folder. Plugins
+must match the x64 host; VST2 requires a VST2-enabled build. Dropping does not
+install vendor dependencies or licenses. If Windows shows the prohibited-drop
+cursor, check that FX Host is not running as administrator while Explorer is
+running normally. Start FX Host from its normal Start-menu shortcut.
+
 ### Waves WaveShell (Development Build)
 
 From version 0.8.3.6, **Scan** discovers the individual plugins inside installed
@@ -116,6 +129,31 @@ available. Shell discovery runs in a separate worker with a timeout; it can take
 longer than ordinary filename scanning. Reloads and saves retain the selected
 plugin's identity, not just the WaveShell filename. Missing selections are not
 silently replaced with another effect. Waves licensing still applies.
+
+In **0.8.3.25**, WaveShell startup loads have up to 90 seconds. Failed restores
+remain as unavailable placeholders with their saved data, group membership and
+cables, rather than disappearing. A timed-out load is scheduled for one delayed
+retry. Right-click the unavailable node and choose **Reload** to try manually.
+If the plugin is missing from the scan list, rescan its installed location first.
+
+## Back And VST Settings History
+
+Click the canvas **Back** arrow to undo the last checkpoint. Right-click it to
+choose an earlier point from up to ten changes, or choose **Close** to dismiss
+the menu. There is no Forward/Redo action.
+
+Checkpoints include layout, group/cable edits and captured VST settings. While
+an editor is open, parameter edits are checkpointed after they settle. Closing
+the editor or pressing Back also captures non-parameter edits such as loading
+an IR. Host parameter commands participate too. Plugins must support saving
+and restoring their state; this is not a separate vendor-editor undo stack.
+Ordinary canvas moves preserve unchanged plugin instances and settings.
+
+Snapshot files are written under
+`%LOCALAPPDATA%\ElkaSoft\VoiceMeeterFxHost\Snapshots`, with at most ten retained.
+History is session-local and resets when loading/importing a workspace; it is
+not restored from those files after restart. Use **Save** or **Save As** to
+keep a backup beyond the current session.
 
 ## Connect A VST
 
@@ -393,6 +431,10 @@ When tray behavior is enabled, the notification-area menu provides **Open** and
 current Windows user. **Start to Tray** avoids showing the main window whenever
 the app is launched, whether Windows starts it automatically or it is opened
 manually.
+
+From **0.8.3.25**, a single left-click on the tray icon toggles the main window:
+one click opens it, the next hides it to the tray without stopping processing.
+Right-click opens the menu as before.
 
 With **Close to Tray** enabled, the window X hides FX Host and audio keeps
 running. Use the tray's **Shutdown** command to exit. The tray runs independently

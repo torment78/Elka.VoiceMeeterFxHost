@@ -587,6 +587,9 @@
                        FontWeight="SemiBold"
                        Foreground="{StaticResource RouteAccentBrush}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button x:Name="UndoCanvasButton" Width="34" Height="32" Padding="0" Margin="0,0,6,0"
+                                    FontFamily="Segoe MDL2 Assets" Content="&#xE7A7;" ToolTip="Back" IsEnabled="False" Click="UndoCanvas_Click"
+                                    PreviewMouseRightButtonUp="UndoCanvas_HistoryMenu" />
                             <Button x:Name="ChannelsWorkspaceButton"
                       Content="Channels"
                       Width="92"

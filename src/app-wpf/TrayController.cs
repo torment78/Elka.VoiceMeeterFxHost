@@ -21,12 +21,12 @@ internal sealed class TrayController : IDisposable
     private bool _disposed;
     private bool _stopped;
 
-    public TrayController(Action open, Action widget, Action shutdown, bool visible = true)
+    public TrayController(Action open, Action widget, Action shutdown, bool visible = true, Action? toggle = null)
     {
         // Capture WPF resource colors on the calling UI thread, before starting
         // the independent pump. The renderer retains only System.Drawing colors.
         var applyTheme = TrayMenuTheme.Capture();
-        _thread = new Thread(() => Run(open, widget, shutdown, visible, applyTheme))
+        _thread = new Thread(() => Run(open, widget, shutdown, visible, applyTheme, toggle ?? open))
         {
             IsBackground = true,
             Name = "FX Host tray"
@@ -35,7 +35,7 @@ internal sealed class TrayController : IDisposable
         _thread.Start();
     }
 
-    private void Run(Action open, Action widget, Action shutdown, bool visible, Action<Forms.ContextMenuStrip> applyTheme)
+    private void Run(Action open, Action widget, Action shutdown, bool visible, Action<Forms.ContextMenuStrip> applyTheme, Action toggle)
     {
         try
         {
@@ -50,7 +50,7 @@ internal sealed class TrayController : IDisposable
             menu.Items.Add("Shutdown", null, (_, _) => shutdown());
             _baseIcon = CreateIcon();
             using var icon = new Forms.NotifyIcon { Text = Title, Icon = _baseIcon, ContextMenuStrip = menu };
-            icon.DoubleClick += (_, _) => open();
+            icon.MouseUp += (_, e) => { if (e.Button == Forms.MouseButtons.Left) toggle(); };
             lock (_gate)
             {
                 if (_disposed) return;

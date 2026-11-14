@@ -225,7 +225,9 @@ public partial class MainWindow
         using var process = Process.Start(new ProcessStartInfo(installer)
         {
             UseShellExecute = true,
-            Verb = "runas",
+            // Inno's original-user launcher must start unelevated. Setup requests
+            // elevation itself and can then launch FX Host back as that user.
+            Verb = "open",
             WorkingDirectory = Path.GetDirectoryName(installer)
         }) ?? throw new IOException("Windows could not open the installer.");
         menu.Close();

@@ -130,6 +130,28 @@ internal sealed class PluginGroupPropertiesWindow : Window
     public int SidechainOutputPins { get; private set; }
     public List<int> MemberSlots { get; private set; }
 
+    internal void OnHistoryRestored(IReadOnlyList<PluginNodeSnapshot>? members)
+    {
+        if (members is null)
+        {
+            _accepted = true; // The group was removed by undo; do not restore its old cables on close.
+            Close();
+            return;
+        }
+        _members.Clear(); _members.AddRange(members);
+        MemberSlots = members.Select(node => node.Slot).ToList();
+        _originalConnections.Clear(); _originalConnections.AddRange(GroupConnections().Select(CloneConnection));
+        _originalNodePositions.Clear();
+        foreach (var node in members) _originalNodePositions[node.Slot] = new Point(node.X, node.Y);
+        GroupName = _group.Name; Title = $"{GroupName} Group"; _nameTextBox.Text = GroupName;
+        InputPins = _group.InputPins; OutputPins = _group.OutputPins;
+        _inputPinsCombo.SelectedItem = InputPins; _outputPinsCombo.SelectedItem = OutputPins;
+        _sidechainPortsCheckBox.IsChecked = _group.SidechainPortsEnabled;
+        _draggingNode = null; _dragOrigins.Clear(); _wireStart = null; _wirePreview = null;
+        RebuildCanvas();
+        RoutingRefreshed?.Invoke(this, EventArgs.Empty);
+    }
+
     internal void OnGroupRoutingChanged(IReadOnlyList<PluginNodeSnapshot> members,
         IReadOnlyList<CanvasConnectionSnapshot> previousConnections)
     {

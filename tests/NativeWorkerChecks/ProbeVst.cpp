@@ -80,6 +80,8 @@ float VSTCALLBACK getParameter(AEffect* effect, VstInt32) { return static_cast<P
 Probe::Probe()
 {
     wchar_t setting[512] {};
+    if (GetEnvironmentVariableW(L"ELKA_TEST_COLD_LOAD_MS", setting, 512))
+        Sleep(std::clamp(_wtoi(setting), 0, 40000));
     throwOnAudio = GetEnvironmentVariableW(L"ELKA_TEST_THROW_ON_AUDIO", setting, 512) && _wtoi(setting) == 1;
     if (GetEnvironmentVariableW(L"ELKA_TEST_ACTIVATION_DELAY_MS", setting, 512))
     {

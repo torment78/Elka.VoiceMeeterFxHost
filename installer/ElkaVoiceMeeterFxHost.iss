@@ -106,7 +106,7 @@ Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{c
 Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{code:GetVoicemeeterExecutablePath|voicemeeterpro_x64.exe}"""; StatusMsg: "Disabling Windows power throttling for VoiceMeeter Banana (64-bit)..."; Flags: runhidden waituntilterminated logoutput; Check: ShouldDisableVoicemeeterExecutable('voicemeeterpro_x64.exe')
 Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{code:GetVoicemeeterExecutablePath|voicemeeter8.exe}"""; StatusMsg: "Disabling Windows power throttling for VoiceMeeter Potato (32-bit)..."; Flags: runhidden waituntilterminated logoutput; Check: ShouldDisableVoicemeeterExecutable('voicemeeter8.exe')
 Filename: "{sys}\powercfg.exe"; Parameters: "/powerthrottling disable /path ""{code:GetVoicemeeterExecutablePath|voicemeeter8x64.exe}"""; StatusMsg: "Disabling Windows power throttling for VoiceMeeter Potato (64-bit)..."; Flags: runhidden waituntilterminated logoutput; Check: ShouldDisableVoicemeeterExecutable('voicemeeter8x64.exe')
-Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; Description: "{cm:LaunchProgram,Elka VoiceMeeter FX Host}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Elka.VoiceMeeterFxHost.App.exe"; Description: "{cm:LaunchProgram,Elka VoiceMeeter FX Host}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 [Code]
 const
   VoicemeeterUninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB:Voicemeeter {17359A74-1236-5467}';

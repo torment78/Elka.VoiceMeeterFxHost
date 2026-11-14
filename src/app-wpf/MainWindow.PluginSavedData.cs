@@ -108,6 +108,7 @@ public partial class MainWindow
     private bool SetPluginNodeNamedControl(PluginNodeSnapshot node, string control, string value, out string status)
     {
         EndPluginSavedDataPending(node);
+        BeginPluginEditHistory(node);
         return SavedPluginData.SetPluginNodeControl(node.Slot, control, value, out status);
     }
 
@@ -157,7 +158,9 @@ public partial class MainWindow
             AppendLog($"{node.Name}: no saved VST data is available yet.");
             return;
         }
-        ApplySavedPluginNodeData(node, node);
+        var saved = ClonePluginNodeSnapshot(node);
+        BeginPluginEditHistory(node);
+        ApplySavedPluginNodeData(node, saved);
         AppendLog($"{node.Name}: requested saved VST settings reload once (no automatic retry).");
     }
 }

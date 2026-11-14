@@ -1634,7 +1634,8 @@ int scanPluginFoldersNative(
     int includeDefaults,
     int formatFlags,
     wchar_t* status,
-    int statusChars)
+    int statusChars,
+    bool append = false)
 {
     const int safeFormatFlags = normalizePluginScanFlags(formatFlags);
     std::lock_guard scanLock(g_scanMutex);
@@ -1660,7 +1661,7 @@ int scanPluginFoldersNative(
 
     const int count = target->plugins.scanPluginPaths(
         paths,
-        false,
+        append,
         safeFormatFlags,
         [](const std::string& stage, const std::string& path, int current, int total) {
             setScanProgress(true, stage, path, current, total);
@@ -2704,6 +2705,11 @@ __declspec(dllexport) int __cdecl ElkaFx_ScanPluginFoldersEx(
     int statusChars)
 {
     return scanPluginFoldersNative(folders, includeDefaults, formatFlags, status, statusChars);
+}
+
+__declspec(dllexport) int __cdecl ElkaFx_AddPluginScanPath(const wchar_t* path, wchar_t* status, int statusChars)
+{
+    return scanPluginFoldersNative(path, 0, ScanFormatAll, status, statusChars, true);
 }
 
 __declspec(dllexport) int __cdecl ElkaFx_GetPluginScanProgress(wchar_t* buffer, int bufferChars)

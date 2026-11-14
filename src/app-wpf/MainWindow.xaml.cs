@@ -274,6 +274,7 @@ public partial class MainWindow : Window
         };
 
         LoadSettings();
+        InitializeCanvasHistory();
         ApplyHostProcessPriority();
         ApplySavedWindowPlacement();
         ShouldStartHiddenToTray = StartupTrayOptions.StartHiddenToTray || _settings.StartToTray;
@@ -339,7 +340,8 @@ public partial class MainWindow : Window
         _trayController ??= new TrayController(
             () => PostTrayAction(RestoreFromTray),
             () => PostTrayAction(ToggleFloatingPluginPanel),
-            RequestShutdownFromTray);
+            RequestShutdownFromTray,
+            toggle: () => PostTrayAction(ToggleFxHostWindow));
     }
 
     private void PostTrayAction(Action action)
@@ -2187,8 +2189,14 @@ public partial class MainWindow : Window
     private void NormalizePluginInstanceIds()
     {
         var assigned = new HashSet<int>();
+        var workspaceIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var node in AdvancedModeState.AllNodes(_settings))
         {
+            if (string.IsNullOrWhiteSpace(node.WorkspaceId) || !workspaceIds.Add(node.WorkspaceId))
+            {
+                node.WorkspaceId = Guid.NewGuid().ToString("N");
+                workspaceIds.Add(node.WorkspaceId);
+            }
             if (node.InstanceId >= 0 &&
                 node.InstanceId < MaxPluginInstanceIds &&
                 assigned.Add(node.InstanceId))
@@ -2228,6 +2236,7 @@ public partial class MainWindow : Window
 
     private void ApplyImportedSave(FxHostSettings imported)
     {
+        ResetCanvasHistory();
         // A save file must not change the process's startup mode without a restart.
         imported.AdvancedModeEnabled = _advancedModeActive;
         _loading = true;
@@ -2265,6 +2274,7 @@ public partial class MainWindow : Window
 
     private void ClearLoadedPluginGraph()
     {
+        ResetCanvasHistory();
         _saveTimer.Stop();
         _pluginRestoreTimer.Stop();
         foreach (var node in _settings.PluginNodes.ToArray())
@@ -2415,6 +2425,7 @@ public partial class MainWindow : Window
 
         _saveTimer.Stop();
         _saveTimer.Start();
+        QueueCanvasHistory();
     }
 
     private void NormalizePluginGroups()
@@ -4149,6 +4160,7 @@ public partial class MainWindow : Window
 
     private void SetPluginScanControlsEnabled(bool enabled)
     {
+        UpdateCanvasHistoryButtons();
         ScanButton.IsEnabled = enabled;
         AddNodeButton.IsEnabled = enabled;
         PluginSearchTextBox.IsEnabled = true;
@@ -6896,7 +6908,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RoutingCanvas_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = PluginBrowserBusy || PluginChoiceFromDrag(e.Data) is null
+        e.Effects = PluginBrowserBusy || (PluginChoiceFromDrag(e.Data) is null && DroppedPluginPaths(e.Data).Length == 0)
             ? DragDropEffects.None
             : DragDropEffects.Copy;
         e.Handled = true;
@@ -6914,16 +6926,18 @@ private void RefreshEndpointButtonSelection()
         var choice = PluginChoiceFromDrag(e.Data);
         if (choice is null)
         {
+            e.Handled = true;
+            await DropPluginFilesAsync(DroppedPluginPaths(e.Data), e.GetPosition(RoutingCanvas));
             return;
         }
 
-        await AddPluginNodeAsync(choice, e.GetPosition(RoutingCanvas));
         e.Handled = true;
+        await AddPluginNodeAsync(choice, e.GetPosition(RoutingCanvas));
     }
 
     private void Group_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = PluginBrowserBusy || PluginChoiceFromDrag(e.Data) is null
+        e.Effects = PluginBrowserBusy || (PluginChoiceFromDrag(e.Data) is null && DroppedPluginPaths(e.Data).Length == 0)
             ? DragDropEffects.None
             : DragDropEffects.Copy;
         e.Handled = true;
@@ -6946,11 +6960,13 @@ private void RefreshEndpointButtonSelection()
         var choice = PluginChoiceFromDrag(e.Data);
         if (choice is null)
         {
+            e.Handled = true;
+            await DropPluginFilesAsync(DroppedPluginPaths(e.Data), e.GetPosition(RoutingCanvas), group);
             return;
         }
 
-        await AddPluginNodeAsync(choice, e.GetPosition(RoutingCanvas), group);
         e.Handled = true;
+        await AddPluginNodeAsync(choice, e.GetPosition(RoutingCanvas), group);
     }
 
     private static PluginChoice? PluginChoiceFromDrag(IDataObject data)
@@ -7155,6 +7171,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RestoreSavedPluginNodes(IReadOnlyList<PluginChoice> pluginChoices)
     {
+        using var historyScope = SuspendCanvasHistory();
         var savedNodes = _settings.PluginNodes
             .Select(ClonePluginNodeSnapshot)
             .ToList();
@@ -7174,8 +7191,7 @@ private void RefreshEndpointButtonSelection()
                 var missing = ClonePluginNodeSnapshot(savedNode);
                 missing.Slot = nextMissingSlot--;
                 missing.MissingPlugin = true;
-                missing.Enabled = false;
-                missing.Bypassed = true;
+                missing.RestoreError = "Plugin not found in the scanned list.";
                 slotMap[savedNode.Slot] = missing;
                 restoredNodes.Add(missing);
                 AppendLog($"{savedNode.Name}: saved VST could not be matched in the scanned plugin list; shown as a missing red placeholder.");
@@ -7198,7 +7214,10 @@ private void RefreshEndpointButtonSelection()
                 outputLayoutId: savedNode.OutputLayoutId);
             if (restored is null)
             {
-                AppendLog($"{savedNode.Name}: saved VST restore failed. {_engine.StatusText}");
+                var failed = PreserveFailedPluginRestore(savedNode, nextMissingSlot--, _engine.LastStatus);
+                slotMap[savedNode.Slot] = failed;
+                restoredNodes.Add(failed);
+                AppendLog($"{savedNode.Name}: saved VST restore failed. {failed.RestoreError} Saved data and cables have been kept; use Reload to retry.");
                 continue;
             }
 
@@ -7251,11 +7270,12 @@ private void RefreshEndpointButtonSelection()
             _selectedPluginNodeSlot = null;
         }
 
-        AppendLog($"Restored {restoredNodes.Count} VST node(s) and {restoredConnections} cable(s).");
+        AppendLog($"Restored {restoredNodes.Count(node => !node.MissingPlugin)} VST node(s), kept {restoredNodes.Count(node => node.MissingPlugin)} unavailable node(s), and preserved {restoredConnections} cable(s).");
         RefreshEngineCallbackMode();
         RebuildVstNodeList();
         RebuildRoutingCanvas();
         QueueDelayedPluginStateReapply(restoredNodes);
+        QueueFailedPluginRestoreRetry(restoredNodes);
         QueueSave();
     }
 
@@ -7463,6 +7483,7 @@ private void RefreshEndpointButtonSelection()
 
     private static void ApplySavedNodeVisualState(PluginNodeSnapshot restored, PluginNodeSnapshot saved)
     {
+        restored.WorkspaceId = saved.WorkspaceId;
         restored.InstanceId = saved.InstanceId;
         restored.Name = string.IsNullOrWhiteSpace(saved.Name) ? restored.Name : saved.Name;
         restored.X = saved.X;
@@ -7481,6 +7502,7 @@ private void RefreshEndpointButtonSelection()
         restored.PluginPresetBase64 = saved.PluginPresetBase64;
         restored.PluginParameterStateBase64 = saved.PluginParameterStateBase64;
         restored.MissingPlugin = false;
+        restored.RestoreError = string.Empty;
 
         var sidechainPins = Math.Clamp(saved.SidechainInputPins, 0, Math.Max(0, restored.InputPins - 1));
         var mainPins = Math.Clamp(saved.MainInputPins, 1, Math.Max(1, restored.InputPins - sidechainPins));
@@ -7736,6 +7758,7 @@ private void RefreshEndpointButtonSelection()
     {
         return new PluginNodeSnapshot
         {
+            WorkspaceId = node.WorkspaceId,
             Name = node.Name,
             PluginIndex = node.PluginIndex,
             PluginFormat = node.PluginFormat,
@@ -7759,6 +7782,7 @@ private void RefreshEndpointButtonSelection()
             Sandboxed = node.Sandboxed,
             SandboxMode = node.SandboxMode,
             MissingPlugin = node.MissingPlugin,
+            RestoreError = node.RestoreError,
             MainInputLayoutId = node.MainInputLayoutId,
             MainInputLayoutName = node.MainInputLayoutName,
             OutputLayoutId = node.OutputLayoutId,
@@ -8241,6 +8265,7 @@ private void RefreshEndpointButtonSelection()
             else pendingRestore = null;
         }
 
+        BeginPluginEditHistory(node);
         AppendLog(_engine.OpenPluginEditor(node.Slot, $"{node.Name} - ID {node.InstanceId}"));
 
         if (pendingRestore is null)
@@ -8252,6 +8277,7 @@ private void RefreshEndpointButtonSelection()
         var currentNode = _settings.PluginNodes.FirstOrDefault(candidate => candidate.Slot == pendingRestore.Slot);
         if (!ReferenceEquals(currentNode, node) || !ReferenceEquals(GetPendingPluginRestore(node), pendingRestore))
         {
+            if (ReferenceEquals(currentNode, node)) BeginPluginEditHistory(node);
             return;
         }
 
@@ -8263,7 +8289,7 @@ private void RefreshEndpointButtonSelection()
                 AppendLog($"{node.Name}: saved VST data was re-applied after opening the editor.");
             }
         }
-        finally { EndPluginSavedDataPending(pendingRestore); }
+        finally { EndPluginSavedDataPending(pendingRestore); BeginPluginEditHistory(node); }
     }
 
     private void SetNodePinsCollapsed(PluginNodeSnapshot node, bool collapsed)
@@ -8276,6 +8302,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RemovePluginNode(PluginNodeSnapshot node)
     {
+        CaptureNodeForUndo(node);
         RemoveEditorHotkeys(binding => binding.VstId == node.InstanceId && string.IsNullOrEmpty(binding.GroupId));
         if (!node.MissingPlugin)
         {
@@ -9694,7 +9721,8 @@ private void RefreshEndpointButtonSelection()
         menu.Items.Add(CreateNodeMenuItem("Reload saved settings now", () => ReloadSavedPluginSettingsNow(node)));
         if (node.MissingPlugin)
         {
-            menu.Items.Add(new MenuItem { Header = "Missing VST", IsEnabled = false });
+            menu.Items.Add(new MenuItem { Header = "VST unavailable", IsEnabled = false, ToolTip = node.RestoreError });
+            menu.Items.Add(CreateNodeMenuItem("Reload", () => RetryUnavailablePluginNode(node)));
             var missingRemove = CreateNodeMenuItem("Remove", () => RemovePluginNode(node));
             missingRemove.Foreground = (Brush)FindResource("DangerBrush");
             menu.Items.Add(missingRemove);
@@ -9937,6 +9965,7 @@ private void RefreshEndpointButtonSelection()
     private void DeletePluginGroupWithMembers(PluginGroupSnapshot group)
     {
         var members = GroupMembers(group).ToList();
+        foreach (var member in members) CaptureNodeForUndo(member);
         RemoveEditorHotkeys(binding => binding.GroupId == group.Id ||
             (string.IsNullOrEmpty(binding.GroupId) && members.Any(node => node.InstanceId == binding.VstId)));
         var memberSlots = members.Select(static node => node.Slot).ToHashSet();
@@ -14049,6 +14078,8 @@ private void RefreshEndpointButtonSelection()
         _statusTimer.Stop();
         _saveTimer.Stop();
         StopPluginStateAutosave();
+        _canvasHistoryTimer?.Stop();
+        _pluginEditHistoryTimer?.Stop();
         _startupDelayTimer?.Stop();
         CloseFloatingPluginPanel();
         _shutdownWatchdog.SetStage("saving live plugin settings");

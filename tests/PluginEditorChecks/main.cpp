@@ -17,6 +17,7 @@ struct EditorCounts
 {
     int created = 0;
     int destroyed = 0;
+    int destroyedWithLiveHost = 0;
 };
 
 class TestEditor final : public juce::AudioProcessorEditor
@@ -31,6 +32,8 @@ public:
 
     ~TestEditor() override
     {
+        if (auto* host = findParentComponentOfClass<elka::PluginEditorWindow>(); host != nullptr && host->getWindowHandle() != nullptr)
+            ++counts.destroyedWithLiveHost;
         processor.editorBeingDeleted(this);
         ++counts.destroyed;
     }
@@ -166,6 +169,8 @@ void checkOwnerLifecycle()
         check(!editor && counts.created == counts.destroyed, "Repeated open and close leaves no editors alive");
     }
     checkAudio(plugin);
+    check(counts.destroyedWithLiveHost == counts.destroyed,
+          "Plugin editors are destroyed before the host window's derived lifetime ends");
 }
 
 void checkPlacement()

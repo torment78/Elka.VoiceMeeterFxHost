@@ -83,3 +83,11 @@ C:\Program Files (x86)\Common Files\VST2
 ```
 
 Use **Add Folder** for any other VST2 folder, then click **Scan**.
+
+From development version **0.8.3.25**, you can instead drag the installed x64
+VST2 `.dll` directly from File Explorer onto the canvas or onto a group card.
+FX Host scans that file without clearing the current list and adds its parent
+folder for later scans. A multi-effect shell opens an effect picker.
+Shortcuts and ordinary folders are not accepted as plugin drops. This does not
+copy the plugin or install its vendor dependencies. See
+[Drop a plugin file](UserGuide.md#drop-a-plugin-file-development-build).

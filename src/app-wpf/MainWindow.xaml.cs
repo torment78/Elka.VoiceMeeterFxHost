@@ -1859,6 +1859,7 @@ public partial class MainWindow : Window
 
     private void RoutingCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (FinishCanvasBox()) { e.Handled = true; return; }
         _lastCanvasClick = e.GetPosition(RoutingCanvas);
         ClearWirePreview();
     }
@@ -1933,6 +1934,8 @@ public partial class MainWindow : Window
 
     private void RoutingCanvas_MouseMove(object sender, MouseEventArgs e)
     {
+        if (_boxStart is not null && e.LeftButton == MouseButtonState.Pressed && UpdateCanvasBox(e.GetPosition(RoutingCanvas)))
+        { e.Handled = true; return; }
         if (_wireDragStart is null || e.LeftButton != MouseButtonState.Pressed)
         {
             return;
@@ -2675,6 +2678,9 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        if (e.Key == Key.Escape && FinishCanvasBox(cancel: true)) { e.Handled = true; return; }
+        if (e.Key is Key.Delete or Key.Back && RemoveBoxSelectedCables()) { e.Handled = true; return; }
 
         if (e.Key == Key.Delete && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
@@ -6945,6 +6951,11 @@ private void RefreshEndpointButtonSelection()
 
     private async void Group_Drop(object sender, DragEventArgs e)
     {
+        if (!_settings.CanvasAutomaticGrouping)
+        {
+            RoutingCanvas_Drop(sender, e);
+            return;
+        }
         if (sender is not Border { Tag: PluginGroupSnapshot group })
         {
             return;
@@ -8332,6 +8343,7 @@ private void RefreshEndpointButtonSelection()
 
     private void RebuildRoutingCanvas()
     {
+        FinishCanvasBox(cancel: true);
         if (IsVstCanvasDragging)
         {
             _canvasRebuildAfterDrag = true;
@@ -9797,7 +9809,8 @@ private void RefreshEndpointButtonSelection()
 
     private void AddNodeToGroup(PluginNodeSnapshot node, PluginGroupSnapshot group)
     {
-        if (!GroupNodesPreservingConnections(group, [node], appendChain: true))
+        if (!GroupNodesPreservingConnections(group, [node],
+                appendChain: _settings.CanvasAutomaticRouting && !NodesHaveExistingRouting([node])))
         {
             RebuildRoutingCanvas();
             return;
@@ -12153,7 +12166,7 @@ private void RefreshEndpointButtonSelection()
                 end,
                 preview: false,
                 WireStrokeBrush(ConnectionHueKey(connection)),
-                selected: key == _selectedCanvasConnectionKey);
+                selected: key == _selectedCanvasConnectionKey || _boxCableKeys.Contains(key));
             path.Tag = connection;
             path.ToolTip = "Click to select. Press Delete to disconnect.";
             path.MouseLeftButtonDown += CanvasConnection_MouseLeftButtonDown;
@@ -12184,7 +12197,7 @@ private void RefreshEndpointButtonSelection()
                 end,
                 preview: false,
                 WireStrokeBrush(EndpointRouteHueKey(CallbackMode.Input, route.SourceChannel)),
-                selected: key == _selectedDirectChannelRouteKey);
+                selected: key == _selectedDirectChannelRouteKey || _boxDirectCableKeys.Contains(key));
             path.Tag = info;
             path.ToolTip = "Shared direct channel route. Click to select. Press Delete to disconnect.";
             path.MouseLeftButtonDown += DirectChannelRoute_MouseLeftButtonDown;
@@ -12200,7 +12213,10 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        _selectedDirectChannelRouteKey = DirectChannelRouteKey(route.SourceChannel, route.DestinationChannel);
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) ClearCanvasSelectionState();
+        var routeKey = DirectChannelRouteKey(route.SourceChannel, route.DestinationChannel);
+        if (!_boxDirectCableKeys.Add(routeKey)) _boxDirectCableKeys.Remove(routeKey);
+        _selectedDirectChannelRouteKey = null;
         _selectedCanvasConnectionKey = null;
         _selectedCrossRouteConnectionKey = null;
         _selectedPluginNodeSlot = null;
@@ -12217,7 +12233,10 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
-        _selectedCanvasConnectionKey = CanvasConnectionKey(connection);
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) ClearCanvasSelectionState();
+        var cableKey = CanvasConnectionKey(connection);
+        if (!_boxCableKeys.Add(cableKey)) _boxCableKeys.Remove(cableKey);
+        _selectedCanvasConnectionKey = null;
         _selectedCrossRouteConnectionKey = null;
         _selectedDirectChannelRouteKey = null;
         _selectedPluginNodeSlot = null;
@@ -12325,7 +12344,7 @@ private void RefreshEndpointButtonSelection()
         return new Path
         {
             Data = CreateWireGeometry(start, end),
-            Stroke = stroke ?? (Brush)FindResource("RouteAccentBrush"),
+            Stroke = selected ? (Brush)FindResource("VolumeAccentBrush") : stroke ?? (Brush)FindResource("RouteAccentBrush"),
             StrokeThickness = preview ? 3.0 : selected ? 4.4 : 2.4,
             Opacity = preview ? 0.92 : selected ? 0.98 : 0.72,
             StrokeStartLineCap = PenLineCap.Round,
@@ -12802,7 +12821,9 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        ClearCanvasSelectionState();
         SelectPluginGroup(group.Id, rebuildCanvas: false);
+        RefreshCanvasMultiSelection();
         _draggingGroup = group;
         var point = e.GetPosition(RoutingCanvas);
         _dragOffset = new Point(point.X - group.X, point.Y - group.Y);
@@ -12983,7 +13004,9 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        ClearCanvasSelectionState();
         SelectPluginNode(node.Slot, rebuildCanvas: false);
+        RefreshCanvasMultiSelection();
         _draggingNode = node;
         _nodeDragMoved = false;
         var point = e.GetPosition(RoutingCanvas);
@@ -13031,6 +13054,7 @@ private void RefreshEndpointButtonSelection()
             border.ReleaseMouseCapture();
         }
         if (droppedNode is not null &&
+            _settings.CanvasAutomaticGrouping &&
             _nodeDragMoved &&
             GroupForNode(droppedNode.Slot) is null &&
             GroupAtPoint(dropPoint, droppedNode.Mode) is { } targetGroup)
@@ -13042,6 +13066,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         if (droppedNode is not null &&
+            _settings.CanvasAutomaticGrouping &&
             _nodeDragMoved &&
             GroupForNode(droppedNode.Slot) is null &&
             NodeAtPoint(dropPoint, droppedNode) is { } targetNode)
@@ -13119,7 +13144,8 @@ private void RefreshEndpointButtonSelection()
             InputPins = Math.Min(2, Math.Max(1, firstNode.MainInputPins)),
             OutputPins = Math.Min(2, Math.Max(1, secondNode.OutputPins))
         };
-        if (!GroupNodesPreservingConnections(group, members, appendChain: true))
+        if (!GroupNodesPreservingConnections(group, members,
+                appendChain: _settings.CanvasAutomaticRouting && !NodesHaveExistingRouting(members)))
         {
             RebuildRoutingCanvas();
             return;
@@ -13195,7 +13221,13 @@ private void RefreshEndpointButtonSelection()
         }
 
         RoutingCanvas.Focus();
-        _quickGroupNodeSlots.Remove(node.Slot);
+        if (_quickGroupNodeSlots.Remove(node.Slot))
+        {
+            _quickOrderedItems.Remove(new QuickChainItem(node.Slot, string.Empty));
+            _selectedPluginNodeSlot = null;
+            RebuildVstNodeList(); RebuildRoutingCanvas();
+            return;
+        }
         _quickGroupNodeSlots.Add(node.Slot);
         AddQuickOrderedItem(new QuickChainItem(node.Slot, string.Empty));
         SelectPluginNode(node.Slot, rebuildCanvas: false);
@@ -13212,7 +13244,13 @@ private void RefreshEndpointButtonSelection()
         }
 
         RoutingCanvas.Focus();
-        _quickGroupIds.Remove(group.Id);
+        if (_quickGroupIds.Remove(group.Id))
+        {
+            _quickOrderedItems.Remove(new QuickChainItem(-1, group.Id));
+            _selectedPluginGroupId = null;
+            RebuildVstNodeList(); RebuildRoutingCanvas();
+            return;
+        }
         _quickGroupIds.Add(group.Id);
         AddQuickOrderedItem(new QuickChainItem(-1, group.Id));
         SelectPluginGroup(group.Id, rebuildCanvas: false);
@@ -13232,121 +13270,28 @@ private void RefreshEndpointButtonSelection()
 
     private async Task<bool> CompleteQuickGroupChainAsync()
     {
-        if (_quickGroupSourceEndpoint is null &&
-            _quickGroupDestinationEndpoint is null &&
-            _quickConnectSourceEndpoints.Count == 0 &&
-            _quickConnectDestinationEndpoints.Count == 0 &&
-            _quickGroupNodeSlots.Count == 0 &&
-            _quickGroupIds.Count == 0 &&
-            _quickGroupPluginChoices.Count == 0)
+        if (!HasCanvasSelection && _quickGroupPluginChoices.Count == 0 &&
+            _quickGroupNodeSlots.Count == 0 && _quickGroupIds.Count == 0) return false;
+        if (PluginBrowserBusy) { AppendLog(BusyPluginBrowserMessage()); return true; }
+
+        // Browser selections load as ordinary nodes. Enter never creates a group.
+        var choices = _quickGroupPluginChoices.ToArray();
+        var start = QuickGroupLooseNodeStartPoint(_quickGroupNodeSlots.Count);
+        for (var index = 0; index < choices.Length; index++)
         {
-            return false;
+            var node = await AddPluginNodeAsync(choices[index], new Point(start.X + index * (VstNodeWidth + 34), start.Y));
+            if (node is null) continue;
+            _quickGroupNodeSlots.Add(node.Slot);
+            AddQuickOrderedItem(new QuickChainItem(node.Slot, string.Empty));
         }
+        _quickGroupPluginChoices.Clear();
+        RefreshQuickGroupPluginListSelection();
 
-        if (ShouldCompleteQuickEndpointConnections())
-        {
-            return CompleteQuickEndpointConnections();
-        }
-
-        if (ShouldCompleteQuickOrderedConnections())
-        {
-            return CompleteQuickOrderedConnections();
-        }
-
-        if (ShouldCompleteQuickGroupConnections())
-        {
-            return CompleteQuickGroupConnections();
-        }
-
-        if (ShouldCompleteQuickDirectConnections())
-        {
-            return CompleteQuickDirectConnections();
-        }
-
-        if (ShouldCompleteUnattachedQuickGroup())
-        {
-            return await CompleteUnattachedQuickGroupAsync();
-        }
-
-        var source = _quickGroupSourceEndpoint ?? _quickConnectSourceEndpoints.LastOrDefault();
-        var destination = _quickGroupDestinationEndpoint ?? _quickConnectDestinationEndpoints.LastOrDefault();
-        if (source is null || destination is null ||
-            (_quickGroupNodeSlots.Count == 0 && _quickGroupPluginChoices.Count == 0))
-        {
-            AppendLog("Quick VST group needs a source endpoint, at least one VST, and a destination endpoint.");
-            return true;
-        }
-
-        if (PluginBrowserBusy)
-        {
-            AppendLog(BusyPluginBrowserMessage());
-            return true;
-        }
-
-        var members = _quickGroupNodeSlots
-            .Select(slot => _settings.PluginNodes.FirstOrDefault(node => node.Slot == slot))
-            .Where(static node => node is not null)
-            .Cast<PluginNodeSnapshot>()
-            .Where(NodeBelongsToCurrentCanvas)
-            .DistinctBy(static node => node.Slot)
-            .ToList();
-
-        var loadStart = QuickGroupNodeStartPoint(source, destination, members.Count);
-        for (var index = 0; index < _quickGroupPluginChoices.Count; index++)
-        {
-            var point = new Point(loadStart.X + (index * (VstNodeWidth + 34)), loadStart.Y);
-            var node = await AddPluginNodeAsync(_quickGroupPluginChoices[index], point);
-            if (node is not null)
-            {
-                members.Add(node);
-            }
-        }
-
-        members = members
-            .Where(NodeBelongsToCurrentCanvas)
-            .DistinctBy(static node => node.Slot)
-            .ToList();
-        if (members.Count == 0)
-        {
-            AppendLog("Quick VST group has no valid VSTs on this canvas.");
-            ClearQuickGroupChain(log: false);
-            return true;
-        }
-
-        var first = members.First();
-        var last = members.Last();
-        var group = new PluginGroupSnapshot
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = UniquePluginGroupName($"{PluginDisplayBaseName(first.Name)} Chain"),
-            Mode = CurrentVstCanvasNodeMode(),
-            X = Math.Max(300, members.Min(static node => node.X) - 12),
-            Y = Math.Max(80, members.Min(static node => node.Y) - 12),
-            InputPins = Math.Clamp(Math.Min(source.Endpoint.ChannelCount, first.MainInputPins), 1, 8),
-            OutputPins = Math.Clamp(Math.Min(destination.Endpoint.ChannelCount, last.OutputPins), 1, 8),
-            MemberSlots = members.Select(static node => node.Slot).ToList()
-        };
-
-        foreach (var existingGroup in _settings.PluginGroups)
-        {
-            existingGroup.MemberSlots.RemoveAll(slot => group.MemberSlots.Contains(slot));
-        }
-
-        _settings.PluginGroups.Add(group);
-        _selectedPluginGroupId = group.Id;
-        _selectedPluginNodeSlot = null;
-        EnsureGroupInternalConnections(group);
-        EnsureGroupPortMappings(group);
-        PluginGroupRouting.ArrangeMembers(members);
-        var inputEdges = ConnectQuickGroupSource(group, source);
-        var outputEdges = ConnectQuickGroupDestination(group, destination);
-        ClearQuickGroupChain(log: false);
-
-        AppendLog($"Created quick VST group {group.Name}: {members.Count} VST(s), {inputEdges} input cable(s), {outputEdges} output cable(s).");
-        RefreshEngineCallbackMode();
-        RebuildVstNodeList();
-        RebuildRoutingCanvas();
-        QueueSave();
+        if (ShouldCompleteQuickEndpointConnections()) return CompleteQuickEndpointConnections();
+        if (ShouldCompleteQuickOrderedConnections()) return CompleteQuickOrderedConnections();
+        if (ShouldCompleteQuickGroupConnections()) return CompleteQuickGroupConnections();
+        if (ShouldCompleteQuickDirectConnections()) return CompleteQuickDirectConnections();
+        AppendLog("Select VSTs/groups in chain order and endpoints to connect. Use Create Group to group the selection.");
         return true;
     }
 
@@ -13612,88 +13557,6 @@ private void RefreshEndpointButtonSelection()
 
         return count;
     }
-    private bool ShouldCompleteUnattachedQuickGroup()
-    {
-        return _quickGroupSourceEndpoint is null &&
-               _quickGroupDestinationEndpoint is null &&
-               _quickConnectSourceEndpoints.Count == 0 &&
-               _quickConnectDestinationEndpoints.Count == 0 &&
-               _quickGroupIds.Count == 0 &&
-               (_quickGroupPluginChoices.Count > 0 || _quickGroupNodeSlots.Count > 0);
-    }
-
-    private async Task<bool> CompleteUnattachedQuickGroupAsync()
-    {
-        if (_quickGroupPluginChoices.Count > 0 && PluginBrowserBusy)
-        {
-            AppendLog(BusyPluginBrowserMessage());
-            return true;
-        }
-
-        var members = _quickGroupNodeSlots
-            .Select(slot => _settings.PluginNodes.FirstOrDefault(node => node.Slot == slot))
-            .Where(static node => node is not null)
-            .Cast<PluginNodeSnapshot>()
-            .Where(NodeBelongsToCurrentCanvas)
-            .DistinctBy(static node => node.Slot)
-            .ToList();
-
-        var loadStart = QuickGroupLooseNodeStartPoint(members.Count);
-        for (var index = 0; index < _quickGroupPluginChoices.Count; index++)
-        {
-            var point = new Point(loadStart.X + (index * (VstNodeWidth + 34)), loadStart.Y);
-            var node = await AddPluginNodeAsync(_quickGroupPluginChoices[index], point);
-            if (node is not null)
-            {
-                members.Add(node);
-            }
-        }
-
-        members = members
-            .Where(NodeBelongsToCurrentCanvas)
-            .DistinctBy(static node => node.Slot)
-            .ToList();
-        if (members.Count == 0)
-        {
-            AppendLog("Quick VST group has no valid VSTs on this canvas.");
-            ClearQuickGroupChain(log: false);
-            return true;
-        }
-
-        var first = members.First();
-        var last = members.Last();
-        var group = new PluginGroupSnapshot
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = UniquePluginGroupName($"{PluginDisplayBaseName(first.Name)} Chain"),
-            Mode = CurrentVstCanvasNodeMode(),
-            X = Math.Max(300, members.Min(static node => node.X) - 12),
-            Y = Math.Max(80, members.Min(static node => node.Y) - 12),
-            InputPins = Math.Clamp(first.MainInputPins, 1, 8),
-            OutputPins = Math.Clamp(last.OutputPins, 1, 8),
-            MemberSlots = members.Select(static node => node.Slot).ToList()
-        };
-
-        foreach (var existingGroup in _settings.PluginGroups)
-        {
-            existingGroup.MemberSlots.RemoveAll(slot => group.MemberSlots.Contains(slot));
-        }
-
-        _settings.PluginGroups.Add(group);
-        _selectedPluginGroupId = group.Id;
-        _selectedPluginNodeSlot = null;
-        EnsureGroupInternalConnections(group);
-        EnsureGroupPortMappings(group);
-        PluginGroupRouting.ArrangeMembers(members);
-        ClearQuickGroupChain(log: false);
-
-        AppendLog($"Created unattached quick VST group {group.Name}: {members.Count} VST(s).");
-        RefreshEngineCallbackMode();
-        RebuildVstNodeList();
-        RebuildRoutingCanvas();
-        QueueSave();
-        return true;
-    }
 
     private Point QuickGroupLooseNodeStartPoint(int existingNodeCount)
     {
@@ -13723,7 +13586,7 @@ private void RefreshEndpointButtonSelection()
             _quickConnectDestinationEndpoints.Count == 0 &&
             _quickGroupNodeSlots.Count == 0 &&
             _quickGroupIds.Count == 0 &&
-            _quickGroupPluginChoices.Count == 0)
+            _quickGroupPluginChoices.Count == 0 && _boxCableKeys.Count == 0 && _boxDirectCableKeys.Count == 0)
         {
             return false;
         }
@@ -13736,6 +13599,9 @@ private void RefreshEndpointButtonSelection()
         _quickGroupIds.Clear();
         _quickOrderedItems.Clear();
         _quickGroupPluginChoices.Clear();
+        _boxCableKeys.Clear(); _boxDirectCableKeys.Clear();
+        _selectedPluginNodeSlot = null; _selectedPluginGroupId = null;
+        ClearSelectedConnectionKeys();
         RefreshQuickGroupPluginListSelection();
         if (log)
         {
@@ -13867,6 +13733,8 @@ private void RefreshEndpointButtonSelection()
             return;
         }
 
+        ClearCanvasSelectionState();
+        RefreshCanvasMultiSelection();
         _draggingEndpointMode = info.Mode;
         _draggingEndpoint = info.Endpoint;
         _draggingEndpointKey = info.Endpoint.Key(info.Mode);

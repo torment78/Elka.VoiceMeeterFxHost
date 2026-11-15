@@ -1,6 +1,6 @@
 namespace Elka.VoiceMeeterFxHost.App;
 
-// Explicit regrouping preserves cables; drag-to-group appends a serial chain.
+// Regrouping preserves cables; optional automatic routing appends a serial chain.
 internal static class PluginGroupRouting
 {
     private const int SidechainBase = 100;
@@ -10,7 +10,7 @@ internal static class PluginGroupRouting
 
     public static void AddMembers(PluginGroupSnapshot target, IEnumerable<PluginNodeSnapshot> additions,
         IReadOnlyList<PluginNodeSnapshot> nodes, IList<PluginGroupSnapshot> groups,
-        List<CanvasConnectionSnapshot> connections, bool appendChain = false)
+        List<CanvasConnectionSnapshot> connections, bool appendChain = false, bool createDefaultMappings = true)
     {
         var added = additions.DistinctBy(node => node.Slot).ToList();
         if (added.Any(node => node.Mode != target.Mode))
@@ -132,7 +132,7 @@ internal static class PluginGroupRouting
         var ordered = appendChain ? members[target.Id] : OrderMembers(members[target.Id], edges.Select(edge => Expand(edge, mappings, null)).ToList());
         // An empty pre-wired group may receive its first VST. Free default ports
         // also let a newly-created group be wired later without inventing a chain.
-        if ((target.MemberSlots.Count == 0 || appendChain) && ordered.Count > 0)
+        if (createDefaultMappings && (target.MemberSlots.Count == 0 || appendChain) && ordered.Count > 0)
         {
             var first = nodes.First(node => node.Slot == ordered[0]);
             var last = nodes.First(node => node.Slot == ordered[^1]);

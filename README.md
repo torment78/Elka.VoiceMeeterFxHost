@@ -28,15 +28,20 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.26 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.26).**
+**[0.8.3.27 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.27).**
 
-This update hardens Back history when a VST rejects its settings, writes only
-new history snapshots, prevents tray double-clicks from immediately hiding
-the window, and waits for busy plugin loads before retrying a failed restore.
+This update adds **Menu > Settings > Canvas Controls**. Box Selection starts on;
+Automatic Grouping and Automatic Routing start off. Drag empty canvas to select
+nodes and cables, then use the selection menu. **Ctrl-click selects, Enter
+connects, and Create Group groups.** Existing wiring is preserved when grouping.
+Optional automatic routing wires loose group members in order; selected cables
+can be deleted without deleting their nodes.
+
+The preceding development improvements remain available:
 
 - Drag a VST2 `.dll` or VST3 file/bundle straight from File Explorer onto the
-  canvas or into a group. FX Host offers the individual effect when a shell
-  contains several plugins. A dedicated scan folder is remembered only after
+  canvas, or into a group when Automatic Grouping is on. FX Host offers the
+  individual effect when a shell contains several plugins. A dedicated scan folder is remembered only after
   a successful load; general folders such as Desktop and Downloads are excluded.
 - The canvas **Back** arrow restores up to ten recent checkpoints, including
   captured VST settings. Right-click the arrow to choose an earlier point.
@@ -48,9 +53,9 @@ the window, and waits for busy plugin loads before retrying a failed restore.
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.26](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.27](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release does not change audio sample processing or routing algorithms.
+for use. This release changes canvas grouping/wiring commands, not native audio processing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**
@@ -108,8 +113,9 @@ its editor; right-click for its controls and **Close** to dismiss only the menu.
 Plugin editors and auxiliary windows now remember their size and position.
 Signal Monitor adds live and resettable maximum dBFS readings for each channel,
 with red latched peak markers. Canvas selection highlights immediately and brings
-the selected node forward. Dropping VSTs into a group appends them in order,
-preserving the chain and moving its output connections to the new last member.
+the selected node forward. With Automatic Grouping and Automatic Routing enabled,
+dropping a loose VST into a group appends it to the chain and moves its output
+connections to the new last member. Both automatic options default to off.
 Widget, canvas and VST-list state graphics now match: orange for bypass, gray for
 off, and gray with red diagonal stripes for off plus bypass. This update does
 not change audio sample processing.
@@ -228,13 +234,13 @@ Ctrl-click builds routes without dragging every cable:
 3. Ctrl-click a destination endpoint on the right.
 4. Release `Ctrl` and press `Enter`.
 
-The selected VSTs are grouped and wired in selection order. Selected endpoints
+The selected VSTs are wired in selection order, not grouped. Selected endpoints
 and VSTs stay highlighted until the action is completed. Press `Esc` to cancel.
 
 Other supported combinations include:
 
-- Ctrl-click only VSTs in the browser, then press `Enter`, to create an
-  unattached VST group.
+- Ctrl-click only VSTs in the browser, then press `Enter`, to load and connect
+  them without creating a group.
 - Ctrl-click one or more sources and a VST, then press `Enter`, to connect the
   sources to that VST.
 - Ctrl-click a VST and one or more destinations, then press `Enter`, to connect
@@ -246,6 +252,10 @@ Other supported combinations include:
 
 The full selection rules and examples are in the
 [Ctrl-click routing guide](docs/CtrlClickRouting.md).
+
+To group existing VSTs, Ctrl-click them or drag a selection box on empty canvas,
+then choose **Create Group** from the selection menu. Existing cables are kept.
+With Automatic Routing off, grouping adds no new cables.
 
 ## Main Features
 

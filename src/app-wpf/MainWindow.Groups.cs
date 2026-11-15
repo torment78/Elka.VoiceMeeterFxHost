@@ -9,7 +9,8 @@ public partial class MainWindow
         try
         {
             PluginGroupRouting.AddMembers(group, members, _settings.PluginNodes,
-                _settings.PluginGroups, _settings.CanvasConnections, appendChain);
+                _settings.PluginGroups, _settings.CanvasConnections, appendChain,
+                createDefaultMappings: _settings.CanvasAutomaticRouting);
         }
         catch (InvalidOperationException ex)
         {

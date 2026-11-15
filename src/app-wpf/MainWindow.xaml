@@ -639,6 +639,10 @@
                         Focusable="True"
                         Background="{StaticResource FieldBrush}"
                         RequestBringIntoView="RoutingCanvas_RequestBringIntoView"
+                        MouseLeftButtonDown="CanvasBox_MouseLeftButtonDown"
+                        LostMouseCapture="CanvasBox_LostMouseCapture"
+                        PreviewMouseRightButtonDown="CanvasSelection_MouseRightButtonDown"
+                        PreviewMouseRightButtonUp="CanvasSelection_MouseRightButtonUp"
                         MouseMove="RoutingCanvas_MouseMove"
                         MouseLeftButtonUp="RoutingCanvas_MouseLeftButtonUp"
                         MouseRightButtonDown="RoutingCanvas_MouseRightButtonDown" />

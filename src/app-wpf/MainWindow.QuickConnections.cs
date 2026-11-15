@@ -13,10 +13,7 @@ public partial class MainWindow
 
     private bool ShouldCompleteQuickOrderedConnections()
     {
-        if (_quickGroupPluginChoices.Count > 0 || _quickOrderedItems.Count < 2) return false;
-        // Retain the browser's create-group flow and existing endpoint fan-in/out.
-        return (_quickGroupIds.Count > 0 && _quickGroupNodeSlots.Count > 0) ||
-            ShouldCompleteQuickDirectConnections();
+        return _quickGroupPluginChoices.Count == 0 && _quickOrderedItems.Count >= 2;
     }
 
     private bool CompleteQuickOrderedConnections()

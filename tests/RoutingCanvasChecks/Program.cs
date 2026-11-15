@@ -46,7 +46,8 @@ internal static class Program
         foreach (var item in element.DescendantsAndSelf())
         foreach (var attribute in item.Attributes().Where(a => a.Name.LocalName is
                      "ScrollChanged" or "PreviewMouseWheel" or "RequestBringIntoView" or
-                     "MouseMove" or "MouseLeftButtonUp" or "MouseRightButtonDown").ToArray())
+                     "MouseMove" or "MouseLeftButtonDown" or "MouseLeftButtonUp" or "MouseRightButtonDown" or
+                     "LostMouseCapture" or "PreviewMouseRightButtonDown" or "PreviewMouseRightButtonUp").ToArray())
             attribute.Remove();
         return (ScrollViewer)XamlReader.Parse(element.ToString());
     }

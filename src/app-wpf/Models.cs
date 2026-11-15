@@ -684,6 +684,9 @@ internal sealed class FxHostSettings
     public bool StartToTray { get; set; }
     public bool CloseToTray { get; set; } = true;
     public bool NodeVuMetersEnabled { get; set; } = true;
+    public bool CanvasBoxSelectionEnabled { get; set; } = true;
+    public bool CanvasAutomaticGrouping { get; set; }
+    public bool CanvasAutomaticRouting { get; set; }
     public bool HighProcessPriority { get; set; } = true;
     public List<EditorHotkeySnapshot> EditorHotkeys { get; set; } = [];
     public FloatingPanelSettings FloatingPanel { get; set; } = new();

@@ -122,27 +122,36 @@ public partial class MainWindow
                 AddQuickGroupNode(inserted);
                 AddQuickGroupNode(next);
                 AddQuickGroupNode(inserted);
+                Assert(!_quickGroupNodeSlots.Contains(inserted.Slot), "Ctrl-click a selected VST deselects it");
+                AddQuickGroupNode(inserted);
                 SelectDestination();
                 Finish();
                 Assert(_settings.CanvasConnections.Count(edge => edge.Kind == ConnectionGroupOutputToNode && edge.ToSlot == next.Slot) == 2 &&
                     _settings.CanvasConnections.Count(edge => edge.Kind == ConnectionNodeToNode && edge.FromSlot == next.Slot && edge.ToSlot == inserted.Slot) == 2,
-                    "Re-selecting a VST moves it to the end of the combined click order");
+                    "Deselecting and re-selecting a VST moves it to the end of the combined click order");
 
                 Reset();
                 AddQuickGroupNode(inserted);
                 AddQuickGroupNode(next);
-                Assert(!ShouldCompleteQuickOrderedConnections() && ShouldCompleteUnattachedQuickGroup(),
-                    "Unattached create-group shortcut remains available");
+                Assert(ShouldCompleteQuickOrderedConnections(), "Loose VSTs use Enter to connect, never group");
+                Finish();
+                Assert(_settings.CanvasConnections.Count(edge => edge.Kind == ConnectionNodeToNode &&
+                    edge.FromSlot == inserted.Slot && edge.ToSlot == next.Slot) == 2, "Loose VSTs connect in click order");
+                AddQuickGroupNode(inserted);
+                AddQuickGroupNode(next);
                 AddQuickGroupEndpoint(new EndpointDragInfo(sourceMode, source, false));
                 SelectDestination();
-                Assert(!ShouldCompleteQuickOrderedConnections() && !ShouldCompleteQuickDirectConnections(),
-                    "Source + VSTs + destination retains the existing quick create-group flow");
+                Assert(ShouldCompleteQuickOrderedConnections(), "Source + VSTs + destination uses ordered wiring");
+                Finish();
+                Assert(_settings.CanvasConnections.Count(edge => edge.Kind == ConnectionNodeToNode &&
+                    edge.FromSlot == inserted.Slot && edge.ToSlot == next.Slot) == 2,
+                    "Connecting endpoints to an existing chain retains its internal wires without duplicates");
 
                 Reset();
                 AddQuickGroupExistingGroup(group);
                 AddQuickGroupNode(inserted);
                 _quickGroupPluginChoices.Add(new PluginChoice(0, "Browser choice", "VST3"));
-                Assert(!ShouldCompleteQuickOrderedConnections(), "Plugin-list selection retains the group-loading flow");
+                Assert(!ShouldCompleteQuickOrderedConnections(), "Plugin-list choices must load before connecting");
             }
             Console.WriteLine($"PASS: {_interactionChecks - startChecks} ordered quick-connect checks. No windows shown or native audio calls.");
         }

@@ -185,6 +185,10 @@ public partial class MainWindow
             AppendLog(message);
         };
         root.Children.Add(priority);
+        var canvasControls = CreateSaveManagerButton("Canvas Controls");
+        canvasControls.Margin = new Thickness(0, 10, 0, 0);
+        canvasControls.Click += (_, _) => window.Content = CreateCanvasControlsPanel(() => window.Content = root);
+        root.Children.Add(canvasControls);
         var hotkeys = CreateSaveManagerButton("Hotkey");
         hotkeys.Style = (Style)FindResource("VbanButton");
         hotkeys.Margin = new Thickness(0, 10, 0, 18);

@@ -223,8 +223,8 @@ rearranged, or rewired inside the group.
 Create a group by:
 
 - right-clicking empty canvas space and choosing **Create VST Group**
-- using the Ctrl-click workflow
-- dragging compatible VST nodes together
+- Ctrl-clicking or box-selecting existing VSTs, then choosing **Create Group**
+- dragging compatible VST nodes together with **Automatic Grouping** enabled
 
 Dragging already-connected VSTs together, or using **Add To Group**, preserves
 their existing cables exactly. External cables move onto the group's ports;
@@ -232,9 +232,13 @@ internal cables keep their original channels and connections. Parallel branches
 stay parallel. Adding an upstream, downstream, or middle VST keeps its place in
 the signal chain. Members are arranged left to right without overlapping.
 
-Grouping and applying group properties do not automatically add a chain. Use
-**Auto-Wire Chain** explicitly, or the Ctrl-click new-chain workflow, when you
-want new connections. Groups support up to eight main ports and two sidechain
+**Menu > Settings > Canvas Controls** contains Box Selection (on by default),
+Automatic Grouping (off) and Automatic Routing (off). With Automatic Routing
+off, grouping loose nodes adds no cables. When enabled, it wires loose members
+in selection order and appends a loose VST added to a group to the chain's tail.
+Existing connected selections keep their wiring when grouped. Applying group
+properties does not invent a chain. Use **Auto-Wire Chain** explicitly when needed.
+Groups support up to eight main ports and two sidechain
 inputs; an operation that needs more is refused without changing the routing.
 
 Right-click a group for **Open Group**, **Properties**, **Port Setup**,
@@ -245,8 +249,8 @@ An empty group does not pass audio. Audio begins passing only when its internal
 VST path connects the group input to the group output. This follows the same
 incomplete-chain rule as a normal VST node.
 
-Use [Ctrl-click routing](CtrlClickRouting.md) to create or connect groups without
-dragging every cable.
+Use [Ctrl-click routing](CtrlClickRouting.md) to connect selected VSTs/groups
+with Enter, or group selected VSTs through the menu, without dragging every cable.
 
 ## Menu And Reload
 

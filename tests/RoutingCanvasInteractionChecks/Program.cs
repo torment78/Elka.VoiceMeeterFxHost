@@ -71,6 +71,7 @@ internal static class CanvasInteractionChecks
             window.Top = -20000;
             window.Show();
             if (args.Contains("--plugin-browser")) { window.CheckPluginBrowser(); return 0; }
+            if (args.Contains("--canvas-controls")) { window.CheckCanvasControls(); return 0; }
             if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
             if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             if (args.Contains("--rollback")) { window.CheckRollbackUi(); return 0; }
@@ -87,6 +88,7 @@ internal static class CanvasInteractionChecks
             window.CheckEndpointHotkeys();
             window.CheckGroupChainUi();
             window.CheckQuickConnectionChains();
+            window.CheckCanvasControls();
             window.CheckTrayMenuTheme();
             window.CheckFloatingPanel();
             window.CheckWidgetTileStates();

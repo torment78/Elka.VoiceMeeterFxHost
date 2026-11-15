@@ -12,8 +12,10 @@ public partial class MainWindow
         var savedNodes = _settings.PluginNodes; var savedGroups = _settings.PluginGroups;
         var savedCables = _settings.CanvasConnections; var savedMode = _vstCanvasMode;
         var savedView = _workspaceView;
+        var savedAutomaticRouting = _settings.CanvasAutomaticRouting;
         try
         {
+            _settings.CanvasAutomaticRouting = true;
             _workspaceView = WorkspaceView.Vst; _vstCanvasMode = CallbackMode.Input;
             var a = new PluginNodeSnapshot { Slot = 12, InstanceId = 1, Name = "Pro-DS", X = 360, Y = 160, MissingPlugin = true };
             var b = new PluginNodeSnapshot { Slot = 3, InstanceId = 2, Name = "Pro-C", X = 360, Y = 160, MissingPlugin = true };
@@ -74,6 +76,7 @@ public partial class MainWindow
             ClearQuickGroupChain(log: false);
             _settings.PluginNodes = savedNodes; _settings.PluginGroups = savedGroups; _settings.CanvasConnections = savedCables;
             _vstCanvasMode = savedMode; _workspaceView = savedView;
+            _settings.CanvasAutomaticRouting = savedAutomaticRouting;
             _selectedPluginNodeSlot = null; _selectedPluginGroupId = null; _canvasCardStacking.Clear();
             RebuildRoutingCanvas();
         }

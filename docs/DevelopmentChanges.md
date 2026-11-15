@@ -1,5 +1,40 @@
 # Development Changes
 
+## 0.8.3.27 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Canvas Controls:** open **Menu > Settings > Canvas Controls** to choose
+  Box Selection, Automatic Grouping and Automatic Routing. Box Selection is
+  on by default; both automatic options are off. These choices are saved.
+- **Box selection:** left-drag empty canvas to highlight VSTs, groups, endpoints
+  and cables. Release to open the selection menu. Hold Ctrl while dragging to
+  add to the selection; Esc cancels the drag. Cable selection follows the
+  actual cable curve rather than its surrounding rectangle.
+- **Explicit grouping:** Ctrl-click builds an ordered selection; Enter connects
+  it and never creates a group. Use **Create Group** in the selection menu to
+  group selected VST nodes. Existing internal and external wiring is preserved,
+  including when selected VSTs already belong to a connected chain.
+- **Optional automatic routing:** with it off, grouping loose VSTs or adding
+  a loose VST to a group creates no cables. With it on, loose VSTs are wired in
+  selection order; a loose VST added to a group becomes the chain's last member.
+  Box-selected loose nodes use left-to-right order, then top-to-bottom.
+- **Optional drop grouping:** Automatic Grouping controls whether dropping
+  VSTs onto another VST or a group groups them. It also applies to browser and
+  file drops onto group cards. Explicit menu grouping remains available when off.
+- **Cable removal:** Delete or **Remove Cables** removes selected cables without
+  deleting their nodes. Ctrl-click a selected canvas VST/group again to deselect
+  it; selecting it again appends it to the selection order.
+- **Selection performance:** the drag updates highlights without rebuilding
+  the canvas, and cable hit geometry is prepared once per selection drag.
+
+This release changes canvas interaction and user-commanded grouping/wiring.
+Native audio sample processing, callback scheduling, gain/delay, plugin hosting
+and DSP refresh rates are unchanged.
+
+See [Ctrl-click routing and Canvas Controls](CtrlClickRouting.md) for the workflow.
+
 ## 0.8.3.26 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

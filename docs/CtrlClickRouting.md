@@ -1,7 +1,8 @@
 # Ctrl-Click Routing
 
-Ctrl-click routing creates VST groups and endpoint cables without dragging every
-pin. It works in the **VST / Route** canvas.
+Ctrl-click routing connects VSTs, groups and endpoints without dragging every
+pin. It works in the **VST / Route** canvas. Enter connects; grouping is an
+explicit **Create Group** menu command.
 
 ## Basic Pattern
 
@@ -34,7 +35,7 @@ Example:
 5. Ctrl-click `Hardware In 4` on the right.
 6. Press `Enter`.
 
-The result is a VST group with this internal order:
+The result is a connected chain, without creating a group:
 
 ```text
 Hardware In 4 -> Noise Reduction -> EQ -> Compressor -> Hardware In 4
@@ -60,8 +61,8 @@ their identity; browser choices create new nodes.
 Ctrl-click source -> Ctrl-click VSTs -> Ctrl-click destination -> Enter
 ```
 
-Creates a VST group, auto-wires its members in selection order, and connects the
-group to both endpoints.
+Connects the VSTs in selection order and attaches the chain to both endpoints.
+Existing links are retained; selecting an already-connected chain does not group it.
 
 ### VSTs Only
 
@@ -69,8 +70,8 @@ group to both endpoints.
 Ctrl-click VSTs -> Enter
 ```
 
-Creates an unattached VST group. Use this when the processing chain should be
-prepared before its source and destination are chosen.
+Connects the selected VSTs in order without adding endpoints or a group. Use
+this to prepare a chain before its source and destination are chosen.
 
 ### Sources To One VST
 
@@ -107,8 +108,33 @@ Ctrl-click source endpoints -> Ctrl-click VST group -> Ctrl-click destinations -
 Attaches the selected endpoints to the existing group. The group members and
 internal wiring are preserved.
 
-Multiple groups can be selected when the same sources or destinations should be
-connected to each group.
+Multiple groups and VSTs can be selected together. They connect serially in
+click order, with sources attached to the first item and destinations to the last.
+
+## Canvas Controls And Grouping
+
+Open **Menu > Settings > Canvas Controls**:
+
+- **Box Selection** defaults to on. Left-drag empty canvas to select nodes,
+  groups, endpoints and cables. Release to open the selection menu. Hold Ctrl
+  to add to the current selection; Esc cancels the drag.
+- **Automatic Grouping** defaults to off. When enabled, dropping a VST onto
+  another VST or group groups it. Browser/file drops onto group cards follow
+  the same setting. With it off, use the explicit grouping menu instead.
+- **Automatic Routing** defaults to off. Grouping loose VSTs adds no cables
+  while off. When on, loose VSTs are connected in selection order, and adding
+  a loose VST to a group appends it to the chain. It does not wire anything
+  merely because the setting is changed.
+
+Ctrl-click existing VST nodes or box-select them, then choose **Create Group**.
+This keeps existing internal and external cables. An existing chain keeps its
+signal order; loose nodes follow Ctrl-click order, or left-to-right then
+top-to-bottom order for a selection box. Nested groups are not supported.
+The selection menu also offers the Automatic Routing checkbox.
+
+Box-select cables and press Delete, or choose **Remove Cables**, to remove
+only those cables. Their nodes remain. Ctrl-click can also add/remove cables
+from the selection.
 
 ## Multiple Sources And Destinations
 
@@ -141,6 +167,8 @@ An empty group does not pass audio. Add and connect a VST inside it, or use
 - Press `Esc` to cancel all pending Ctrl-click selections.
 - Ctrl-clicking an already selected browser VST or endpoint moves it to the end
   of the current selection order.
+- Ctrl-clicking a selected canvas VST or group deselects it. Select it again to
+  append it to the order.
 - Complete the current selection with `Enter` before starting an unrelated
   quick route.
 - The in-app log names each selected source, VST, group, and destination, then

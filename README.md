@@ -28,9 +28,20 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.30 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.30).**
+**[0.8.3.31 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.31).**
 
-This update adds a **more compact node layout**. VST and group cards are narrower
+This update improves the **group editor**. New groups expose their first input
+and last output even when Automatic Routing is off, while preserving existing
+cables and leaving loose members unwired. Inside groups, VST cards now match
+the compact main-canvas layout, and group-edge pins use the same spacing as
+the VST pins. VST and group contacts sit on their card edges.
+
+**Box selection also works inside groups:** drag empty canvas to select members
+and cables, hold Ctrl to add to the selection, and move selected VSTs together.
+The selection menu offers cable removal without deleting nodes. The existing
+Canvas Controls toggle applies to both canvases; nested groups are not created.
+
+The **more compact node layout** remains available. VST and group cards are narrower
 and shorter, with aligned channel labels and input/output counts. Their cable
 contacts match the endpoint circles. Hardware, virtual-input and output cards
 have tighter label/meter spacing and narrower widths, while keeping their height.
@@ -73,9 +84,9 @@ The preceding development improvements remain available:
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.30](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.31](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release changes node layout, not native audio processing or routing.
+for use. This release changes group editing and layout, not native audio processing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**
@@ -275,7 +286,9 @@ The full selection rules and examples are in the
 
 To group existing VSTs, Ctrl-click them or drag a selection box on empty canvas,
 then choose **Create Group** from the selection menu. Existing cables are kept.
-With Automatic Routing off, grouping adds no new cables.
+With Automatic Routing off, grouping adds no cables between VSTs. New groups
+still expose the first member's input and the last member's output at their
+edges, without creating external cables or replacing existing mappings.
 
 ## Main Features
 

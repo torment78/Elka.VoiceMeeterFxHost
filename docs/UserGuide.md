@@ -246,7 +246,11 @@ the signal chain. Members are arranged left to right without overlapping.
 
 **Menu > Settings > Canvas Controls** contains Box Selection (on by default),
 Automatic Grouping (off) and Automatic Routing (off). With Automatic Routing
-off, grouping loose nodes adds no cables. When enabled, it wires loose members
+off, grouping loose nodes adds no cables between VSTs. New groups still map
+free input/output ports to their first/last members, even when the chain has
+no external input or output cable. Existing mappings are preserved. Adding
+a loose VST to an existing group with Automatic Routing off leaves its wiring
+alone. When enabled, it wires loose members
 in selection order and appends a loose VST added to a group to the chain's tail.
 Existing connected selections keep their wiring when grouped. Applying group
 properties does not invent a chain. Use **Auto-Wire Chain** explicitly when needed.

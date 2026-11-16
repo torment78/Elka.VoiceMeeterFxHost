@@ -118,11 +118,16 @@ Open **Menu > Settings > Canvas Controls**:
 - **Box Selection** defaults to on. Left-drag empty canvas to select nodes,
   groups, endpoints and cables. Release to open the selection menu. Hold Ctrl
   to add to the current selection; Esc cancels the drag.
+  Inside a group editor, the same gesture selects member VSTs and cables.
+  Drag a selected VST to move the selected members together, or use the
+  selection menu to remove cables or selected VSTs. No nested group is created.
 - **Automatic Grouping** defaults to off. When enabled, dropping a VST onto
   another VST or group groups it. Browser/file drops onto group cards follow
   the same setting. With it off, use the explicit grouping menu instead.
 - **Automatic Routing** defaults to off. Grouping loose VSTs adds no cables
-  while off. When on, loose VSTs are connected in selection order, and adding
+  between members while off. New groups still map free input/output ports to
+  their first/last members so the group edges can be connected later. When on,
+  loose VSTs are connected in selection order, and adding
   a loose VST to a group appends it to the chain. It does not wire anything
   merely because the setting is changed.
 

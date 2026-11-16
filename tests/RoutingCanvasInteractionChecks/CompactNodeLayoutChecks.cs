@@ -53,8 +53,9 @@ public partial class MainWindow
                         "Selection outline never shifts the text");
                     SelectPluginNode(-1, rebuildCanvas: false); UpdateLayout();
                     var output = elements.OfType<System.Windows.Shapes.Ellipse>().Last();
-                    Assert(Canvas.GetLeft(output) + output.Width / 2 == node.X + card.Width - VstCardPinInset,
-                        "Output connection anchor follows the narrower card");
+                    Assert(Canvas.GetLeft(output) + output.Width / 2 == node.X + card.Width &&
+                        Canvas.GetLeft(elements.OfType<System.Windows.Shapes.Ellipse>().First()) + 5 == node.X,
+                        "VST contact centers sit on the left and right card edges");
                 }
                 Assert(before == JsonSerializer.Serialize(_settings.PluginNodes), "Narrower rendering does not move or reconfigure nodes");
                 var groupCard = _groupVisualElements[group.Id].OfType<Border>().First();
@@ -98,15 +99,15 @@ public partial class MainWindow
             editor.Left = -20000; editor.Top = -20000; editor.UpdateLayout();
             var innerCanvas = Descendants(editor).OfType<Canvas>().Single();
             var innerCard = innerCanvas.Children.OfType<Border>().Single(b => b.Tag is PluginNodeSnapshot);
-            Assert(innerCard.Width == 118, "Group-editor VST cards remove another five DIPs from each inner side");
-            Assert(innerCard.Height == 98, "Group-editor VST loses six DIPs without changing row spacing");
+            Assert(innerCard.Width == VstNodeWidth, "Group-editor VST width matches the main canvas");
+            Assert(innerCard.Height == VstNodeHeight((PluginNodeSnapshot)innerCard.Tag), "Group-editor VST height matches the main canvas");
             CheckCompactPinCircles(innerCanvas.Children.OfType<FrameworkElement>().ToList());
             var cache = (Dictionary<string, Point>)typeof(PluginGroupPropertiesWindow)
                 .GetField("_pinPositions", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(editor)!;
             foreach (var pin in innerCanvas.Children.OfType<System.Windows.Shapes.Ellipse>())
                 Assert(cache.Values.Contains(new Point(Canvas.GetLeft(pin) + pin.Width / 2, Canvas.GetTop(pin) + pin.Height / 2)),
                     "Group-editor cable cache matches the displayed smaller circles");
-            CheckPinTextAlignment(innerCard, innerCanvas.Children.OfType<FrameworkElement>().ToList(), innerCanvas, 18);
+            CheckPinTextAlignment(innerCard, innerCanvas.Children.OfType<FrameworkElement>().ToList(), innerCanvas, 13);
             RenderCompactRegion(innerCanvas, new Rect(Canvas.GetLeft(innerCard) - 15, Canvas.GetTop(innerCard) - 10, 158, 130), "compact-group-vst.png");
             editor.Close();
             Console.WriteLine("PASS: narrower VST/group cards, aligned channel/count rows, stable selection/positions and cable anchors; no audio engine.");
@@ -139,6 +140,10 @@ public partial class MainWindow
                 new Typeface(label.FontFamily, label.FontStyle, label.FontWeight, label.FontStretch), label.FontSize, Brushes.White, 1);
             Assert(measured.WidthIncludingTrailingWhitespace <= label.Width + .1, $"Pin label {label.Text} fits without clipping");
             Assert(label.LineHeight == rowSpacing, "Each channel label uses the count text's row height");
+            var centerY = Canvas.GetTop(label) + label.ActualHeight / 2;
+            Assert(elements.OfType<System.Windows.Shapes.Ellipse>().Any(pin =>
+                Math.Abs(Canvas.GetTop(pin) + pin.Height / 2 - centerY) <= .51),
+                "Channel text is centered vertically on a contact circle");
         }
         Assert(summary.TranslatePoint(new Point(), canvas).X >= Canvas.GetLeft(card) &&
             summary.TranslatePoint(new Point(summary.ActualWidth, summary.ActualHeight), canvas).X <= Canvas.GetLeft(card) + card.Width,

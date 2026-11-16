@@ -76,11 +76,14 @@ public partial class MainWindow
                 Assert(create.IsEnabled, "Selected nodes offer explicit Create Group");
                 create.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
                 var group = _settings.PluginGroups.Single();
-                Assert(group.MemberSlots.SequenceEqual(new[] { 3, 12 }) && _settings.CanvasConnections.Count == 0,
-                    "Automatic Routing off groups loose nodes in click order without creating any cables");
+                Assert(group.MemberSlots.SequenceEqual(new[] { 3, 12 }) && _settings.CanvasConnections.Count == 4 &&
+                    !_settings.CanvasConnections.Any(edge => edge.Kind == ConnectionNodeToNode),
+                    "Automatic Routing off exposes first/last group ports without inventing a VST chain");
+                var boundaryBeforeAppend = _settings.CanvasConnections.Select(CanvasConnectionKey).Order().ToArray();
                 AddNodeToGroup(c, group);
-                Assert(group.MemberSlots.SequenceEqual(new[] { 3, 12, 7 }) && _settings.CanvasConnections.Count == 0,
-                    "Manual addition with routing off adds no internal or port mapping cables");
+                Assert(group.MemberSlots.SequenceEqual(new[] { 3, 12, 7 }) &&
+                    boundaryBeforeAppend.SequenceEqual(_settings.CanvasConnections.Select(CanvasConnectionKey).Order()),
+                    "Manual addition with routing off preserves existing boundary mappings without wiring the added VST");
 
                 Reset();
                 _settings.CanvasAutomaticRouting = true;

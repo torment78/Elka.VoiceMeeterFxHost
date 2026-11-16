@@ -21,13 +21,13 @@ public partial class MainWindow
         }
         AddToggle("Box Selection", () => _settings.CanvasBoxSelectionEnabled,
             value => _settings.CanvasBoxSelectionEnabled = value,
-            "Drag empty canvas to select nodes and cables. Ctrl adds to the selection.");
+            "Drag empty canvas, including inside group editors, to select nodes and cables. Ctrl adds to the selection.");
         AddToggle("Automatic Grouping", () => _settings.CanvasAutomaticGrouping,
             value => _settings.CanvasAutomaticGrouping = value,
             "Drop a VST onto another VST or group to group them. Off keeps grouping in the right-click menu.");
         AddToggle("Automatic Routing", () => _settings.CanvasAutomaticRouting,
             value => _settings.CanvasAutomaticRouting = value,
-            "Wire loose VSTs in selection order when grouping, and append loose VSTs dropped into a group. Existing wiring is preserved.");
+            "Wire loose VSTs in selection order when grouping, and append loose VSTs dropped into a group. Existing wiring is preserved. New groups always expose their first input and last output.");
         var close = CreateSaveManagerButton("Back");
         close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Click += (_, _) => back();
@@ -79,7 +79,7 @@ public partial class MainWindow
         create.IsEnabled = !PluginBrowserBusy && SelectedCanvasGroupMembers().Count > 0 && _quickGroupIds.Count == 0;
         menu.Items.Add(create);
         var route = new MenuItem { Header = "Automatic Routing", IsCheckable = true, IsChecked = _settings.CanvasAutomaticRouting,
-            ToolTip = "Off adds no new cables. Existing connections are always preserved when grouping a selection." };
+            ToolTip = "Off adds no cables between VSTs. New groups still expose their first input and last output. Existing connections are preserved." };
         route.Click += (_, _) => { _settings.CanvasAutomaticRouting = route.IsChecked; QueueSave(); };
         menu.Items.Add(route);
         var connect = new MenuItem { Header = "Connect Selection", IsEnabled = !PluginBrowserBusy &&

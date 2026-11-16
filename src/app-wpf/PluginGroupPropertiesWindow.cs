@@ -17,12 +17,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private const string ConnectionNodeToGroupOutput = "node-to-group-output";
     private const double MinimumCanvasWidth = 960.0;
     private const double CanvasHeight = 720.0;
-    private const double NodeWidth = 118.0;
-    private const double NodePinTopOffset = 45.0;
+    private const double NodeWidth = 108.0;
+    private const double NodePinTopOffset = 35.0;
     private const double NodeTextTopInset = 5.0;
-    private const double NodePinRowSpacing = 18.0;
+    private const double NodePinRowSpacing = 13.0;
     private const double NodePinLabelOffset = 8.0;
-    private const double NodePinLabelWidth = 18.0;
+    private const double NodePinLabelWidth = 16.0;
+    private const double NodePinTextTopOffset = 7.0;
     private const double GroupWallInset = 48.0;
     private const int GroupSidechainPinBase = 100;
 
@@ -42,6 +43,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot, bool> _setLoadSettingsOnce;
     private readonly Action<PluginNodeSnapshot> _reloadSavedSettings;
     private readonly Func<PluginNodeSnapshot?, (Brush? Stroke, Brush? Fill)> _routePalette;
+    private readonly Func<bool> _boxSelectionEnabled;
     private readonly Dictionary<int, (Brush? Stroke, Brush? Fill)> _nodeRoutePalettes = [];
     private (Brush? Stroke, Brush? Fill) _groupRoutePalette;
     private readonly Dictionary<int, Point> _originalNodePositions;
@@ -65,8 +67,15 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private PluginNodeSnapshot? _draggingNode;
     private Point _dragOffset;
     private Point _dragNodeOrigin;
-    private string? _selectedConnectionKey;
-    private int? _selectedNodeSlot;
+    private readonly HashSet<string> _selectedConnectionKeys = [];
+    private readonly HashSet<int> _selectedNodeSlots = [];
+    private readonly Dictionary<int, Point> _dragNodeOrigins = [];
+    private readonly Dictionary<Path, Geometry> _boxCableHitAreas = [];
+    private Point? _boxStart;
+    private Rectangle? _selectionBox;
+    private bool _boxMoved;
+    private int[] _boxInitialNodes = [];
+    private string[] _boxInitialCables = [];
     private bool _accepted;
     private bool _restored;
 
@@ -89,7 +98,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot, bool>? setPluginNodePowerLinked = null,
         Action<PluginNodeSnapshot, bool>? setLoadSettingsOnce = null,
         Action<PluginNodeSnapshot>? reloadSavedSettings = null,
-        Func<PluginNodeSnapshot?, (Brush? Stroke, Brush? Fill)>? routePalette = null)
+        Func<PluginNodeSnapshot?, (Brush? Stroke, Brush? Fill)>? routePalette = null,
+        Func<bool>? boxSelectionEnabled = null)
     {
         _group = group;
         _members = members.ToList();
@@ -107,6 +117,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _setLoadSettingsOnce = setLoadSettingsOnce ?? ((node, enabled) => node.LoadSettingsOnce = enabled);
         _reloadSavedSettings = reloadSavedSettings ?? (_ => { });
         _routePalette = routePalette ?? (_ => (null, null));
+        _boxSelectionEnabled = boxSelectionEnabled ?? (() => true);
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
 
@@ -117,7 +128,12 @@ internal sealed class PluginGroupPropertiesWindow : Window
         MinHeight = 620;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         PreviewKeyDown += GroupEditor_PreviewKeyDown;
-        Closing += (_, _) => RestoreOriginalStateIfNeeded();
+        Closing += (_, _) =>
+        {
+            FinishSelectionBox(cancel: true);
+            if (_canvas.ContextMenu is { } menu) menu.IsOpen = false;
+            RestoreOriginalStateIfNeeded();
+        };
 
         GroupName = group.Name;
         InputPins = Math.Clamp(group.InputPins, 0, 8);
@@ -162,7 +178,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             {
                 case Border { Tag: PluginNodeSnapshot node } card:
                     card.Background = NodeBrush(node);
-                    card.BorderBrush = _selectedNodeSlot == node.Slot ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
+                    card.BorderBrush = _selectedNodeSlots.Contains(node.Slot) ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
                     break;
                 case Ellipse { Tag: CanvasPin pin } port:
                     port.Fill = pin.Node is { } member ? NodeBrush(member) : _groupRoutePalette.Fill ?? BrushFrom("#0E1B1F");
@@ -172,7 +188,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
                     title.Foreground = GroupPortStroke(kind == PinGroupInput);
                     break;
                 case Path { Tag: CanvasConnectionSnapshot connection } wire:
-                    wire.Stroke = ConnectionKey(connection) == _selectedConnectionKey ? BrushFrom("#E2B84A") : ConnectionStroke(connection);
+                    wire.Stroke = _selectedConnectionKeys.Contains(ConnectionKey(connection)) ? BrushFrom("#E2B84A") : ConnectionStroke(connection);
                     break;
             }
         }
@@ -294,9 +310,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
         }
 
         MemberSlots = _members.Select(member => member.Slot).ToList();
-        if (_selectedNodeSlot == oldSlot)
-            _selectedNodeSlot = node.Slot;
-        _selectedConnectionKey = null;
+        if (_selectedNodeSlots.Remove(oldSlot))
+            _selectedNodeSlots.Add(node.Slot);
+        _selectedConnectionKeys.Clear();
         _wireStart = null;
         RebuildCanvas();
     }
@@ -359,8 +375,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _canvas.Width = MinimumCanvasWidth;
         _canvas.Height = CanvasHeight;
         _canvas.Background = BrushFrom("#081316");
+        _canvas.Focusable = true;
+        _canvas.MouseLeftButtonDown += Canvas_MouseLeftButtonDown;
         _canvas.MouseMove += Canvas_MouseMove;
         _canvas.MouseLeftButtonUp += Canvas_MouseLeftButtonUp;
+        _canvas.LostMouseCapture += Canvas_LostMouseCapture;
+        _canvas.ContextMenu = new ContextMenu();
+        _canvas.ContextMenuOpening += Canvas_ContextMenuOpening;
         _canvasScrollViewer.SizeChanged += (_, _) =>
         {
             UpdateCanvasExtent();
@@ -473,6 +494,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void RebuildCanvas()
     {
+        FinishSelectionBox(cancel: true);
+        _selectedNodeSlots.IntersectWith(_members.Select(node => node.Slot));
+        _selectedConnectionKeys.IntersectWith(GroupConnections().Select(ConnectionKey));
         ReadRoutePalettes();
         UpdateCanvasExtent();
         _canvas.Children.Clear();
@@ -493,7 +517,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             if (TryGetConnectionPoints(connection, out var start, out var end))
             {
-                var path = CreateWirePath(start, end, selected: ConnectionKey(connection) == _selectedConnectionKey,
+                var path = CreateWirePath(start, end, selected: _selectedConnectionKeys.Contains(ConnectionKey(connection)),
                     normalStroke: ConnectionStroke(connection));
                 path.Tag = connection;
                 path.ToolTip = "Click to select. Press Delete to disconnect.";
@@ -553,7 +577,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         for (var row = 0; row < pinIds.Count; row++)
         {
             var pin = pinIds[row];
-            var pinY = y + (row * 20);
+            var pinY = y + (row * NodePinRowSpacing);
             var point = new Point(x, pinY);
             var key = left ? GroupInputKey(pin) : GroupOutputKey(pin);
             _pinPositions[key] = point;
@@ -581,10 +605,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 Foreground = BrushFrom("#8AA0A6"),
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
+                Height = NodePinRowSpacing,
+                LineHeight = NodePinRowSpacing,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                 IsHitTestVisible = false
             };
             Canvas.SetLeft(label, left ? point.X + 12 : point.X - 32);
-            Canvas.SetTop(label, point.Y - 8);
+            Canvas.SetTop(label, point.Y - NodePinTextTopOffset);
             _canvas.Children.Add(label);
         }
     }
@@ -593,7 +620,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     {
         var elements = new List<FrameworkElement>();
         var nodeHeight = NodeHeight(node);
-        var selected = _selectedNodeSlot == node.Slot;
+        var selected = _selectedNodeSlots.Contains(node.Slot);
         var border = new Border
         {
             Width = NodeWidth,
@@ -621,7 +648,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 new TextBlock
                 {
                     Text = node.DisplayName,
-                    Height = NodePinTopOffset - NodeTextTopInset - 8,
+                    Height = NodePinTopOffset - NodeTextTopInset - NodePinTextTopOffset,
                     ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                     FontWeight = FontWeights.SemiBold,
                     Foreground = BrushFrom("#E7EEF0"),
@@ -730,7 +757,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         PlaceUngroupedNodeNearGroup(node);
         _members.Remove(node);
         _group.MemberSlots.Remove(node.Slot);
-        _selectedNodeSlot = null;
+        _selectedNodeSlots.Remove(node.Slot);
         CommitGroupMembershipChange();
         RebuildCanvas();
     }
@@ -740,7 +767,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         DisconnectGroupConnectionsTouching(node);
         _members.Remove(node);
         _group.MemberSlots.Remove(node.Slot);
-        _selectedNodeSlot = null;
+        _selectedNodeSlots.Remove(node.Slot);
         CommitGroupMembershipChange();
         _removePluginNode(node);
         RebuildCanvas();
@@ -775,7 +802,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _connections.Remove(connection);
         }
 
-        _selectedConnectionKey = null;
+        _selectedConnectionKeys.Clear();
     }
 
     private void PlaceUngroupedNodeNearGroup(PluginNodeSnapshot node)
@@ -824,7 +851,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             IsHitTestVisible = false
         };
         Canvas.SetLeft(label, input ? x + NodePinLabelOffset : x - NodePinLabelOffset - NodePinLabelWidth);
-        Canvas.SetTop(label, y - 8);
+        Canvas.SetTop(label, y - NodePinTextTopOffset);
         _canvas.Children.Add(label);
         elements.Add(label);
     }
@@ -915,7 +942,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _connections.Remove(existing);
         }
 
-        _selectedConnectionKey = null;
+        _selectedConnectionKeys.Clear();
         RebuildCanvas();
     }
 
@@ -953,7 +980,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _connections.Remove(existing);
         }
 
-        _selectedConnectionKey = null;
+        _selectedConnectionKeys.Clear();
         RebuildCanvas();
     }
 
@@ -991,12 +1018,162 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _connections.Remove(existing);
         }
 
-        _selectedConnectionKey = null;
+        _selectedConnectionKeys.Clear();
         RebuildCanvas();
+    }
+
+    private void Canvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource != _canvas || _wireStart is not null || _draggingNode is not null || !_boxSelectionEnabled()) return;
+        BeginSelectionBox(e.GetPosition(_canvas), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        _canvas.Focus();
+        _canvas.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void BeginSelectionBox(Point point, bool additive)
+    {
+        if (!additive)
+        {
+            _selectedNodeSlots.Clear();
+            _selectedConnectionKeys.Clear();
+        }
+        _boxInitialNodes = _selectedNodeSlots.ToArray();
+        _boxInitialCables = _selectedConnectionKeys.ToArray();
+        _boxStart = point;
+        _boxMoved = false;
+        // Widen once per gesture, not on every mouse move.
+        _boxCableHitAreas.Clear();
+        foreach (var path in _connectionPaths.Values)
+            if (path.Data is { } geometry)
+                _boxCableHitAreas[path] = geometry.GetWidenedPathGeometry(new Pen(Brushes.Black, 6));
+        _selectionBox = new Rectangle
+        {
+            Stroke = BrushFrom("#E2B84A"), StrokeThickness = 1,
+            Fill = new SolidColorBrush(Color.FromArgb(30, 255, 211, 92)),
+            IsHitTestVisible = false, Visibility = Visibility.Hidden
+        };
+        Panel.SetZIndex(_selectionBox, int.MaxValue);
+        _canvas.Children.Add(_selectionBox);
+        RefreshSelection();
+    }
+
+    private void UpdateSelectionBox(Point point)
+    {
+        if (_boxStart is not { } start || _selectionBox is null) return;
+        if (!_boxMoved && Math.Abs(point.X - start.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(point.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        _boxMoved = true;
+        var area = new Rect(start, point);
+        Canvas.SetLeft(_selectionBox, area.Left);
+        Canvas.SetTop(_selectionBox, area.Top);
+        _selectionBox.Width = area.Width;
+        _selectionBox.Height = area.Height;
+        _selectionBox.Visibility = Visibility.Visible;
+        _selectedNodeSlots.Clear();
+        _selectedNodeSlots.UnionWith(_boxInitialNodes);
+        _selectedConnectionKeys.Clear();
+        _selectedConnectionKeys.UnionWith(_boxInitialCables);
+        foreach (var node in _members)
+            if (area.IntersectsWith(new Rect(node.X, node.Y, NodeWidth, NodeHeight(node))))
+                _selectedNodeSlots.Add(node.Slot);
+        var rectangle = new RectangleGeometry(area);
+        foreach (var (path, hitArea) in _boxCableHitAreas)
+            if (path.Tag is CanvasConnectionSnapshot connection && hitArea.Bounds.IntersectsWith(area) &&
+                hitArea.FillContainsWithDetail(rectangle) != IntersectionDetail.Empty)
+                _selectedConnectionKeys.Add(ConnectionKey(connection));
+        RefreshSelection();
+    }
+
+    private bool FinishSelectionBox(bool cancel = false)
+    {
+        if (_boxStart is null) return false;
+        var showMenu = !cancel && _boxMoved && HasSelection;
+        if (cancel)
+        {
+            _selectedNodeSlots.Clear();
+            _selectedNodeSlots.UnionWith(_boxInitialNodes);
+            _selectedConnectionKeys.Clear();
+            _selectedConnectionKeys.UnionWith(_boxInitialCables);
+        }
+        _boxStart = null;
+        if (_selectionBox is not null) _canvas.Children.Remove(_selectionBox);
+        _selectionBox = null;
+        _boxMoved = false;
+        _boxInitialNodes = [];
+        _boxInitialCables = [];
+        _boxCableHitAreas.Clear();
+        if (Mouse.Captured == _canvas) _canvas.ReleaseMouseCapture();
+        RefreshSelection();
+        if (showMenu) OpenSelectionMenu();
+        return true;
+    }
+
+    private void Canvas_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (e.OriginalSource == _canvas) FinishSelectionBox(cancel: true);
+        if (_draggingNode is not null && Mouse.Captured is null)
+        {
+            _draggingNode = null;
+            _dragOrigins.Clear();
+            _dragNodeOrigins.Clear();
+        }
+    }
+
+    private bool HasSelection => _selectedNodeSlots.Count > 0 || _selectedConnectionKeys.Count > 0;
+
+    private void RefreshSelection()
+    {
+        RefreshNodeSelection();
+        foreach (var (key, path) in _connectionPaths)
+        {
+            var selected = _selectedConnectionKeys.Contains(key);
+            path.Stroke = selected ? BrushFrom("#E2B84A") : ConnectionStroke((CanvasConnectionSnapshot)path.Tag);
+            path.StrokeThickness = selected ? 4.2 : 2.4;
+            path.Opacity = selected ? 0.98 : 0.72;
+        }
+    }
+
+    private ContextMenu BuildSelectionMenu()
+    {
+        var menu = new ContextMenu { PlacementTarget = _canvas };
+        if (_selectedConnectionKeys.Count > 0)
+            menu.Items.Add(CreateMenuItem("Remove Cables", () => DeleteSelectedConnection()));
+        if (_selectedNodeSlots.Count > 0)
+            menu.Items.Add(CreateMenuItem("Remove Selected VSTs", () => DeleteSelectedNode()));
+        menu.Items.Add(CreateMenuItem("Clear Selection", () =>
+        {
+            _selectedNodeSlots.Clear(); _selectedConnectionKeys.Clear(); RefreshSelection();
+        }));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(CreateMenuItem("Close", () => menu.IsOpen = false));
+        return menu;
+    }
+
+    private void Canvas_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (!HasSelection) { if (e.OriginalSource == _canvas) e.Handled = true; return; }
+        if (e.OriginalSource != _canvas && _selectedNodeSlots.Count + _selectedConnectionKeys.Count <= 1) return;
+        e.Handled = true;
+        OpenSelectionMenu();
+    }
+
+    private void OpenSelectionMenu()
+    {
+        if (_canvas.ContextMenu is { } previous) previous.IsOpen = false;
+        _canvas.ContextMenu = BuildSelectionMenu();
+        _canvas.ContextMenu.IsOpen = true;
     }
 
     private void Canvas_MouseMove(object sender, MouseEventArgs e)
     {
+        if (_boxStart is not null)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed) UpdateSelectionBox(e.GetPosition(_canvas));
+            else FinishSelectionBox(cancel: true);
+            e.Handled = true;
+            return;
+        }
         if (_wireStart is not null && e.LeftButton == MouseButtonState.Pressed)
         {
             UpdateWirePreview(e.GetPosition(_canvas));
@@ -1009,16 +1186,40 @@ internal sealed class PluginGroupPropertiesWindow : Window
         }
 
         var point = e.GetPosition(_canvas);
-        _draggingNode.X = Math.Clamp((int)(point.X - _dragOffset.X), 170, (int)(Math.Max(MinimumCanvasWidth, _canvas.Width) - 250));
-        _draggingNode.Y = Math.Max(44, (int)(point.Y - _dragOffset.Y));
-        MoveDragElements(_draggingNode.X - _dragNodeOrigin.X, _draggingNode.Y - _dragNodeOrigin.Y);
-        UpdateNodePinPositionCache(_draggingNode);
-        RefreshConnectionPaths(connection => ConnectionTouchesNode(connection, _draggingNode.Slot));
+        MoveSelectedNodes(point);
         e.Handled = true;
+    }
+
+    private void MoveSelectedNodes(Point point)
+    {
+        if (_dragNodeOrigins.Count == 0) return;
+        var minX = _dragNodeOrigins.Values.Min(p => p.X);
+        var maxX = _dragNodeOrigins.Values.Max(p => p.X);
+        var minY = _dragNodeOrigins.Values.Min(p => p.Y);
+        var dx = Math.Clamp((int)(point.X - _dragOffset.X - _dragNodeOrigin.X),
+            Math.Min(0, 170 - (int)minX), Math.Max(0, (int)(Math.Max(MinimumCanvasWidth, _canvas.Width) - 250 - maxX)));
+        var dy = Math.Max((int)(point.Y - _dragOffset.Y - _dragNodeOrigin.Y), Math.Min(0, 44 - (int)minY));
+        foreach (var node in _members)
+        {
+            if (!_dragNodeOrigins.TryGetValue(node.Slot, out var origin)) continue;
+            node.X = (int)origin.X + dx;
+            node.Y = (int)origin.Y + dy;
+            UpdateNodePinPositionCache(node);
+        }
+        MoveDragElements(dx, dy);
+        RefreshConnectionPaths(connection => _dragNodeOrigins.ContainsKey(connection.FromSlot) ||
+            _dragNodeOrigins.ContainsKey(connection.ToSlot));
     }
 
     private void Canvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_boxStart is not null)
+        {
+            UpdateSelectionBox(e.GetPosition(_canvas));
+            FinishSelectionBox();
+            e.Handled = true;
+            return;
+        }
         if (_wireStart is not null)
         {
             var target = FindInputPinNear(e.GetPosition(_canvas));
@@ -1042,10 +1243,25 @@ internal sealed class PluginGroupPropertiesWindow : Window
             return;
         }
 
-        _selectedNodeSlot = node.Slot;
-        _selectedConnectionKey = null;
+        _canvas.Focus();
+        var additive = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        if (additive)
+        {
+            if (!_selectedNodeSlots.Add(node.Slot)) _selectedNodeSlots.Remove(node.Slot);
+        }
+        else if (!_selectedNodeSlots.Contains(node.Slot))
+        {
+            _selectedNodeSlots.Clear();
+            _selectedNodeSlots.Add(node.Slot);
+            _selectedConnectionKeys.Clear();
+        }
         _nodeStacking[node.Slot] = _nodeStacking.Values.DefaultIfEmpty(0).Max() + 1;
-        RefreshNodeSelection();
+        RefreshSelection();
+        if (additive)
+        {
+            e.Handled = true;
+            return;
+        }
 
         if (e.ClickCount > 1)
         {
@@ -1058,7 +1274,10 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _dragNodeOrigin = new Point(node.X, node.Y);
         var point = e.GetPosition(_canvas);
         _dragOffset = new Point(point.X - node.X, point.Y - node.Y);
-        CaptureDragOrigins(_nodeVisualElements.TryGetValue(node.Slot, out var elements) ? elements : [border]);
+        _dragNodeOrigins.Clear();
+        foreach (var selected in _members.Where(member => _selectedNodeSlots.Contains(member.Slot)))
+            _dragNodeOrigins[selected.Slot] = new Point(selected.X, selected.Y);
+        CaptureDragOrigins(_nodeVisualElements.Where(pair => _dragNodeOrigins.ContainsKey(pair.Key)).SelectMany(pair => pair.Value));
         border.CaptureMouse();
         e.Handled = true;
     }
@@ -1075,7 +1294,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             if (!_nodeVisualElements.TryGetValue(node.Slot, out var elements)) continue;
             foreach (var element in elements) Panel.SetZIndex(element, _nodeStacking.GetValueOrDefault(node.Slot));
             if (elements.OfType<Border>().FirstOrDefault() is not { } border) continue;
-            bool selected = _selectedNodeSlot == node.Slot;
+            bool selected = _selectedNodeSlots.Contains(node.Slot);
             border.BorderBrush = selected ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
             border.BorderThickness = new Thickness(selected ? 2 : 1);
             border.Padding = NodeTextPadding(selected);
@@ -1091,6 +1310,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         _draggingNode = null;
         _dragOrigins.Clear();
+        _dragNodeOrigins.Clear();
         RebuildCanvas();
         e.Handled = true;
     }
@@ -1154,11 +1374,6 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
             path.Data = CreateWireGeometry(start, end);
         }
-    }
-
-    private static bool ConnectionTouchesNode(CanvasConnectionSnapshot connection, int slot)
-    {
-        return connection.FromSlot == slot || connection.ToSlot == slot;
     }
 
     private void UpdateWirePreview(Point current)
@@ -1227,9 +1442,19 @@ internal sealed class PluginGroupPropertiesWindow : Window
             return;
         }
 
-        _selectedConnectionKey = ConnectionKey(connection);
-        _selectedNodeSlot = null;
-        RebuildCanvas();
+        _canvas.Focus();
+        var key = ConnectionKey(connection);
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            if (!_selectedConnectionKeys.Add(key)) _selectedConnectionKeys.Remove(key);
+        }
+        else
+        {
+            _selectedConnectionKeys.Clear();
+            _selectedConnectionKeys.Add(key);
+            _selectedNodeSlots.Clear();
+        }
+        RefreshSelection();
         e.Handled = true;
     }
 
@@ -1239,7 +1464,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             if (e.Key == Key.Escape)
             {
-                Close();
+                if (!FinishSelectionBox(cancel: true)) Close();
                 e.Handled = true;
             }
 
@@ -1265,50 +1490,29 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private bool DeleteSelectedConnection()
     {
-        if (_selectedConnectionKey is not { Length: > 0 })
+        var connections = GroupConnections().Where(c => _selectedConnectionKeys.Contains(ConnectionKey(c))).ToList();
+        if (connections.Count == 0) return false;
+        foreach (var connection in connections)
         {
-            return false;
-        }
-
-        var connection = GroupConnections().FirstOrDefault(candidate => ConnectionKey(candidate) == _selectedConnectionKey);
-        if (connection is null)
-        {
-            _selectedConnectionKey = null;
-            return false;
-        }
-
-        if (connection.Kind == ConnectionNodeToNode &&
-            _members.FirstOrDefault(node => node.Slot == connection.ToSlot) is { } destination)
-        {
-            var nativePin = NativeInputPinForVisualPin(destination, connection.ToPin);
-            if (nativePin >= 0)
+            if (connection.Kind == ConnectionNodeToNode &&
+                _members.FirstOrDefault(node => node.Slot == connection.ToSlot) is { } destination)
             {
-                _toggleModuleRoute(connection.FromSlot, connection.FromPin, connection.ToSlot, nativePin);
+                var nativePin = NativeInputPinForVisualPin(destination, connection.ToPin);
+                if (nativePin >= 0)
+                    _toggleModuleRoute(connection.FromSlot, connection.FromPin, connection.ToSlot, nativePin);
             }
+            _connections.Remove(connection);
         }
-
-        _connections.Remove(connection);
-        _selectedConnectionKey = null;
+        _selectedConnectionKeys.Clear();
         RebuildCanvas();
         return true;
     }
 
     private bool DeleteSelectedNode()
     {
-        if (_selectedNodeSlot is not { } slot)
-        {
-            return false;
-        }
-
-        var node = _members.FirstOrDefault(candidate => candidate.Slot == slot);
-        if (node is null)
-        {
-            _selectedNodeSlot = null;
-            return false;
-        }
-
-        DeleteNode(node);
-        return true;
+        var nodes = _members.Where(node => _selectedNodeSlots.Contains(node.Slot)).ToList();
+        foreach (var node in nodes) DeleteNode(node);
+        return nodes.Count > 0;
     }
 
     private void AutoWireMembers()
@@ -1513,7 +1717,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private static double NodeHeight(PluginNodeSnapshot node)
     {
-        return Math.Max(86.0, 62.0 + (Math.Max(PluginNodePins.VisibleInputs(node).Count, PluginNodePins.VisibleOutputs(node).Count) * NodePinRowSpacing));
+        var rows = Math.Max(PluginNodePins.VisibleInputs(node).Count, PluginNodePins.VisibleOutputs(node).Count);
+        return rows <= 2 ? 68.0 : 62.0 + ((rows - 1) * NodePinRowSpacing);
     }
 
     private static Thickness NodeTextPadding(bool selected)

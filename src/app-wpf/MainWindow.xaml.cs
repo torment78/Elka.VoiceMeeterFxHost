@@ -161,6 +161,7 @@ public partial class MainWindow : Window
     private const double VstPluginCardVerticalTrim = 3.0;
     private const double VstPinLabelOffset = 8.0;
     private const double VstPinLabelWidth = 16.0;
+    private const double VstPinTextTopOffset = 7.0;
     private const double EndpointPinLabelOffset = 10.0;
     private const double EndpointPinLabelWidth = 8.0;
     private const double EndpointMeterLabelGap = 0.0;
@@ -8533,10 +8534,10 @@ private void RefreshEndpointButtonSelection()
     }
 
     private static double VstCardInputPinX(double x) =>
-        x + VstCardPinInset;
+        x;
 
     private static double VstCardOutputPinX(double x, double width) =>
-        x + width - VstCardPinInset;
+        x + width;
 
     private static double VstEndpointCardSpacing(int pinCount) =>
         VstEndpointCardHeightForPinCount(pinCount) + 18.0;
@@ -8786,7 +8787,7 @@ private void RefreshEndpointButtonSelection()
         for (var offset = 0; offset < pinCount; offset++)
         {
             var pinY = VstCardPinY(y, offset);
-            var pinX = outputSide ? VstCardInputPinX(x) : VstCardOutputPinX(x, VstEndpointCardWidth);
+            var pinX = outputSide ? x + VstCardPinInset : x + VstEndpointCardWidth - VstCardPinInset;
             var channel = endpoint.Range.Start + offset;
             var pinInfo = new CanvasPinInfo
             {
@@ -8848,7 +8849,7 @@ private void RefreshEndpointButtonSelection()
             var channel = endpoint.Range.Start + offset;
             var anchorOffset = Math.Min(offset % CollapsedVisiblePinCount, visiblePinCount - 1);
             var point = new Point(
-                outputSide ? VstCardInputPinX(x) : VstCardOutputPinX(x, VstEndpointCardWidth),
+                outputSide ? x + VstCardPinInset : x + VstEndpointCardWidth - VstCardPinInset,
                 VstCardPinY(y, anchorOffset));
             var pinInfo = new CanvasPinInfo
             {
@@ -9013,7 +9014,7 @@ private void RefreshEndpointButtonSelection()
         stack.Children.Add(new TextBlock
         {
             Text = group.Name,
-            Height = VstCardPinTopOffset - 16,
+            Height = VstCardPinTopOffset - VstPluginCardVerticalTrim - 5 - VstPinTextTopOffset,
             FontWeight = FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis
         });
@@ -9025,7 +9026,7 @@ private void RefreshEndpointButtonSelection()
             FontSize = 10,
             LineHeight = VstCardPinRowSpacing,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            Margin = new Thickness(VstCardPinInset + VstPinLabelWidth, 0, VstCardPinInset + VstPinLabelWidth, 0),
+            Margin = new Thickness(VstPinLabelWidth + 2, 0, VstPinLabelWidth + 2, 0),
             TextWrapping = TextWrapping.Wrap,
             ToolTip = GroupStatusText(members),
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -9094,7 +9095,7 @@ private void RefreshEndpointButtonSelection()
             IsHitTestVisible = false
         };
         Canvas.SetLeft(label, input ? x + VstPinLabelOffset : x - VstPinLabelOffset - VstPinLabelWidth);
-        Canvas.SetTop(label, y - 8);
+        Canvas.SetTop(label, y - VstPinTextTopOffset);
         RoutingCanvas.Children.Add(label);
         _groupVisualElements[group.Id].Add(label);
     }
@@ -9156,7 +9157,7 @@ private void RefreshEndpointButtonSelection()
         };
 
         Canvas.SetLeft(summary, group.X + 8);
-        Canvas.SetTop(summary, group.Y + height - 18 + VstPluginCardVerticalTrim);
+        Canvas.SetTop(summary, group.Y + height - 17 + VstPluginCardVerticalTrim);
         RoutingCanvas.Children.Add(summary);
         _groupVisualElements[group.Id].Add(summary);
     }
@@ -9735,7 +9736,7 @@ private void RefreshEndpointButtonSelection()
             stack.Children.Add(new TextBlock
             {
                 Text = node.DisplayName,
-                Height = VstCardPinTopOffset - 16,
+                Height = VstCardPinTopOffset - VstPluginCardVerticalTrim - 5 - VstPinTextTopOffset,
                 ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                 FontWeight = FontWeights.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -9749,7 +9750,7 @@ private void RefreshEndpointButtonSelection()
                 FontSize = 10,
                 LineHeight = VstCardPinRowSpacing,
                 LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-                Margin = new Thickness(VstCardPinInset + VstPinLabelWidth + 2, 0, VstCardPinInset + VstPinLabelWidth + 2, 0),
+                Margin = new Thickness(VstPinLabelWidth + 2, 0, VstPinLabelWidth + 2, 0),
                 ToolTip = NodePinSummary(node),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 TextAlignment = TextAlignment.Center,
@@ -9969,7 +9970,8 @@ private void RefreshEndpointButtonSelection()
             {
                 var hue = node is null ? GroupDisplayHue(group) : FindNodeRouteHue(node.Slot, []);
                 return (HueStrokeBrush(hue), HueFillBrush(hue));
-            })
+            },
+            boxSelectionEnabled: () => _settings.CanvasBoxSelectionEnabled)
         {
             Owner = this
         };
@@ -10947,7 +10949,7 @@ private void RefreshEndpointButtonSelection()
             IsHitTestVisible = false
         };
         Canvas.SetLeft(label, input ? x + VstPinLabelOffset : x - VstPinLabelOffset - VstPinLabelWidth);
-        Canvas.SetTop(label, y - 8);
+        Canvas.SetTop(label, y - VstPinTextTopOffset);
         RoutingCanvas.Children.Add(label);
         if (pinInfo.Node is not null && _nodeVisualElements.TryGetValue(pinInfo.Node.Slot, out elements))
         {
@@ -11021,7 +11023,7 @@ private void RefreshEndpointButtonSelection()
         };
 
         Canvas.SetLeft(summary, node.X + 8);
-        Canvas.SetTop(summary, node.Y + nodeHeight - 18 + VstPluginCardVerticalTrim);
+        Canvas.SetTop(summary, node.Y + nodeHeight - 17 + VstPluginCardVerticalTrim);
         RoutingCanvas.Children.Add(summary);
         if (_nodeVisualElements.TryGetValue(node.Slot, out var elements))
         {

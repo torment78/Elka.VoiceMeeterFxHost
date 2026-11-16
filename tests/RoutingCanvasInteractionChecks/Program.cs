@@ -76,6 +76,8 @@ internal static class CanvasInteractionChecks
             window.Show();
             if (args.Contains("--plugin-browser")) { window.CheckPluginBrowser(); return 0; }
             if (args.Contains("--canvas-controls")) { window.CheckCanvasControls(); return 0; }
+            if (args.Contains("--group-boundaries")) { window.CheckGroupBoundaryUi(); return 0; }
+            if (args.Contains("--group-selection")) { window.CheckGroupCanvasSelection(); return 0; }
             if (args.Contains("--node-names")) { window.CheckNodeNames(); return 0; }
             if (args.Contains("--routing-hues")) { window.CheckRoutingHues(); return 0; }
             if (args.Contains("--compact-nodes")) { window.CheckCompactNodes(); return 0; }
@@ -95,6 +97,8 @@ internal static class CanvasInteractionChecks
             window.CheckHotkeyActions();
             window.CheckEndpointHotkeys();
             window.CheckGroupChainUi();
+            window.CheckGroupBoundaryUi();
+            window.CheckGroupCanvasSelection();
             window.CheckQuickConnectionChains();
             window.CheckCanvasControls();
             window.CheckNodeNames();

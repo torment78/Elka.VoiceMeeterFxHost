@@ -1,5 +1,39 @@
 # Development Changes
 
+## 0.8.3.31 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Usable group edges:** new groups expose the first member's inputs and last
+  member's outputs even when Automatic Routing is off. Existing internal and
+  external cables are preserved, including chains connected on only one side.
+  Loose members are not connected to each other unless Automatic Routing is on.
+- **Matching group-editor layout:** inner VST cards now use the same compact
+  width, height and row spacing as the main canvas. Channel labels, input/output
+  counts and pins align. VST and group contacts on the main canvas sit on the
+  card edges; hardware and virtual endpoint contact positions are unchanged.
+- **Consistent group port spacing:** Group In and Group Out pins, including
+  sidechain inputs, use the VSTs' 13-pixel row spacing and centered labels.
+- **Box selection inside groups:** drag empty canvas to highlight members and
+  cables, Ctrl-drag to add to a selection, and Esc to cancel the gesture. Dragging
+  a selected VST moves the selected members together without changing their
+  relative positions or connections. The selection menu supports cable-only
+  removal and removing selected VSTs. Cancel restores uncommitted positions and
+  cable edits; existing immediate member-removal behavior is unchanged.
+- **Shared Canvas Controls:** the Box Selection setting applies inside group
+  editors too. Nested groups are not created. Selection, routing hues and
+  bypass/off/failure styling remain distinct.
+
+Native audio processing, callback scheduling, gain/delay, plugin hosting and
+DSP/meter refresh rates are unchanged. Group-editing actions use the existing
+routing operations; selecting and moving nodes do not change the audio graph.
+
+Verification includes repeated group-wall cable connection/disconnection,
+partial-chain grouping, Apply/Cancel, compact layouts and box-selection checks.
+The separately reported whole-application exit was not reproduced or diagnosed;
+this release does not claim to fix its unknown cause.
+
 ## 0.8.3.30 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

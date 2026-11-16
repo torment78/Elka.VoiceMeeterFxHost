@@ -28,9 +28,15 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.29 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.29).**
+**[0.8.3.30 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.30).**
 
-This update fixes **routing-hue consistency**. Reverse-order Ctrl-click
+This update adds a **more compact node layout**. VST and group cards are narrower
+and shorter, with aligned channel labels and input/output counts. Their cable
+contacts match the endpoint circles. Hardware, virtual-input and output cards
+have tighter label/meter spacing and narrower widths, while keeping their height.
+Saved node positions, cables, routing colors and audio processing are unchanged.
+
+The **routing-hue improvements** remain available. Reverse-order Ctrl-click
 connections inherit the connected chain's color, and input-connected VST
 outlines match their source hue. Groups, their internal VSTs, ports and cables
 share the chain palette, with a subtle matching canvas tint. Open group editors
@@ -67,9 +73,9 @@ The preceding development improvements remain available:
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.29](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.30](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release changes routing colors, not native audio processing or routing.
+for use. This release changes node layout, not native audio processing or routing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**

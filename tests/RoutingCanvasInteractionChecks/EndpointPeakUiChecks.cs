@@ -149,8 +149,8 @@ public partial class MainWindow
             double titleStart = point.X + title.Padding.Left;
             double titleEnd = point.X + title.ActualWidth - title.Padding.Right;
             double circleStart = Canvas.GetLeft(item.Indicator);
-            Assert(item.Address.OutputSide ? titleStart >= circleStart + 12 : titleEnd <= circleStart,
-                "node title cannot overlap the peak circle");
+            Assert(item.Address.OutputSide ? titleStart + .01 >= circleStart + 12 : titleEnd <= circleStart + .01,
+                $"node title cannot overlap the peak circle: output={item.Address.OutputSide}, title={titleStart:G17}..{titleEnd:G17}, circle={circleStart:G17}..{circleStart + 12:G17}");
             double textWidth = 0;
             foreach (var run in title.Inlines.OfType<Run>())
                 textWidth += new FormattedText(run.Text, System.Globalization.CultureInfo.InvariantCulture,

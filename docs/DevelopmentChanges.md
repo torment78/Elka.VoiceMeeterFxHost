@@ -1,5 +1,33 @@
 # Development Changes
 
+## 0.8.3.30 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Compact VST and group cards:** canvas cards are 30 pixels narrower, with
+  less empty space between the channel labels and the centered input/output
+  counts. VST cards inside group editors receive the same width reduction.
+- **Shorter cards:** VST and group cards lose 3 pixels of padding at the top
+  and bottom. Channel rows and input/output counts line up, and selection
+  outlines no longer shift the card text. Sidechain counts use their own line.
+- **Matching connection circles:** VST, group and group-editor contacts now
+  match the endpoint contacts: 10-pixel diameter with a 1.5-pixel outline.
+  Visible and collapsed-pin cable anchors stay centered during dragging.
+- **Tighter endpoint spacing:** hardware, virtual-input and output cards are
+  12 pixels narrower, with smaller gaps between connection dots, channel labels
+  and VU meters. Endpoint heights, channel row spacing and peak dots are unchanged.
+- **Preserved layout and styling:** saved node positions and cables are retained.
+  Routing hues, selection, bypass/off stripes and failure warnings remain visible.
+
+Native audio processing, routing behavior, callback scheduling, gain/delay,
+plugin hosting and DSP/meter refresh rates are unchanged.
+
+Verification note: native, layout and other managed checks passed. The unchanged
+monitor-animation test missed its 55 Hz minimum while moving a test window;
+stationary monitors ran around 60 Hz and separate rendering checks passed.
+This release does not change the monitor implementation.
+
 ## 0.8.3.29 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

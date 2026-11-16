@@ -17,7 +17,12 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private const string ConnectionNodeToGroupOutput = "node-to-group-output";
     private const double MinimumCanvasWidth = 960.0;
     private const double CanvasHeight = 720.0;
-    private const double NodeWidth = 148.0;
+    private const double NodeWidth = 118.0;
+    private const double NodePinTopOffset = 45.0;
+    private const double NodeTextTopInset = 5.0;
+    private const double NodePinRowSpacing = 18.0;
+    private const double NodePinLabelOffset = 8.0;
+    private const double NodePinLabelWidth = 18.0;
     private const double GroupWallInset = 48.0;
     private const int GroupSidechainPinBase = 100;
 
@@ -556,18 +561,18 @@ internal sealed class PluginGroupPropertiesWindow : Window
             _pinInfos[key] = canvasPin;
             var ellipse = new Ellipse
             {
-                Width = 12,
-                Height = 12,
+                Width = 10,
+                Height = 10,
                 Fill = _groupRoutePalette.Fill ?? BrushFrom("#0E1B1F"),
                 Stroke = PinStroke(canvasPin),
-                StrokeThickness = 2,
+                StrokeThickness = 1.5,
                 Cursor = Cursors.Hand,
                 Tag = canvasPin
             };
             ellipse.MouseLeftButtonDown += Pin_MouseLeftButtonDown;
             ellipse.MouseLeftButtonUp += Pin_MouseLeftButtonUp;
-            Canvas.SetLeft(ellipse, point.X - 6);
-            Canvas.SetTop(ellipse, point.Y - 6);
+            Canvas.SetLeft(ellipse, point.X - 5);
+            Canvas.SetTop(ellipse, point.Y - 5);
             _canvas.Children.Add(ellipse);
 
             var label = new TextBlock
@@ -597,7 +602,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             BorderBrush = selected ? BrushFrom("#E2B84A") : NodeOutlineBrush(node),
             BorderThickness = selected ? new Thickness(2) : new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(10, 8, 10, 8),
+            Padding = NodeTextPadding(selected),
             Tag = node,
             ContextMenu = BuildNodeMenu(node)
         };
@@ -616,6 +621,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 new TextBlock
                 {
                     Text = node.DisplayName,
+                    Height = NodePinTopOffset - NodeTextTopInset - 8,
                     ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                     FontWeight = FontWeights.SemiBold,
                     Foreground = BrushFrom("#E7EEF0"),
@@ -624,10 +630,14 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 new TextBlock
                 {
                     Text = node.SidechainInputPins > 0
-                        ? $"{node.MainInputPins} in + {node.SidechainInputPins} sc / {node.OutputPins} out"
-                        : $"{node.InputPins} in / {node.OutputPins} out",
+                        ? $"{node.MainInputPins} in\n{node.OutputPins} out\n{node.SidechainInputPins} sc"
+                        : $"{node.InputPins} in\n{node.OutputPins} out",
                     Foreground = BrushFrom("#8AA0A6"),
-                    Margin = new Thickness(0, 4, 0, 0),
+                    FontSize = 10,
+                    LineHeight = NodePinRowSpacing,
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    Margin = new Thickness(NodePinLabelWidth + 2, 0, NodePinLabelWidth + 2, 0),
+                    TextAlignment = TextAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 }
             }
@@ -777,7 +787,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private void DrawNodePin(PluginNodeSnapshot node, int pinIndex, int row, bool input, List<FrameworkElement> elements)
     {
         var x = input ? node.X : node.X + NodeWidth;
-        var y = node.Y + 48 + (row * 18);
+        var y = node.Y + NodePinTopOffset + (row * NodePinRowSpacing);
         var pin = new CanvasPin(input ? PinNodeInput : PinNodeOutput, node, pinIndex, input);
         var key = PinKey(pin);
         _pinPositions[key] = new Point(x, y);
@@ -785,18 +795,18 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         var ellipse = new Ellipse
         {
-            Width = 12,
-            Height = 12,
+            Width = 10,
+            Height = 10,
             Fill = NodeBrush(node),
             Stroke = PinStroke(pin),
-            StrokeThickness = 2,
+            StrokeThickness = 1.5,
             Cursor = Cursors.Hand,
             Tag = pin
         };
         ellipse.MouseLeftButtonDown += Pin_MouseLeftButtonDown;
         ellipse.MouseLeftButtonUp += Pin_MouseLeftButtonUp;
-        Canvas.SetLeft(ellipse, x - 6);
-        Canvas.SetTop(ellipse, y - 6);
+        Canvas.SetLeft(ellipse, x - 5);
+        Canvas.SetTop(ellipse, y - 5);
         _canvas.Children.Add(ellipse);
         elements.Add(ellipse);
 
@@ -806,9 +816,14 @@ internal sealed class PluginGroupPropertiesWindow : Window
             Foreground = BrushFrom("#8AA0A6"),
             FontSize = 10,
             FontWeight = FontWeights.SemiBold,
+            Width = NodePinLabelWidth,
+            Height = NodePinRowSpacing,
+            LineHeight = NodePinRowSpacing,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            TextAlignment = input ? TextAlignment.Left : TextAlignment.Right,
             IsHitTestVisible = false
         };
-        Canvas.SetLeft(label, input ? x + 10 : x - 28);
+        Canvas.SetLeft(label, input ? x + NodePinLabelOffset : x - NodePinLabelOffset - NodePinLabelWidth);
         Canvas.SetTop(label, y - 8);
         _canvas.Children.Add(label);
         elements.Add(label);
@@ -1063,6 +1078,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             bool selected = _selectedNodeSlot == node.Slot;
             border.BorderBrush = selected ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
             border.BorderThickness = new Thickness(selected ? 2 : 1);
+            border.Padding = NodeTextPadding(selected);
         }
     }
 
@@ -1121,7 +1137,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
                 row = pin % visiblePins.Count;
             var key = input ? NodeInputKey(node.Slot, pin) : NodeOutputKey(node.Slot, pin);
             _pinPositions[key] = new Point(input ? node.X : node.X + NodeWidth,
-                node.Y + 48 + (row * 18));
+                node.Y + NodePinTopOffset + (row * NodePinRowSpacing));
         }
     }
 
@@ -1497,7 +1513,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private static double NodeHeight(PluginNodeSnapshot node)
     {
-        return Math.Max(92.0, 68.0 + (Math.Max(PluginNodePins.VisibleInputs(node).Count, PluginNodePins.VisibleOutputs(node).Count) * 18.0));
+        return Math.Max(86.0, 62.0 + (Math.Max(PluginNodePins.VisibleInputs(node).Count, PluginNodePins.VisibleOutputs(node).Count) * NodePinRowSpacing));
+    }
+
+    private static Thickness NodeTextPadding(bool selected)
+    {
+        double border = selected ? 2 : 1;
+        return new Thickness(8 - border, NodeTextTopInset - border, 8 - border, NodeTextTopInset - border);
     }
 
     private static int NodeInputVisualPinCount(PluginNodeSnapshot node)

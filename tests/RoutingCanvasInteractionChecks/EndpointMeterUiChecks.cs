@@ -38,8 +38,29 @@ public partial class MainWindow
             double relativeY = Canvas.GetTop(entry.View) - Canvas.GetTop(border);
             Assert(Math.Abs(relativeY + EndpointMeterView.RowHeight / 2 - VstCardPinTopOffset) < 0.01, "meter rows exactly align with existing pins");
             Assert(relativeY + entry.View.Height < border.Height, "all meters fit inside the unchanged node height");
-            Assert(entry.View.Width == 76 && EndpointMeterView.RowSpacing - EndpointMeterView.RowHeight == 3,
+            Assert(border.Width == 112 && entry.View.Width == 74 && EndpointMeterView.RowSpacing - EndpointMeterView.RowHeight == 3,
                 "both sides use the same meter width with a three-pixel row gap");
+            var firstLabel = elements.OfType<TextBlock>().Single(label => label.Text == EndpointPinLabel(entry.View.Channels, 0) &&
+                Canvas.GetLeft(label) >= Canvas.GetLeft(border) && Canvas.GetLeft(label) < Canvas.GetLeft(border) + border.Width);
+            var pin = elements.OfType<System.Windows.Shapes.Ellipse>().First(p => p.Tag is CanvasPinInfo info &&
+                info.Channel == endpoint.Range.Start && (info.Kind == PinEndpointDestination) == entry.Address.OutputSide);
+            Assert(border.Height == (entry.View.Channels == 2 ? 74 : 159) && pin.Width == 10 && pin.Height == 10 &&
+                pin.StrokeThickness == 1.5 && Canvas.GetTop(pin) + pin.Height / 2 - Canvas.GetTop(border) == 38,
+                "Endpoint card height, circle size, outline and pin positions remain unchanged");
+            double pinX = Canvas.GetLeft(pin) + pin.Width / 2;
+            double labelX = Canvas.GetLeft(firstLabel);
+            double meterX = Canvas.GetLeft(entry.View);
+            Assert(Math.Abs(Math.Abs(labelX + firstLabel.Width / 2 - pinX) - 14) < .01,
+                "endpoint letter centers keep their previous distance from the pins");
+            var text = new FormattedText(firstLabel.Text, System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface(firstLabel.FontFamily, firstLabel.FontStyle, firstLabel.FontWeight, firstLabel.FontStretch),
+                firstLabel.FontSize, Brushes.White, 1);
+            Assert(text.WidthIncludingTrailingWhitespace < firstLabel.Width,
+                "endpoint letters retain visible clearance from the meters without clipping");
+            Assert((entry.Address.OutputSide ? labelX - pinX : pinX - labelX - firstLabel.Width) == EndpointPinLabelOffset,
+                "endpoint labels sit equally close to the source and destination pins");
+            Assert((entry.Address.OutputSide ? meterX - labelX - firstLabel.Width : labelX - meterX - entry.View.Width) == EndpointMeterLabelGap,
+                "endpoint meter and label have matching compact gaps on both sides");
         }
         RenderEndpointPreview(input[0]);
         RenderEndpointPreview(vaio, "endpoint-expanded-preview.png");

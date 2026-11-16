@@ -109,11 +109,12 @@ public partial class MainWindow
     private void DrawEndpointMeters(IoEndpoint endpoint, CallbackMode mode, bool outputSide,
         int pinCount, double x, double y, Border card, List<FrameworkElement> elements)
     {
+        double labelEdge = VstCardPinInset + EndpointPinLabelOffset + EndpointPinLabelWidth + EndpointMeterLabelGap;
         var view = new EndpointMeterView(pinCount, SignalMonitorHue(mode, endpoint, outputSide))
         {
-            Width = VstEndpointCardWidth - 48
+            Width = VstEndpointCardWidth - labelEdge - EndpointMeterOuterInset
         };
-        Canvas.SetLeft(view, x + (outputSide ? 44 : 8));
+        Canvas.SetLeft(view, x + (outputSide ? labelEdge : EndpointMeterOuterInset));
         Canvas.SetTop(view, VstCardPinY(y, 0) - EndpointMeterView.RowHeight / 2);
         if (_settings.NodeVuMetersEnabled)
         {

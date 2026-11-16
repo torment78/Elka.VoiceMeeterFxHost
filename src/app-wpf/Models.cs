@@ -511,6 +511,9 @@ internal sealed class PluginNodeSnapshot
 {
     public string WorkspaceId { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "VST";
+    public string CustomName { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayName => string.IsNullOrWhiteSpace(CustomName) ? Name : CustomName.Trim();
     public int PluginIndex { get; set; } = -1;
     public string PluginFormat { get; set; } = string.Empty;
     public string PluginIdentifier { get; set; } = string.Empty;

@@ -1,5 +1,28 @@
 # Development Changes
 
+## 0.8.3.28 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Custom VST node names:** right-click a VST, open **Properties**, edit the
+  top **Node name** field and click **Apply**. Leave it blank to use the original
+  plugin name again. Cancel leaves the node name unchanged.
+- **Consistent labels:** custom names appear on the canvas, loaded-VST list,
+  group members, widget tiles/drawers and hotkey target list. Open group windows
+  update their labels immediately. Hovering a node label also shows the original
+  plugin name, and long names are trimmed visually rather than enlarging cards.
+- **Plugin identity stays separate:** the VST editor and Properties window
+  titles keep the original plugin name. Plugin matching, IDs and routing are
+  unchanged. Applying only a name change does not reload the VST or read/write
+  its settings.
+- **Persistence and Back:** names survive settings save/restore, plugin reload,
+  missing-plugin recovery, group copying and Back history. Older setups without
+  a custom name keep their original labels.
+
+Native audio processing, callback scheduling, gain/delay, plugin hosting and
+DSP refresh rates are unchanged.
+
 ## 0.8.3.27 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

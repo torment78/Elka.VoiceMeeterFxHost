@@ -130,6 +130,17 @@ internal sealed class PluginGroupPropertiesWindow : Window
     public int SidechainOutputPins { get; private set; }
     public List<int> MemberSlots { get; private set; }
 
+    internal void RefreshNodeName(PluginNodeSnapshot node)
+    {
+        if (_nodeVisualElements.TryGetValue(node.Slot, out var elements) &&
+            elements.OfType<Border>().FirstOrDefault()?.Child is StackPanel stack &&
+            stack.Children.OfType<TextBlock>().FirstOrDefault() is { } label)
+        {
+            label.Text = node.DisplayName;
+            label.ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}";
+        }
+    }
+
     internal void OnHistoryRestored(IReadOnlyList<PluginNodeSnapshot>? members)
     {
         if (members is null)
@@ -540,7 +551,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
             {
                 new TextBlock
                 {
-                    Text = node.Name,
+                    Text = node.DisplayName,
+                    ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                     FontWeight = FontWeights.SemiBold,
                     Foreground = BrushFrom("#E7EEF0"),
                     TextTrimming = TextTrimming.CharacterEllipsis

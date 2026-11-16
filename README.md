@@ -28,9 +28,16 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.27 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.27).**
+**[0.8.3.28 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.28).**
 
-This update adds **Menu > Settings > Canvas Controls**. Box Selection starts on;
+This update adds **custom VST node names**. Right-click a VST, open **Properties**,
+edit **Node name**, and click **Apply**. The canvas, loaded-VST list, group cards,
+widget and hotkey target list use the new label. Plugin editor titles keep the
+original VST name. Leave the field blank to restore the original label. Names
+survive saves, reloads, group copies and Back history; renaming does not reload
+the plugin or change audio processing.
+
+**Menu > Settings > Canvas Controls** remains available. Box Selection starts on;
 Automatic Grouping and Automatic Routing start off. Drag empty canvas to select
 nodes and cables, then use the selection menu. **Ctrl-click selects, Enter
 connects, and Create Group groups.** Existing wiring is preserved when grouping.
@@ -53,9 +60,9 @@ The preceding development improvements remain available:
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.27](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.28](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release changes canvas grouping/wiring commands, not native audio processing.
+for use. This release changes node labels, not native audio processing or routing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**

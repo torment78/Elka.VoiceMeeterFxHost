@@ -238,6 +238,7 @@ public partial class MainWindow
                 if (node.Enabled != saved.Enabled && !node.MissingPlugin) _engine.SetPluginNodePowered(node.Slot, saved.Enabled);
                 if (node.Bypassed != saved.Bypassed && !node.MissingPlugin) _engine.SetPluginNodeBypassed(node.Slot, saved.Bypassed);
                 node.Name = saved.Name; node.X = saved.X; node.Y = saved.Y;
+                node.CustomName = saved.CustomName;
                 node.Enabled = saved.Enabled; node.Bypassed = saved.Bypassed;
                 node.BypassPowerLinked = saved.BypassPowerLinked; node.PinsCollapsed = saved.PinsCollapsed;
                 node.LoadSettingsOnce = saved.LoadSettingsOnce;

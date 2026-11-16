@@ -7497,6 +7497,7 @@ private void RefreshEndpointButtonSelection()
         restored.WorkspaceId = saved.WorkspaceId;
         restored.InstanceId = saved.InstanceId;
         restored.Name = string.IsNullOrWhiteSpace(saved.Name) ? restored.Name : saved.Name;
+        restored.CustomName = saved.CustomName;
         restored.X = saved.X;
         restored.Y = saved.Y;
         restored.Mode = saved.Mode == CallbackMode.None ? CallbackMode.Input : saved.Mode;
@@ -7771,6 +7772,7 @@ private void RefreshEndpointButtonSelection()
         {
             WorkspaceId = node.WorkspaceId,
             Name = node.Name,
+            CustomName = node.CustomName,
             PluginIndex = node.PluginIndex,
             PluginFormat = node.PluginFormat,
             PluginIdentifier = node.PluginIdentifier,
@@ -7881,6 +7883,7 @@ private void RefreshEndpointButtonSelection()
             grid.Children.Add(new TextBlock
             {
                 Text = PluginListLabel(node),
+                ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                 Foreground = IsPluginFailed(node) ? FailureBrush : (Brush)FindResource("TextBrush"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center
@@ -9692,7 +9695,8 @@ private void RefreshEndpointButtonSelection()
             border.Child = stack;
             stack.Children.Add(new TextBlock
             {
-                Text = node.Name,
+                Text = node.DisplayName,
+                ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}",
                 FontWeight = FontWeights.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
@@ -9865,7 +9869,14 @@ private void RefreshEndpointButtonSelection()
         };
         AuxiliaryWindowPlacement.SetKey(editor, $"NodeProperties:{_kind}:{node.InstanceId}:{node.PluginIdentifier}");
 
-        if (editor.ShowDialog() == true && (editor.HasLayoutChanges || editor.HasSandboxModeChanges || !editor.LoadSettingsOptionChanged))
+        if (editor.ShowDialog() == true) ApplyNodeProperties(node, editor);
+    }
+
+    private void ApplyNodeProperties(PluginNodeSnapshot node, PluginNodePropertiesWindow editor)
+    {
+        var nameChanged = node.CustomName != editor.CustomName;
+        node.CustomName = editor.CustomName;
+        if (editor.HasLayoutChanges || editor.HasSandboxModeChanges)
         {
             ReconfigurePluginNode(
                 node,
@@ -9874,6 +9885,14 @@ private void RefreshEndpointButtonSelection()
                 editor.OutputPins,
                 editor.MainInputLayoutId,
                 editor.OutputLayoutId, sandboxMode: editor.SandboxMode);
+        }
+        if (nameChanged)
+        {
+            foreach (var groupEditor in OwnedWindows.OfType<PluginGroupPropertiesWindow>())
+                groupEditor.RefreshNodeName(node);
+            RebuildVstNodeList();
+            RebuildRoutingCanvas();
+            QueueSave();
         }
     }
 
@@ -10141,6 +10160,7 @@ private void RefreshEndpointButtonSelection()
 
             copy.InstanceId = instanceId;
             copy.Name = UniquePluginNodeName(member.Name);
+            copy.CustomName = member.CustomName;
             copy.PluginFormat = member.PluginFormat;
             copy.PluginIdentifier = member.PluginIdentifier;
             copy.PluginStateBase64 = member.PluginStateBase64;
@@ -10835,7 +10855,7 @@ private void RefreshEndpointButtonSelection()
             Node = node,
             Pin = pinIndex,
             Point = new Point(x, y),
-            Label = $"{node.Name} {(input ? "in" : "out")} {labelText}"
+            Label = $"{node.DisplayName} {(input ? "in" : "out")} {labelText}"
         };
         _pinPositions[PinPositionKey(pinInfo)] = pinInfo.Point;
         var nodeHueStroke = HueStrokeBrush(SourceHueKeyForNode(node.Slot, []));
@@ -10917,7 +10937,7 @@ private void RefreshEndpointButtonSelection()
                 Point = new Point(
                     input ? VstCardInputPinX(node.X) : VstCardOutputPinX(node.X, VstNodeWidth),
                     VstCardPinY(node.Y, row)),
-                Label = $"{node.Name} {(input ? "in" : "out")} {(input ? NodeInputPinLabel(node, pin) : NodeOutputPinLabel(node, pin))}"
+                Label = $"{node.DisplayName} {(input ? "in" : "out")} {(input ? NodeInputPinLabel(node, pin) : NodeOutputPinLabel(node, pin))}"
             };
             _pinPositions[PinPositionKey(pinInfo)] = pinInfo.Point;
         }

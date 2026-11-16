@@ -235,7 +235,7 @@ public partial class MainWindow
     {
         if (_editorHotkeysWindow is { } existing) { existing.Activate(); return; }
         var targets = _settings.PluginNodes.Where(n => !n.MissingPlugin).OrderBy(n => n.InstanceId)
-            .Select(n => new EditorHotkeyTarget($"ID {n.InstanceId} / {n.Name}", n.Name, n.InstanceId, string.Empty, n.PluginIdentifier))
+            .Select(n => new EditorHotkeyTarget($"ID {n.InstanceId} / {n.DisplayName}", n.DisplayName, n.InstanceId, string.Empty, n.PluginIdentifier))
             .Concat(_settings.PluginGroups.OrderBy(g => g.Name).Select(g => new EditorHotkeyTarget($"Group / {g.Name}", g.Name, -1, g.Id, string.Empty)))
             .Concat(EndpointHotkeyTargets()).ToArray();
         _editorHotkeys ??= new GlobalEditorHotkeys(new WindowInteropHelper(this).EnsureHandle());

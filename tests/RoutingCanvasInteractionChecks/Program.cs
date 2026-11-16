@@ -10,6 +10,7 @@ using Elka.VoiceMeeterFxHost.App;
 
 internal static class CanvasInteractionChecks
 {
+    internal static int NativeAudioAttempts { get; private set; }
     [STAThread]
     private static int Main(string[] args)
     {
@@ -19,7 +20,10 @@ internal static class CanvasInteractionChecks
         NativeLibrary.SetDllImportResolver(typeof(MainWindow).Assembly, (name, _, _) =>
         {
             if (name.StartsWith("Elka", StringComparison.Ordinal))
+            {
+                NativeAudioAttempts++;
                 throw new DllNotFoundException("Native audio is disabled in canvas interaction tests.");
+            }
             return IntPtr.Zero;
         });
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -72,6 +76,7 @@ internal static class CanvasInteractionChecks
             window.Show();
             if (args.Contains("--plugin-browser")) { window.CheckPluginBrowser(); return 0; }
             if (args.Contains("--canvas-controls")) { window.CheckCanvasControls(); return 0; }
+            if (args.Contains("--node-names")) { window.CheckNodeNames(); return 0; }
             if (args.Contains("--canvas-states")) { window.CheckCanvasStateVisuals(); return 0; }
             if (args.Contains("--output-boost")) { window.CheckOutputBoostUi(); return 0; }
             if (args.Contains("--rollback")) { window.CheckRollbackUi(); return 0; }
@@ -89,6 +94,7 @@ internal static class CanvasInteractionChecks
             window.CheckGroupChainUi();
             window.CheckQuickConnectionChains();
             window.CheckCanvasControls();
+            window.CheckNodeNames();
             window.CheckTrayMenuTheme();
             window.CheckFloatingPanel();
             window.CheckWidgetTileStates();

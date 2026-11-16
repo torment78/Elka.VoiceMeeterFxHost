@@ -65,7 +65,7 @@ public partial class MainWindow
         selected ? (Brush)FindResource("VolumeAccentBrush") :
         PluginStateVisuals.Outline(HueStrokeBrush(GroupDisplayHue(group)) ?? (Brush)FindResource("RouteAccentBrush"),
             PluginStateVisuals.GroupState(GroupMembers(group).Select(node => (node.Enabled, node.Bypassed))));
-    private string PluginListLabel(PluginNodeSnapshot node) => IsPluginFailed(node) ? $"{node.Name}\nFAILED - Reload" : node.Name;
+    private string PluginListLabel(PluginNodeSnapshot node) => IsPluginFailed(node) ? $"{node.DisplayName}\nFAILED - Reload" : node.DisplayName;
 
     private void ShowPluginFailureState()
     {
@@ -116,7 +116,7 @@ public partial class MainWindow
         var failed = _settings.PluginNodes.Where(IsPluginFailed).Select(node =>
         {
             var slot = node.Slot;
-            return new TrayReloadItem(node.Name, node.InstanceId, () => PostTrayAction(() =>
+            return new TrayReloadItem(node.DisplayName, node.InstanceId, () => PostTrayAction(() =>
             {
                 if (!_isShuttingDown && node.Slot == slot && _settings.PluginNodes.Contains(node) && IsPluginFailed(node))
                     ReloadPluginNode(node);

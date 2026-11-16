@@ -201,7 +201,7 @@ Right-click a VST node for its stable `ID` and available actions:
 - **Info** shows usable VBAN-TEXT commands and every host-automatable parameter
   exposed by that plugin instance.
 - **Bypass** passes dry audio around the node while leaving the plugin loaded.
-- **Properties** changes main input, sidechain input, and output pin layouts.
+- **Properties** changes the node name and main input, sidechain input, and output pin layouts.
 - **Add Stereo Sidechain Input** adds `SL` and `SR` when supported.
 - **Turn Off** stops plugin processing. A powered-off node blocks its path unless
   bypass is enabled.
@@ -213,6 +213,18 @@ black diagonal stripes.
 The loaded-node list has matching power, bypass, editor, and remove controls.
 Selecting a row highlights its canvas node, and selecting the node highlights
 its list row.
+
+### Custom Node Names
+
+Open a VST node's **Properties**, change **Node name** in the top row and click
+**Apply**. This label follows the node on the canvas, loaded-VST list, group
+editor, widget and hotkey target list. The VST editor and Properties window
+titles retain the original plugin name. Hover the canvas/list label to see both.
+
+Clear the field and click **Apply** to use the original name again. A name-only
+change does not reload the plugin, read its settings or change its routing.
+Custom names are saved with the setup, preserved on reload and group copy, and
+included in the canvas **Back** history. Existing setups need no changes.
 
 ## VST Groups
 

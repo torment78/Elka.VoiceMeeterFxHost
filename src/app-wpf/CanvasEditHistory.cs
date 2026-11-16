@@ -20,7 +20,7 @@ internal sealed class CanvasEditSnapshot
     // compare multi-MB plugin state, nor turn autosave captures into undo actions.
     public string EditKey() => JsonSerializer.Serialize(new
     {
-        Nodes = Nodes.Select(n => new { n.WorkspaceId, n.InstanceId, n.Name, n.PluginIdentifier, n.Mode,
+        Nodes = Nodes.Select(n => new { n.WorkspaceId, n.InstanceId, n.Name, n.CustomName, n.PluginIdentifier, n.Mode,
             n.X, n.Y, n.MainInputPins, n.SidechainInputPins, n.OutputPins, n.MainInputLayoutId, n.OutputLayoutId,
             n.Enabled, n.Bypassed, n.BypassPowerLinked, n.PinsCollapsed, n.LoadSettingsOnce, n.Sandboxed, n.SandboxMode }),
         Groups = Groups.Select(g => new { g.Id, g.Name, g.Mode, g.X, g.Y, g.InputPins, g.OutputPins,
@@ -88,6 +88,7 @@ internal sealed class CanvasEditHistory
             if (before.PluginEdits.GetValueOrDefault(node.WorkspaceId) != after.PluginEdits.GetValueOrDefault(node.WorkspaceId))
                 return $"{node.Name} settings";
             var previous = before.Nodes.First(n => n.WorkspaceId == node.WorkspaceId);
+            if (previous.CustomName != node.CustomName) return $"Rename {previous.DisplayName}";
             if (previous.X != node.X || previous.Y != node.Y) return $"Move {node.Name}";
         }
         if (JsonSerializer.Serialize(before.Connections) != JsonSerializer.Serialize(after.Connections)) return "Cable connections";

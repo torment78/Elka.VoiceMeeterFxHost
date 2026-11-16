@@ -22,7 +22,7 @@ public partial class MainWindow
         {
             var hue = FindNodeRouteHue(node.Slot, []);
             var stroke = (HueStrokeBrush(hue) as SolidColorBrush)?.Color ?? Color.FromRgb(240, 138, 62);
-            return new FloatingPluginTarget(FloatingNodeKey(node), node.Name, $"ID {node.InstanceId}", stroke,
+            return new FloatingPluginTarget(FloatingNodeKey(node), node.DisplayName, $"ID {node.InstanceId}", stroke,
                 !node.MissingPlugin, [], node.Bypassed, node.Enabled, node.Mode, Fill(hue, stroke), WidgetLevelMapping.Node(node));
         }
         FloatingPluginTarget GroupTarget(PluginGroupSnapshot group)

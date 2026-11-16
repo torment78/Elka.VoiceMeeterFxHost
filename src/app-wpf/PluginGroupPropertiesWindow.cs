@@ -36,6 +36,9 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly Action<PluginNodeSnapshot, bool> _setPluginNodePowerLinked;
     private readonly Action<PluginNodeSnapshot, bool> _setLoadSettingsOnce;
     private readonly Action<PluginNodeSnapshot> _reloadSavedSettings;
+    private readonly Func<PluginNodeSnapshot?, (Brush? Stroke, Brush? Fill)> _routePalette;
+    private readonly Dictionary<int, (Brush? Stroke, Brush? Fill)> _nodeRoutePalettes = [];
+    private (Brush? Stroke, Brush? Fill) _groupRoutePalette;
     private readonly Dictionary<int, Point> _originalNodePositions;
     private readonly List<CanvasConnectionSnapshot> _originalConnections;
     private readonly TextBox _nameTextBox = new();
@@ -44,6 +47,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private readonly CheckBox _sidechainPortsCheckBox = new();
     private readonly ComboBox _sidechainInputPinsCombo = new();
     private readonly Canvas _canvas = new();
+    private Border? _canvasBorder;
     private ScrollViewer? _canvasScrollViewer;
     private readonly Dictionary<string, Point> _pinPositions = [];
     private readonly Dictionary<string, CanvasPin> _pinInfos = [];
@@ -79,7 +83,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Action<PluginNodeSnapshot, bool> setPluginNodePinsCollapsed,
         Action<PluginNodeSnapshot, bool>? setPluginNodePowerLinked = null,
         Action<PluginNodeSnapshot, bool>? setLoadSettingsOnce = null,
-        Action<PluginNodeSnapshot>? reloadSavedSettings = null)
+        Action<PluginNodeSnapshot>? reloadSavedSettings = null,
+        Func<PluginNodeSnapshot?, (Brush? Stroke, Brush? Fill)>? routePalette = null)
     {
         _group = group;
         _members = members.ToList();
@@ -96,6 +101,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         _setPluginNodePowerLinked = setPluginNodePowerLinked ?? ((node, linked) => node.BypassPowerLinked = linked);
         _setLoadSettingsOnce = setLoadSettingsOnce ?? ((node, enabled) => node.LoadSettingsOnce = enabled);
         _reloadSavedSettings = reloadSavedSettings ?? (_ => { });
+        _routePalette = routePalette ?? (_ => (null, null));
         _originalNodePositions = _members.ToDictionary(static node => node.Slot, static node => new Point(node.X, node.Y));
         _originalConnections = GroupConnections().Select(CloneConnection).ToList();
 
@@ -139,6 +145,61 @@ internal sealed class PluginGroupPropertiesWindow : Window
             label.Text = node.DisplayName;
             label.ToolTip = node.DisplayName == node.Name ? node.Name : $"{node.DisplayName}\n{node.Name}";
         }
+    }
+
+    internal void RefreshRouteHues()
+    {
+        ReadRoutePalettes();
+        // Keep the editor's visuals, selection, drag state and scroll position intact.
+        foreach (var element in _canvas.Children.OfType<FrameworkElement>())
+        {
+            switch (element)
+            {
+                case Border { Tag: PluginNodeSnapshot node } card:
+                    card.Background = NodeBrush(node);
+                    card.BorderBrush = _selectedNodeSlot == node.Slot ? BrushFrom("#E2B84A") : NodeOutlineBrush(node);
+                    break;
+                case Ellipse { Tag: CanvasPin pin } port:
+                    port.Fill = pin.Node is { } member ? NodeBrush(member) : _groupRoutePalette.Fill ?? BrushFrom("#0E1B1F");
+                    port.Stroke = PinStroke(pin);
+                    break;
+                case TextBlock { Tag: string kind } title when kind is PinGroupInput or PinGroupOutput:
+                    title.Foreground = GroupPortStroke(kind == PinGroupInput);
+                    break;
+                case Path { Tag: CanvasConnectionSnapshot connection } wire:
+                    wire.Stroke = ConnectionKey(connection) == _selectedConnectionKey ? BrushFrom("#E2B84A") : ConnectionStroke(connection);
+                    break;
+            }
+        }
+    }
+
+    private void ReadRoutePalettes()
+    {
+        _groupRoutePalette = _routePalette(null);
+        _nodeRoutePalettes.Clear();
+        foreach (var node in _members) _nodeRoutePalettes[node.Slot] = _routePalette(node);
+        var background = BrushFrom("#081316");
+        var outline = BrushFrom("#2C3E43");
+        if (_groupRoutePalette.Stroke is SolidColorBrush accent)
+        {
+            background = Tint(background, accent, 0.10);
+            outline = Tint(outline, accent, 0.25);
+        }
+        _canvas.Background = background;
+        if (_canvasBorder is not null)
+        {
+            _canvasBorder.Background = background;
+            _canvasBorder.BorderBrush = outline;
+        }
+    }
+
+    private static SolidColorBrush Tint(SolidColorBrush background, SolidColorBrush accent, double amount)
+    {
+        var a = background.Color; var b = accent.Color;
+        var brush = new SolidColorBrush(Color.FromRgb((byte)(a.R + (b.R - a.R) * amount),
+            (byte)(a.G + (b.G - a.G) * amount), (byte)(a.B + (b.B - a.B) * amount)));
+        brush.Freeze();
+        return brush;
     }
 
     internal void OnHistoryRestored(IReadOnlyList<PluginNodeSnapshot>? members)
@@ -277,7 +338,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
-        var canvasBorder = new Border
+        var canvasBorder = _canvasBorder = new Border
         {
             BorderBrush = BrushFrom("#2C3E43"),
             BorderThickness = new Thickness(1),
@@ -407,6 +468,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
     private void RebuildCanvas()
     {
+        ReadRoutePalettes();
         UpdateCanvasExtent();
         _canvas.Children.Clear();
         _pinPositions.Clear();
@@ -426,7 +488,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         {
             if (TryGetConnectionPoints(connection, out var start, out var end))
             {
-                var path = CreateWirePath(start, end, selected: ConnectionKey(connection) == _selectedConnectionKey);
+                var path = CreateWirePath(start, end, selected: ConnectionKey(connection) == _selectedConnectionKey,
+                    normalStroke: ConnectionStroke(connection));
                 path.Tag = connection;
                 path.ToolTip = "Click to select. Press Delete to disconnect.";
                 path.MouseLeftButtonDown += Connection_MouseLeftButtonDown;
@@ -472,7 +535,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
         var title = new TextBlock
         {
             Text = left ? "Group In" : "Group Out",
-            Foreground = left ? BrushFrom("#E2B84A") : BrushFrom("#55C27A"),
+            Foreground = GroupPortStroke(left),
+            Tag = left ? PinGroupInput : PinGroupOutput,
             FontWeight = FontWeights.SemiBold,
             FontSize = 11,
             IsHitTestVisible = false
@@ -494,8 +558,8 @@ internal sealed class PluginGroupPropertiesWindow : Window
             {
                 Width = 12,
                 Height = 12,
-                Fill = BrushFrom("#0E1B1F"),
-                Stroke = left ? BrushFrom("#E2B84A") : BrushFrom("#55C27A"),
+                Fill = _groupRoutePalette.Fill ?? BrushFrom("#0E1B1F"),
+                Stroke = PinStroke(canvasPin),
                 StrokeThickness = 2,
                 Cursor = Cursors.Hand,
                 Tag = canvasPin
@@ -724,7 +788,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
             Width = 12,
             Height = 12,
             Fill = NodeBrush(node),
-            Stroke = input ? BrushFrom("#E2B84A") : node.MissingPlugin ? BrushFrom("#E15F5F") : BrushFrom("#55C27A"),
+            Stroke = PinStroke(pin),
             StrokeThickness = 2,
             Cursor = Cursors.Hand,
             Tag = pin
@@ -1095,7 +1159,7 @@ internal sealed class PluginGroupPropertiesWindow : Window
 
         if (_wirePreview is null)
         {
-            _wirePreview = CreateWirePath(start, current, selected: false);
+            _wirePreview = CreateWirePath(start, current, selected: false, normalStroke: PinStroke(_wireStart));
             _wirePreview.StrokeDashArray = new DoubleCollection { 6, 4 };
             _canvas.Children.Add(_wirePreview);
         }
@@ -1394,12 +1458,12 @@ internal sealed class PluginGroupPropertiesWindow : Window
                _pinPositions.TryGetValue(toKey, out end);
     }
 
-    private static Path CreateWirePath(Point start, Point end, bool selected)
+    private static Path CreateWirePath(Point start, Point end, bool selected, Brush? normalStroke = null)
     {
         return new Path
         {
             Data = CreateWireGeometry(start, end),
-            Stroke = selected ? BrushFrom("#E2B84A") : BrushFrom("#55C27A"),
+            Stroke = selected ? BrushFrom("#E2B84A") : normalStroke ?? BrushFrom("#55C27A"),
             StrokeThickness = selected ? 4.2 : 2.4,
             Opacity = selected ? 0.98 : 0.72,
             StrokeStartLineCap = PenLineCap.Round,
@@ -1667,14 +1731,27 @@ internal sealed class PluginGroupPropertiesWindow : Window
         };
     }
 
-    private static Brush NodeBrush(PluginNodeSnapshot node)
+    private Brush NodeBrush(PluginNodeSnapshot node)
     {
         return node.MissingPlugin ? PluginStateVisuals.MissingBackground :
-            PluginStateVisuals.Background(BrushFrom("#102327"), PluginStateVisuals.State(node.Enabled, node.Bypassed));
+            PluginStateVisuals.Background(_nodeRoutePalettes.GetValueOrDefault(node.Slot).Fill ?? BrushFrom("#102327"),
+                PluginStateVisuals.State(node.Enabled, node.Bypassed));
     }
 
-    private static Brush NodeOutlineBrush(PluginNodeSnapshot node) => node.MissingPlugin ? BrushFrom("#E15F5F") :
-        PluginStateVisuals.Outline(BrushFrom("#55C27A"), PluginStateVisuals.State(node.Enabled, node.Bypassed));
+    private Brush NodeOutlineBrush(PluginNodeSnapshot node) => node.MissingPlugin ? BrushFrom("#E15F5F") :
+        PluginStateVisuals.Outline(_nodeRoutePalettes.GetValueOrDefault(node.Slot).Stroke ?? BrushFrom("#55C27A"),
+            PluginStateVisuals.State(node.Enabled, node.Bypassed));
+
+    private Brush GroupPortStroke(bool input) => _groupRoutePalette.Stroke ?? BrushFrom(input ? "#E2B84A" : "#55C27A");
+
+    private Brush PinStroke(CanvasPin pin) => pin.Node is { } node
+        ? node.MissingPlugin ? BrushFrom("#E15F5F") : _nodeRoutePalettes.GetValueOrDefault(node.Slot).Stroke ??
+            BrushFrom(pin.IsInput ? "#E2B84A" : "#55C27A")
+        : pin.Pin >= GroupSidechainPinBase ? BrushFrom("#E2B84A") : GroupPortStroke(pin.Kind == PinGroupInput);
+
+    private Brush ConnectionStroke(CanvasConnectionSnapshot connection) =>
+        (connection.Kind == ConnectionGroupInputToNode ? _groupRoutePalette.Stroke :
+            _nodeRoutePalettes.GetValueOrDefault(connection.FromSlot).Stroke) ?? BrushFrom("#55C27A");
 
     private static SolidColorBrush BrushFrom(string hex)
     {

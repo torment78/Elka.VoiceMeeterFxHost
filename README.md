@@ -28,9 +28,16 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.28 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.28).**
+**[0.8.3.29 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.29).**
 
-This update adds **custom VST node names**. Right-click a VST, open **Properties**,
+This update fixes **routing-hue consistency**. Reverse-order Ctrl-click
+connections inherit the connected chain's color, and input-connected VST
+outlines match their source hue. Groups, their internal VSTs, ports and cables
+share the chain palette, with a subtle matching canvas tint. Open group editors
+recolor in place. Selection and bypass/off/failure warnings remain distinct;
+audio cable direction and processing are unchanged.
+
+**Custom VST node names** remain available. Right-click a VST, open **Properties**,
 edit **Node name**, and click **Apply**. The canvas, loaded-VST list, group cards,
 widget and hotkey target list use the new label. Plugin editor titles keep the
 original VST name. Leave the field blank to restore the original label. Names
@@ -60,9 +67,9 @@ The preceding development improvements remain available:
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.28](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.29](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release changes node labels, not native audio processing or routing.
+for use. This release changes routing colors, not native audio processing or routing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**

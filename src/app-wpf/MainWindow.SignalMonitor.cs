@@ -111,7 +111,9 @@ public partial class MainWindow
                      c.ToMode == mode && c.ToChannel >= endpoint.Range.Start && c.ToChannel <= endpoint.Range.End &&
                      c.Kind is ConnectionEndpointToEndpoint or ConnectionNodeToEndpoint or ConnectionGroupOutputToEndpoint))
         {
-            var hue = FindConnectionRouteHue(connection, []);
+            if (connection.Kind == ConnectionEndpointToEndpoint &&
+                IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _)) continue;
+            var hue = ConnectionHueKey(connection);
             if (!string.IsNullOrEmpty(hue)) return hue;
         }
         return own;
@@ -119,7 +121,7 @@ public partial class MainWindow
 
     private string? GroupDisplayHue(PluginGroupSnapshot group)
     {
-        foreach (var connection in _settings.CanvasConnections.Where(c => c.ToGroupId == group.Id &&
+        foreach (var connection in _settings.CanvasConnections.Where(c => c.ToGroupId == group.Id && c.ToPin < GroupSidechainPinBase &&
                      c.Kind is ConnectionEndpointToGroupInput or ConnectionNodeToGroupInput or ConnectionGroupOutputToGroupInput))
         {
             var hue = FindConnectionRouteHue(connection, []);
@@ -127,14 +129,17 @@ public partial class MainWindow
         }
         foreach (var node in GroupMembers(group))
         {
-            var hue = FindNodeRouteHue(node.Slot, []);
+            var hue = FindUpstreamNodeRouteHue(node.Slot, []);
             if (!string.IsNullOrEmpty(hue)) return hue;
         }
-        return null;
+        return FindConnectedRouteHue($"group:{group.Id}");
     }
 
+    private string? FindNodeRouteHue(int slot, HashSet<string> visited) =>
+        FindUpstreamNodeRouteHue(slot, visited) ?? FindConnectedRouteHue($"node:{slot}");
+
     // Follow group ports as well as VST cables, with one shared cycle guard for the entire traversal.
-    private string? FindNodeRouteHue(int slot, HashSet<string> visited)
+    private string? FindUpstreamNodeRouteHue(int slot, HashSet<string> visited)
     {
         if (!visited.Add($"node:{slot}")) return null;
         var node = _settings.PluginNodes.FirstOrDefault(n => n.Slot == slot);
@@ -160,13 +165,13 @@ public partial class MainWindow
             case ConnectionNodeToNode:
             case ConnectionNodeToEndpoint:
             case ConnectionNodeToGroupInput:
-                return FindNodeRouteHue(connection.FromSlot, visited);
+                return FindUpstreamNodeRouteHue(connection.FromSlot, visited);
             case ConnectionGroupOutputToEndpoint:
             case ConnectionGroupOutputToNode:
             case ConnectionGroupOutputToGroupInput:
                 if (!visited.Add($"group-out:{connection.FromGroupId}:{connection.FromPin}")) return null;
                 return GroupById(connection.FromGroupId) is { } group && FindGroupOutputMapping(group, connection.FromPin) is { } mapping
-                    ? FindNodeRouteHue(mapping.FromSlot, visited) : null;
+                    ? FindUpstreamNodeRouteHue(mapping.FromSlot, visited) : null;
             case ConnectionGroupInputToNode:
                 if (!visited.Add($"group-in:{connection.FromGroupId}:{connection.FromPin}")) return null;
                 foreach (var incoming in _settings.CanvasConnections.Where(c =>
@@ -180,5 +185,73 @@ public partial class MainWindow
             default:
                 return null;
         }
+    }
+
+    private string? FindConnectedRouteHue(string start)
+    {
+        if (_settings.EndpointRouteHues.Count == 0) return null;
+        var nodes = _settings.PluginNodes.ToDictionary(node => node.Slot);
+        var links = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
+        void Link(string a, string b)
+        {
+            if (!links.TryGetValue(a, out var from)) links[a] = from = [];
+            if (!links.TryGetValue(b, out var to)) links[b] = to = [];
+            from.Add(b); to.Add(a);
+        }
+        void Source(string target, CanvasConnectionSnapshot connection)
+        {
+            if (!IsInputPatchBypassChannel(connection.FromMode, connection.FromChannel, out _) &&
+                EndpointRouteHueKey(connection.FromMode, connection.FromChannel) is { Length: > 0 } hue)
+                sources.TryAdd(target, hue);
+        }
+
+        // This is a visual-only fallback. Do not cross sidechains or shared destination buses.
+        // Group membership also gives unwired members the group's palette without adding cables.
+        foreach (var group in _settings.PluginGroups)
+            foreach (var slot in group.MemberSlots.Where(nodes.ContainsKey))
+                Link($"group:{group.Id}", $"node:{slot}");
+        foreach (var connection in _settings.CanvasConnections)
+        {
+            if (connection.Kind is ConnectionEndpointToNode or ConnectionNodeToNode or
+                ConnectionGroupOutputToNode or ConnectionGroupInputToNode)
+            {
+                if (!nodes.TryGetValue(connection.ToSlot, out var node) || IsSidechainVisualInputPin(node, connection.ToPin))
+                    continue;
+            }
+            switch (connection.Kind)
+            {
+                case ConnectionEndpointToNode:
+                    Source($"node:{connection.ToSlot}", connection);
+                    break;
+                case ConnectionEndpointToGroupInput when connection.ToPin < GroupSidechainPinBase:
+                    Source($"group:{connection.ToGroupId}", connection);
+                    break;
+                case ConnectionNodeToNode:
+                    Link($"node:{connection.FromSlot}", $"node:{connection.ToSlot}");
+                    break;
+                case ConnectionNodeToGroupInput when connection.ToPin < GroupSidechainPinBase:
+                    Link($"node:{connection.FromSlot}", $"group:{connection.ToGroupId}");
+                    break;
+                case ConnectionGroupOutputToNode:
+                case ConnectionGroupInputToNode when connection.FromPin < GroupSidechainPinBase:
+                    Link($"group:{connection.FromGroupId}", $"node:{connection.ToSlot}");
+                    break;
+                case ConnectionGroupOutputToGroupInput when connection.ToPin < GroupSidechainPinBase:
+                    Link($"group:{connection.FromGroupId}", $"group:{connection.ToGroupId}");
+                    break;
+            }
+        }
+        var visited = new HashSet<string>(StringComparer.Ordinal) { start };
+        var pending = new Queue<string>();
+        pending.Enqueue(start);
+        while (pending.TryDequeue(out var current))
+        {
+            if (sources.TryGetValue(current, out var hue)) return hue;
+            if (links.TryGetValue(current, out var neighbors))
+                foreach (var neighbor in neighbors)
+                    if (visited.Add(neighbor)) pending.Enqueue(neighbor);
+        }
+        return null;
     }
 }

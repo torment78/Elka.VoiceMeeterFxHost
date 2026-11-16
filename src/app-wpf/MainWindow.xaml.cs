@@ -4741,7 +4741,7 @@ private void RefreshEndpointButtonSelection()
 
     private Brush NodeOutlineBrush(PluginNodeSnapshot node)
     {
-        var normal = (Brush)FindResource("RouteAccentBrush");
+        var normal = HueStrokeBrush(SourceHueKeyForNode(node.Slot, [])) ?? (Brush)FindResource("RouteAccentBrush");
         return node.MissingPlugin ? normal : PluginStateVisuals.Outline(normal, PluginStateVisuals.State(node.Enabled, node.Bypassed));
     }
 
@@ -8357,6 +8357,8 @@ private void RefreshEndpointButtonSelection()
         RefreshSignalMonitors();
         RefreshEditorHotkeys();
         RefreshFloatingPluginPanel();
+        foreach (var editor in OwnedWindows.OfType<PluginGroupPropertiesWindow>())
+            editor.RefreshRouteHues();
         StopEndpointMeterRendering();
         if (_workspaceView == WorkspaceView.Channels)
         {
@@ -9922,7 +9924,12 @@ private void RefreshEndpointButtonSelection()
             SetNodePinsCollapsed,
             SetNodePowerLinked,
             SetNodeLoadSettingsOnce,
-            ReloadSavedPluginSettingsNow)
+            ReloadSavedPluginSettingsNow,
+            node =>
+            {
+                var hue = node is null ? GroupDisplayHue(group) : FindNodeRouteHue(node.Slot, []);
+                return (HueStrokeBrush(hue), HueFillBrush(hue));
+            })
         {
             Owner = this
         };

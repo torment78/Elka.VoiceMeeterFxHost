@@ -1,5 +1,30 @@
 # Development Changes
 
+## 0.8.3.29 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Reverse-connection routing hues:** a VST connected backwards into an
+  already-colored chain now inherits that chain's hue. Ctrl-click selection
+  order and cable direction no longer leave the added VST with default colors.
+  Existing upstream source hues take priority. This changes colors only, not
+  the direction or behavior of any audio cable.
+- **Matching VST outlines:** VSTs connected directly to an input now use the
+  source's routing hue for their outline as well as their background. The
+  loaded-VST list and widget use the same chain colors.
+- **Group colors:** groups, member VSTs, internal cables and ports follow the
+  chain's hue, with a subtle matching tint on the group editor's canvas. Open
+  group editors update their existing visuals immediately when the hue changes,
+  without moving nodes or resetting the editor's selection or scroll position.
+- **Clear visual states:** selection, bypass/off stripes and missing/failed
+  plugin warnings remain distinct. Clearing a routing hue restores the default
+  palette. Sidechain-only connections and unrelated chains sharing a destination
+  do not spread the fallback hue between them.
+
+Native audio processing, cable routing, callback scheduling, gain/delay, plugin
+hosting and DSP refresh rates are unchanged.
+
 ## 0.8.3.28 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

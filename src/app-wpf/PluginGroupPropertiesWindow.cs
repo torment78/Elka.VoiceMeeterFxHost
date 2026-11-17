@@ -1137,6 +1137,13 @@ internal sealed class PluginGroupPropertiesWindow : Window
     private ContextMenu BuildSelectionMenu()
     {
         var menu = new ContextMenu { PlacementTarget = _canvas };
+        menu.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key is not Key.Delete and not Key.Back) return;
+            GroupEditor_PreviewKeyDown(menu, e);
+            if (e.Handled) menu.IsOpen = false;
+        };
+        menu.Items.Add(CreateMenuItem("Delete Selection", () => DeleteSelection()));
         if (_selectedConnectionKeys.Count > 0)
             menu.Items.Add(CreateMenuItem("Remove Cables", () => DeleteSelectedConnection()));
         if (_selectedNodeSlots.Count > 0)
@@ -1476,16 +1483,15 @@ internal sealed class PluginGroupPropertiesWindow : Window
             return;
         }
 
-        if (DeleteSelectedConnection())
-        {
-            e.Handled = true;
-            return;
-        }
+        e.Handled = Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            ? DeleteSelectedConnection() : DeleteSelection();
+    }
 
-        if (DeleteSelectedNode())
-        {
-            e.Handled = true;
-        }
+    private bool DeleteSelection()
+    {
+        bool cablesRemoved = DeleteSelectedConnection();
+        bool nodesRemoved = DeleteSelectedNode();
+        return cablesRemoved || nodesRemoved;
     }
 
     private bool DeleteSelectedConnection()

@@ -1,5 +1,34 @@
 # Development Changes
 
+## 0.8.3.32 - Unsigned Dev
+
+Windows x64 development prerelease from the `dev` branch. The EXE, portable
+ZIP and Inno Setup installer are unsigned. The signed stable channel is unchanged.
+
+- **Smoother canvas with VU meters:** meter animation updates retained drawing
+  cells and peak markers without invalidating the canvas layout or rebuilding
+  geometry every frame. Compatible meter controls and their live levels survive
+  canvas rebuilds. Cable selection and deselection update their visuals in place.
+- **Cables follow during dragging:** endpoint cables, including collapsed-channel
+  anchors and direct-route badges, move with the cards before mouse release.
+  VST/group edge contacts no longer offset the dragged card, and new cable
+  previews use the current pin positions. A normal endpoint drop keeps the
+  existing meter and cable visuals alive.
+- **Delete the whole selection:** box-select VSTs, groups and cables, then press
+  Delete or choose **Delete Selection**. The selected items and cables attached
+  to deleted nodes are removed together. Unselected neighbours and hardware
+  endpoints stay. The group editor supports mixed-selection deletion too.
+  **Remove Cables** and Ctrl+Delete remain cable-only actions.
+
+Native audio processing, callback scheduling, gain/delay, plugin hosting and
+DSP/meter refresh rates are unchanged. Deletion uses the existing routing and
+node-removal operations; selecting and dragging do not change the audio graph.
+
+Verification includes the full isolated UI suite, 3,038 endpoint-meter checks
+and 151 routing-canvas checks. In a synthetic 16-by-8-channel meter test, drawing
+allocations fell from approximately 3.2 MB to 7 KB per frame. This is not a
+whole-application CPU or RAM guarantee; actual usage depends on the loaded setup.
+
 ## 0.8.3.31 - Unsigned Dev
 
 Windows x64 development prerelease from the `dev` branch. The EXE, portable

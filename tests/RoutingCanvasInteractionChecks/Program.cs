@@ -74,6 +74,8 @@ internal static class CanvasInteractionChecks
             window.Left = -20000;
             window.Top = -20000;
             window.Show();
+            if (args.Contains("--canvas-redraw")) { window.CheckCanvasRedraw(); return 0; }
+            if (args.Contains("--floating-panel")) { window.CheckFloatingPanel(); return 0; }
             if (args.Contains("--plugin-browser")) { window.CheckPluginBrowser(); return 0; }
             if (args.Contains("--canvas-controls")) { window.CheckCanvasControls(); return 0; }
             if (args.Contains("--group-boundaries")) { window.CheckGroupBoundaryUi(); return 0; }
@@ -88,6 +90,7 @@ internal static class CanvasInteractionChecks
             ProcessMemoryChecks.Run();
             HostProcessPriorityChecks.Run();
             window.CheckCanvasInteraction();
+            window.CheckCanvasRedraw();
             window.CheckPluginBrowser();
             window.CheckInsertAsioUi();
             window.CheckEndpointMeterUi();

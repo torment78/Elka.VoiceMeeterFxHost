@@ -17,6 +17,8 @@ internal static class Program
         CheckGroupPower();
         CheckBallistics();
         CheckMeterBackground();
+        CheckMeterLayoutIsolation();
+        CheckMeterDrawingCost();
         CheckReader();
         CheckPeakIndicators();
         CheckPeakReader();
@@ -229,6 +231,56 @@ internal static class Program
                 }
             }
         }
+    }
+
+    private static void CheckMeterLayoutIsolation()
+    {
+        var canvas = new Canvas { Width = 300, Height = 200 };
+        var meter = new EndpointMeterView(2, Colors.Green) { Width = 76 };
+        canvas.Children.Add(meter);
+        canvas.Measure(new Size(300, 200));
+        canvas.Arrange(new Rect(0, 0, 300, 200));
+        canvas.UpdateLayout();
+        byte[] Render()
+        {
+            var image = new RenderTargetBitmap(300, 200, 96, 96, PixelFormats.Pbgra32);
+            image.Render(canvas);
+            var pixels = new byte[300 * 200 * 4];
+            image.CopyPixels(pixels, 300 * 4, 0);
+            return pixels;
+        }
+        var silent = Render();
+        for (int frame = 0; frame < 120; frame++)
+        {
+            meter.Advance([(float)(0.2 + 0.15 * Math.Sin(frame * .1)), .1f, 0, 0, 0, 0, 0, 0], 1 + frame / 60.0);
+            Check(meter.IsMeasureValid && meter.IsArrangeValid && canvas.IsArrangeValid,
+                "meter animation redraws without invalidating canvas layout");
+        }
+        Check(!silent.SequenceEqual(Render()), "retained meter drawing visibly follows live levels");
+        meter.Clear();
+        Check(meter.IsArrangeValid, "clearing a meter does not invalidate layout");
+        Check(silent.SequenceEqual(Render()), "clearing restores the muted meter drawing without a layout pass");
+    }
+
+    private static void CheckMeterDrawingCost()
+    {
+        var canvas = new Canvas { Width = 300, Height = 1800 };
+        var meters = Enumerable.Range(0, 16).Select(_ => new EndpointMeterView(8, Colors.Green) { Width = 76 }).ToArray();
+        foreach (var meter in meters) canvas.Children.Add(meter);
+        canvas.Measure(new Size(300, 1800)); canvas.Arrange(new Rect(0, 0, 300, 1800)); canvas.UpdateLayout();
+        var peaks = new float[8];
+        void Frame(int frame)
+        {
+            for (int c = 0; c < 8; c++) peaks[c] = (float)(.4 + .35 * Math.Sin(frame * .1 + c));
+            foreach (var meter in meters) meter.Advance(peaks, 1 + frame / 60.0);
+        }
+        for (int i = 0; i < 60; i++) Frame(i);
+        var bytes = GC.GetAllocatedBytesForCurrentThread();
+        var watch = Stopwatch.StartNew();
+        for (int i = 60; i < 360; i++) Frame(i);
+        long perFrame = (GC.GetAllocatedBytesForCurrentThread() - bytes) / 300;
+        Console.WriteLine($"Meter drawing only (16 x 8 channels): {watch.Elapsed.TotalMilliseconds / 300:F3} ms/frame; {perFrame:N0} bytes/frame.");
+        Check(perFrame < 100_000, "steady meter animation reuses drawing cells rather than allocating megabytes each frame");
     }
 
     private static void CheckReader()

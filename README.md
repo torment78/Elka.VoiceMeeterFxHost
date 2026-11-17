@@ -28,9 +28,20 @@ are unchanged. The installer, application, embedded worker and native libraries
 are digitally signed and timestamped. Portable downloads contain the same
 signed binaries; SHA-256 checksums accompany the release.
 
-**[0.8.3.31 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.31).**
+**[0.8.3.32 is the unsigned development prerelease](https://github.com/torment78/Elka.VoiceMeeterFxHost/releases/tag/v0.8.3.32).**
 
-This update improves the **group editor**. New groups expose their first input
+This update addresses **canvas flicker and meter drawing overhead**. VU meters
+reuse their drawing cells without repeatedly invalidating page layout, and
+cable selection updates in place. Cables follow endpoint cards during dragging,
+including collapsed pins, instead of waiting for mouse release.
+
+**Delete the whole selection:** box-select VSTs, groups and cables, then press
+Delete or choose **Delete Selection**. Unselected nodes and hardware endpoints
+remain. Inside groups, mixed selections work too; **Remove Cables** and
+Ctrl+Delete keep their cable-only behavior. Audio processing and refresh rates
+are unchanged.
+
+The **group-editor improvements** remain available. New groups expose their first input
 and last output even when Automatic Routing is off, while preserving existing
 cables and leaving loose members unwired. Inside groups, VST cards now match
 the compact main-canvas layout, and group-edge pins use the same spacing as
@@ -84,9 +95,9 @@ The preceding development improvements remain available:
   teardown is also hardened; the reported intermittent vendor-editor crash
   has not been reproduced in isolated checks.
 
-See [what changed in 0.8.3.31](docs/DevelopmentChanges.md) for details and limits,
+See [what changed in 0.8.3.32](docs/DevelopmentChanges.md) for details and limits,
 and [Back and VST settings history](docs/UserGuide.md#back-and-vst-settings-history)
-for use. This release changes group editing and layout, not native audio processing.
+for use. This release changes canvas rendering and selection, not native audio processing.
 
 The shutdown safeguards from **0.8.3.24** remain:
 The tray now runs independently of the main window, keeping **Shutdown**

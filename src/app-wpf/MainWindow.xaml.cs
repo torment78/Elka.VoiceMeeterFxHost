@@ -602,7 +602,7 @@ public partial class MainWindow : Window
         public PluginNodeSnapshot? Node { get; init; }
         public PluginGroupSnapshot? Group { get; init; }
         public int Pin { get; init; } = -1;
-        public Point Point { get; init; }
+        public Point Point { get; set; }
         public string Label { get; init; } = string.Empty;
     }
 
@@ -2688,15 +2688,15 @@ public partial class MainWindow : Window
         }
 
         if (e.Key == Key.Escape && FinishCanvasBox(cancel: true)) { e.Handled = true; return; }
-        if (e.Key is Key.Delete or Key.Back && RemoveBoxSelectedCables()) { e.Handled = true; return; }
-
         if (e.Key == Key.Delete && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             // Never fall through to node deletion, even with an incomplete selection or no cables.
             e.Handled = true;
-            DisconnectQuickSelectedItems();
+            if (!RemoveBoxSelectedCables()) DisconnectQuickSelectedItems();
             return;
         }
+
+        if (e.Key is Key.Delete or Key.Back && DeleteCanvasSelection()) { e.Handled = true; return; }
 
         if (e.Key == Key.Enter)
         {
@@ -8325,6 +8325,12 @@ private void RefreshEndpointButtonSelection()
     private void RemovePluginNode(PluginNodeSnapshot node)
     {
         CaptureNodeForUndo(node);
+        RemovePluginNodeCore(node);
+        FinishCanvasRemoval();
+    }
+
+    private void RemovePluginNodeCore(PluginNodeSnapshot node)
+    {
         RemoveEditorHotkeys(binding => binding.VstId == node.InstanceId && string.IsNullOrEmpty(binding.GroupId));
         if (!node.MissingPlugin)
         {
@@ -8345,11 +8351,6 @@ private void RefreshEndpointButtonSelection()
         {
             _selectedPluginNodeSlot = null;
         }
-
-        RefreshEngineCallbackMode();
-        RebuildVstNodeList();
-        RebuildRoutingCanvas();
-        QueueSave();
     }
 
     private void RebuildRoutingCanvas()
@@ -8383,8 +8384,11 @@ private void RefreshEndpointButtonSelection()
         _nodeVisualElements.Clear();
         _groupVisualElements.Clear();
         _endpointVisualElements.Clear();
+        _endpointMeterViewsForRebuild.Clear();
+        foreach (var item in _endpointMeters) _endpointMeterViewsForRebuild[item.Address] = item.View;
         _endpointMeters.Clear();
         _canvasConnectionPaths.Clear();
+        _endpointWirePaths.Clear();
         _dragElementOrigins.Clear();
         RoutingCanvas.Children.Clear();
         InitializeVstCanvasLayoutWidth();
@@ -8396,6 +8400,7 @@ private void RefreshEndpointButtonSelection()
         DrawDefaultPassthroughConnections();
         DrawMirroredChannelRoutes();
         DrawCanvasConnections();
+        _endpointMeterViewsForRebuild.Clear();
         QueueEndpointMeterUpdate();
         UpdateRouteSummary();
         RebuildVstNodeList();
@@ -10047,6 +10052,13 @@ private void RefreshEndpointButtonSelection()
     {
         var members = GroupMembers(group).ToList();
         foreach (var member in members) CaptureNodeForUndo(member);
+        DeletePluginGroupWithMembersCore(group);
+        FinishCanvasRemoval();
+    }
+
+    private void DeletePluginGroupWithMembersCore(PluginGroupSnapshot group)
+    {
+        var members = GroupMembers(group).ToList();
         RemoveEditorHotkeys(binding => binding.GroupId == group.Id ||
             (string.IsNullOrEmpty(binding.GroupId) && members.Any(node => node.InstanceId == binding.VstId)));
         var memberSlots = members.Select(static node => node.Slot).ToHashSet();
@@ -10054,7 +10066,7 @@ private void RefreshEndpointButtonSelection()
 
         foreach (var member in members)
         {
-            _engine.RemovePluginNode(member.Slot);
+            if (!member.MissingPlugin) _engine.RemovePluginNode(member.Slot);
             EndPluginSavedDataPending(member);
             ForgetUnstablePluginState(member.Slot);
             ForgetPluginFailure(member.Slot);
@@ -10083,10 +10095,6 @@ private void RefreshEndpointButtonSelection()
         }
 
         AppendLog($"Deleted VST group and {members.Count} VST node(s): {group.Name}.");
-        RefreshEngineCallbackMode();
-        RebuildVstNodeList();
-        RebuildRoutingCanvas();
-        QueueSave();
     }
 
     private void PlaceUngroupedMembersNearGroup(PluginGroupSnapshot group, IReadOnlyList<PluginNodeSnapshot> members)
@@ -12181,7 +12189,9 @@ private void RefreshEndpointButtonSelection()
                 continue;
             }
 
-            RoutingCanvas.Children.Insert(0, CreateNormalledWirePath(start, end, HueStrokeBrush(EndpointRouteHueKey(leftMode, channel))));
+            var path = CreateNormalledWirePath(start, end, HueStrokeBrush(EndpointRouteHueKey(leftMode, channel)));
+            _endpointWirePaths[path] = (EndpointSourceKey(leftMode, channel), EndpointDestinationKey(rightMode, channel), null);
+            RoutingCanvas.Children.Insert(0, path);
         }
     }
 
@@ -12276,7 +12286,9 @@ private void RefreshEndpointButtonSelection()
             path.ToolTip = "Shared direct channel route. Click to select. Press Delete to disconnect.";
             path.MouseLeftButtonDown += DirectChannelRoute_MouseLeftButtonDown;
             RoutingCanvas.Children.Insert(0, path);
-            AddWireBadge(RoutingCanvas, start, end, "CH", (Brush)FindResource("VolumeAccentBrush"));
+            var badge = AddWireBadge(RoutingCanvas, start, end, "CH", (Brush)FindResource("VolumeAccentBrush"));
+            _endpointWirePaths[path] = (EndpointSourceKey(CallbackMode.Input, route.SourceChannel),
+                EndpointDestinationKey(CallbackMode.Output, route.DestinationChannel), badge);
         }
     }
 
@@ -12296,7 +12308,8 @@ private void RefreshEndpointButtonSelection()
         _selectedPluginNodeSlot = null;
         _selectedPluginGroupId = null;
         FocusRoutingCanvasForShortcuts();
-        RebuildRoutingCanvas();
+        RefreshCanvasMultiSelection();
+        RebuildVstNodeList();
         e.Handled = true;
     }
 
@@ -12316,7 +12329,8 @@ private void RefreshEndpointButtonSelection()
         _selectedPluginNodeSlot = null;
         _selectedPluginGroupId = null;
         FocusRoutingCanvasForShortcuts();
-        RebuildRoutingCanvas();
+        RefreshCanvasMultiSelection();
+        RebuildVstNodeList();
         e.Handled = true;
     }
 
@@ -12428,7 +12442,7 @@ private void RefreshEndpointButtonSelection()
         };
     }
 
-    private void AddWireBadge(Canvas canvas, Point start, Point end, string text, Brush background)
+    private Border AddWireBadge(Canvas canvas, Point start, Point end, string text, Brush background)
     {
         var badge = new Border
         {
@@ -12448,6 +12462,7 @@ private void RefreshEndpointButtonSelection()
         Canvas.SetLeft(badge, ((start.X + end.X) * 0.5) - 13.0);
         Canvas.SetTop(badge, ((start.Y + end.Y) * 0.5) - 9.0);
         canvas.Children.Add(badge);
+        return badge;
     }
 
     private Path CreateNormalledWirePath(Point start, Point end, Brush? stroke = null)
@@ -13816,6 +13831,10 @@ private void RefreshEndpointButtonSelection()
         _endpointDragStartOffset = EndpointCanvasYOffset(_draggingEndpointKey);
         _endpointDragMoved = false;
         CaptureDragOrigins(_endpointVisualElements.TryGetValue(_draggingEndpointKey, out var elements) ? elements : [border]);
+        _endpointDragPinOrigins.Clear();
+        for (int channel = info.Endpoint.Range.Start; channel <= info.Endpoint.Range.End; channel++)
+            foreach (var key in new[] { EndpointSourceKey(info.Mode, channel), EndpointDestinationKey(info.Mode, channel) })
+                if (_pinPositions.TryGetValue(key, out var origin)) _endpointDragPinOrigins[key] = origin;
         border.CaptureMouse();
         e.Handled = true;
     }
@@ -13841,6 +13860,7 @@ private void RefreshEndpointButtonSelection()
         var offset = Math.Max(-320.0, _endpointDragStartOffset + deltaY);
         _settings.EndpointCanvasYOffsets[_draggingEndpointKey] = offset;
         MoveDragElements(0, offset - _endpointDragStartOffset);
+        RefreshDraggedEndpointWires(offset - _endpointDragStartOffset);
         UpdateVstCanvasSize();
         e.Handled = true;
     }
@@ -13863,8 +13883,7 @@ private void RefreshEndpointButtonSelection()
         }
         else
         {
-            RebuildRoutingCanvas();
-            QueueSave();
+            FinishVstCanvasDrag();
         }
 
         e.Handled = true;
@@ -13878,7 +13897,7 @@ private void RefreshEndpointButtonSelection()
         }
 
         ResetEndpointDragState();
-        RebuildRoutingCanvas();
+        FinishVstCanvasDrag();
     }
 
     private void ResetEndpointDragState()
@@ -13887,6 +13906,7 @@ private void RefreshEndpointButtonSelection()
         _draggingEndpoint = null;
         _draggingEndpointMode = CallbackMode.None;
         _endpointDragMoved = false;
+        _endpointDragPinOrigins.Clear();
         _dragElementOrigins.Clear();
     }
 
@@ -13911,7 +13931,9 @@ private void RefreshEndpointButtonSelection()
             return false;
         }
 
-        origin = new Point(
+        // Edge-mounted pins extend outside the card; drag from the card, not a pin.
+        var card = _dragElementOrigins.Keys.OfType<Border>().FirstOrDefault();
+        origin = card is not null ? _dragElementOrigins[card] : new Point(
             _dragElementOrigins.Values.Min(static point => point.X),
             _dragElementOrigins.Values.Min(static point => point.Y));
         return true;
@@ -13923,6 +13945,34 @@ private void RefreshEndpointButtonSelection()
         {
             Canvas.SetLeft(element, origin.X + deltaX);
             Canvas.SetTop(element, origin.Y + deltaY);
+            if (element is Ellipse { Tag: CanvasPinInfo pin })
+            {
+                pin.Point = new Point(origin.X + deltaX + element.Width / 2, origin.Y + deltaY + element.Height / 2);
+                _pinPositions[PinPositionKey(pin)] = pin.Point;
+            }
+        }
+    }
+
+    private readonly Dictionary<string, Point> _endpointDragPinOrigins = [];
+    private readonly Dictionary<Path, (string From, string To, Border? Badge)> _endpointWirePaths = [];
+
+    private void RefreshDraggedEndpointWires(double deltaY)
+    {
+        foreach (var (key, origin) in _endpointDragPinOrigins)
+            _pinPositions[key] = new Point(origin.X, origin.Y + deltaY);
+        RefreshCanvasConnectionPaths(connection =>
+            (connection.Kind is ConnectionEndpointToNode or ConnectionEndpointToGroupInput or ConnectionEndpointToEndpoint &&
+             _endpointDragPinOrigins.ContainsKey(EndpointSourceKey(connection.FromMode, connection.FromChannel))) ||
+            (connection.Kind is ConnectionNodeToEndpoint or ConnectionGroupOutputToEndpoint or ConnectionEndpointToEndpoint &&
+             _endpointDragPinOrigins.ContainsKey(EndpointDestinationKey(connection.ToMode, connection.ToChannel))));
+        foreach (var (path, wire) in _endpointWirePaths)
+        {
+            if (!_endpointDragPinOrigins.ContainsKey(wire.From) && !_endpointDragPinOrigins.ContainsKey(wire.To)) continue;
+            if (!_pinPositions.TryGetValue(wire.From, out var start) || !_pinPositions.TryGetValue(wire.To, out var end)) continue;
+            path.Data = CreateWireGeometry(start, end);
+            if (wire.Badge is not { } badge) continue;
+            Canvas.SetLeft(badge, (start.X + end.X) * .5 - 13);
+            Canvas.SetTop(badge, (start.Y + end.Y) * .5 - 9);
         }
     }
 

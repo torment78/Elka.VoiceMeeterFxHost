@@ -147,6 +147,38 @@ public partial class MainWindow
                     { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
                 Assert(_settings.PluginGroups.Count == 0 && _settings.CanvasConnections.Count == 0,
                     "Automatic Grouping off leaves overlapping nodes independent");
+
+                Reset();
+                AddQuickGroupNode(a); AddQuickGroupNode(b);
+                CreateGroupFromCanvasSelection();
+                var selectedGroup = _settings.PluginGroups.Single();
+                var survivor = new PluginNodeSnapshot { Slot = 50, Name = "Keep me", X = 1200, Y = 700, Mode = mode, MissingPlugin = true };
+                _settings.PluginNodes.Add(survivor);
+                var outsideCable = new CanvasConnectionSnapshot { Kind = ConnectionNodeToNode, FromKind = PinNodeOutput,
+                    FromSlot = c.Slot, FromPin = 0, ToKind = PinNodeInput, ToSlot = survivor.Slot, ToPin = 0 };
+                _settings.CanvasConnections.Add(outsideCable);
+                RebuildRoutingCanvas();
+                ClearCanvasSelectionState();
+                _quickGroupNodeSlots.Add(c.Slot);
+                _quickGroupIds.Add(selectedGroup.Id);
+                _boxCableKeys.Add(CanvasConnectionKey(outsideCable));
+                var deleteMenu = BuildCanvasSelectionMenu();
+                var deleteItem = deleteMenu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "Delete Selection"));
+                Assert(deleteItem.IsEnabled, "Mixed selection offers Delete Selection");
+                deleteItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                Assert(_settings.PluginNodes.SequenceEqual([survivor]) && _settings.PluginGroups.Count == 0 && _settings.CanvasConnections.Count == 0,
+                    "One Delete removes selected groups with members, loose VSTs and cables; unselected neighbours survive");
+                Assert(_endpointVisualElements.Count > 0 && !HasCanvasSelection, "Delete keeps hardware endpoints and clears stale selection");
+
+                Reset();
+                BeginCanvasBox(new Point(370, 170), false); UpdateCanvasBox(new Point(810, 340));
+                _boxMoved = false;
+                FinishCanvasBox();
+                var popup = BuildCanvasSelectionMenu();
+                var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, Key.Delete)
+                    { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                popup.RaiseEvent(key);
+                Assert(key.Handled && _settings.PluginNodes.SequenceEqual([c]), "Delete also works from the box-selection popup, including disconnected VSTs");
             }
 
             _settings.CanvasBoxSelectionEnabled = true;

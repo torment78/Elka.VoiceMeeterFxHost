@@ -124,6 +124,21 @@ public partial class MainWindow
             editor.Close();
             Assert(a.X == 210 && b.X == 410 && a.Y == 150 && b.Y == 150 && connections.Count == 3,
                 "Cancel restores grouped movement and disconnected cables");
+            editor = new PluginGroupPropertiesWindow(group, [a, b, c], connections,
+                (_, _, _, _) => { routeCalls++; return false; }, n => removed.Add(n.Slot),
+                _ => { }, _ => { }, _ => { }, (_, _) => { }, (_, _) => { }, _ => { }, (_, _) => { })
+            { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000 };
+            editor.Show(); editor.UpdateLayout();
+            Call("BeginSelectionBox", new Point(195, 140), false);
+            Call("UpdateSelectionBox", new Point(530, 225));
+            Call("FinishSelectionBox", false);
+            if (Field<Canvas>("_canvas").ContextMenu is { } selectionMenu) selectionMenu.IsOpen = false;
+            var mixedMenu = (ContextMenu)Call("BuildSelectionMenu")!;
+            var deleteKey = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(editor), 0, Key.Delete)
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            mixedMenu.RaiseEvent(deleteKey);
+            Assert(deleteKey.Handled && removed.Order().SequenceEqual([0, 1]) && group.MemberSlots.SequenceEqual([2]) && connections.Count == 0,
+                $"One Delete in the group popup removes selected VSTs and their cables, leaving other members: handled={deleteKey.Handled}, removed={string.Join(',', removed)}, members={string.Join(',', group.MemberSlots)}, cables={connections.Count}");
             Assert(CanvasInteractionChecks.NativeAudioAttempts == nativeBefore, "Selection checks never touch native audio");
             Console.WriteLine($"PASS: {_interactionChecks - before} group pin spacing, box selection, multi-drag and cable deletion checks.");
         }

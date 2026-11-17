@@ -160,6 +160,14 @@ internal sealed class EndpointMeterView : FrameworkElement
     internal const double RowHeight = 10;
     internal const int Segments = 18;
     private readonly int _channels;
+    private readonly Color _color;
+    private readonly DrawingGroup _drawing = new();
+    private readonly DrawingGroup?[,] _cellLayers = new DrawingGroup?[8, Segments];
+    private readonly DrawingGroup?[] _markerLayers = new DrawingGroup?[8];
+    private readonly TranslateTransform?[] _markerPositions = new TranslateTransform?[8];
+    private MeterLayout? _layout;
+    private readonly record struct MeterLayout(double ScaleX, double ScaleY, double Left,
+        double OriginY, int Pitch, int Height);
     private readonly double[] _levels = new double[8];
     private readonly double[] _targets = new double[8];
     private readonly int[] _fills = new int[8];
@@ -181,6 +189,7 @@ internal sealed class EndpointMeterView : FrameworkElement
     internal EndpointMeterView(int channels, Color hue)
     {
         _channels = Math.Clamp(channels, 1, 8);
+        _color = hue;
         _hue = Frozen(hue.R, hue.G, hue.B);
         _dimHue = Dimmed(hue.R, hue.G, hue.B);
         Height = (_channels - 1) * RowSpacing + RowHeight;
@@ -190,6 +199,7 @@ internal sealed class EndpointMeterView : FrameworkElement
     }
 
     internal int Channels => _channels;
+    internal bool Matches(int channels, Color hue) => _channels == channels && _color == hue;
     internal int LitSegments(int channel) => _lit[channel];
     internal double DisplayLevel(int channel) => _levels[channel];
 
@@ -218,7 +228,7 @@ internal sealed class EndpointMeterView : FrameworkElement
             _lit[c] = lit;
             _markers[c] = marker;
         }
-        if (changed) InvalidateVisual();
+        if (changed) Redraw();
     }
 
     internal void Clear()
@@ -227,10 +237,16 @@ internal sealed class EndpointMeterView : FrameworkElement
         Array.Clear(_lit); Array.Clear(_markers);
         _lastTime = 0;
         _lastSignal = double.NegativeInfinity;
-        InvalidateVisual();
+        Redraw();
     }
 
     protected override void OnRender(DrawingContext dc)
+    {
+        Redraw();
+        dc.DrawDrawing(_drawing);
+    }
+
+    private void Redraw()
     {
         if (ActualWidth <= 0) return;
         // Use one integer-pixel cell size for the whole strip, including the last cell.
@@ -247,34 +263,70 @@ internal sealed class EndpointMeterView : FrameworkElement
         int availablePixels = (int)Math.Floor(ActualWidth * sx);
         int pitchPixels = (availablePixels - 1) / Segments;
         int heightPixels = (int)Math.Round(RowHeight * sy);
-        if (pitchPixels < 2 || heightPixels < 3) return;
+        if (pitchPixels < 2 || heightPixels < 3)
+        {
+            if (_layout is not null) { _drawing.Children.Clear(); _layout = null; }
+            return;
+        }
         int stripPixels = Segments * pitchPixels + 1;
         double left = (Math.Round(ox) + Math.Floor((availablePixels - stripPixels) / 2.0) - ox) / sx;
         double step = pitchPixels / sx;
+        var layout = new MeterLayout(sx, sy, left, oy - Math.Floor(oy), pitchPixels, heightPixels);
+        if (_layout != layout) BuildDrawing(layout);
+        // Keep geometry and brushes alive. Only changing cells and peak markers send updates.
         for (int c = 0; c < _channels; c++)
         {
-            double top = (Math.Round(c * RowSpacing * sy + oy) - oy) / sy;
-            dc.DrawRectangle(Brushes.Black, null, new Rect(left, top, stripPixels / sx, heightPixels / sy));
+            for (int segment = 0; segment < Segments; segment++)
+            {
+                var layer = _cellLayers[c, segment]!;
+                double intensity = Math.Clamp(_fills[c] / 256.0 - segment, 0, 1);
+                if (layer.Opacity != intensity) layer.Opacity = intensity;
+            }
+            var marker = _markerLayers[c]!;
+            double visible = _markers[c] > _lit[c] ? 1 : 0;
+            if (marker.Opacity != visible) marker.Opacity = visible;
+            if (visible == 0) continue;
+            double x = left + _markers[c] * step - px;
+            var position = _markerPositions[c]!;
+            if (position.X != x) position.X = x;
+        }
+    }
+
+    private void BuildDrawing(MeterLayout layout)
+    {
+        _layout = layout;
+        double sx = layout.ScaleX, sy = layout.ScaleY;
+        double px = 1 / sx, py = 1 / sy, step = layout.Pitch / sx;
+        using var dc = _drawing.Open();
+        for (int c = 0; c < _channels; c++)
+        {
+            double top = (Math.Round(c * RowSpacing * sy + layout.OriginY) - layout.OriginY) / sy;
+            double cellHeight = (layout.Height - 2) / sy;
+            dc.DrawRectangle(Brushes.Black, null, new Rect(layout.Left, top, (Segments * layout.Pitch + 1) / sx, layout.Height / sy));
             for (int segment = 0; segment < Segments; segment++)
             {
                 double db = -60 + (segment + 1) * 60.0 / Segments;
                 Brush bright = db >= -6 ? Red : db >= -12 ? Orange : db >= -20 ? Green : _hue;
                 Brush dim = db >= -6 ? DimRed : db >= -12 ? DimOrange : db >= -20 ? DimGreen : _dimHue;
-                double cellLeft = left + segment * step + px;
-                double cellWidth = (pitchPixels - 1) / sx;
-                double cellHeight = (heightPixels - 2) / sy;
+                double cellLeft = layout.Left + segment * step + px;
+                double cellWidth = (layout.Pitch - 1) / sx;
                 var cell = new Rect(cellLeft, top + py, cellWidth, cellHeight);
-                double intensity = Math.Clamp(_fills[c] / 256.0 - segment, 0, 1);
                 dc.DrawRectangle(dim, null, cell);
-                if (intensity > 0)
-                {
-                    dc.PushOpacity(intensity);
-                    dc.DrawRectangle(bright, null, cell);
-                    dc.Pop();
-                }
-                if (_markers[c] > _lit[c] && segment == _markers[c] - 1)
-                    dc.DrawRectangle(_hue, null, new Rect(cellLeft + cellWidth - px, top + py, px, cellHeight));
+                var drawing = new GeometryDrawing(bright, null, new RectangleGeometry(cell));
+                drawing.Freeze();
+                var layer = new DrawingGroup { Opacity = 0 };
+                layer.Children.Add(drawing);
+                _cellLayers[c, segment] = layer;
+                dc.DrawDrawing(layer);
             }
+            var markerDrawing = new GeometryDrawing(_hue, null, new RectangleGeometry(new Rect(0, 0, px, cellHeight)));
+            markerDrawing.Freeze();
+            var position = new TranslateTransform(0, top + py);
+            var marker = new DrawingGroup { Opacity = 0, Transform = position };
+            marker.Children.Add(markerDrawing);
+            _markerLayers[c] = marker;
+            _markerPositions[c] = position;
+            dc.DrawDrawing(marker);
         }
     }
 

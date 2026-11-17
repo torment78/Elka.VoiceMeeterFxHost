@@ -209,6 +209,15 @@ public partial class MainWindow
         if (_boxCableKeys.Count == 0 && _boxDirectCableKeys.Count == 0) return false;
         if (PluginBrowserBusy) { AppendLog(BusyPluginBrowserMessage()); return true; }
         var previous = _settings.CanvasConnections.ToList();
+        int count = DisconnectBoxSelectedCables();
+        RefreshOpenGroupEditors(previous);
+        FinishCanvasRemoval();
+        AppendLog($"Removed {count} selected cable(s). Nodes kept.");
+        return true;
+    }
+
+    private int DisconnectBoxSelectedCables()
+    {
         var cables = _settings.CanvasConnections.Where(cable => CanvasConnectionBelongsToCurrentView(cable) &&
             _boxCableKeys.Contains(CanvasConnectionKey(cable))).ToList();
         foreach (var cable in cables) DisconnectCanvasConnectionCore(cable);
@@ -218,10 +227,34 @@ public partial class MainWindow
                 if (TryParseDirectChannelRouteKey(key, out var route) && RemoveSharedDirectChannelRouteCore(route)) directCount++;
         if (directCount > 0) { ApplyEngineState(); RefreshEndpointButtonSelection(); BuildChannelStrips(); }
         _boxCableKeys.Clear(); _boxDirectCableKeys.Clear(); ClearSelectedConnectionKeys();
+        return cables.Count + directCount;
+    }
+
+    private bool DeleteCanvasSelection()
+    {
+        if (_workspaceView != WorkspaceView.Vst) return false;
+        var nodes = SelectedCanvasGroupMembers();
+        var groups = _settings.PluginGroups.Where(g => _quickGroupIds.Contains(g.Id) && GroupBelongsToCurrentCanvas(g)).ToList();
+        if (nodes.Count == 0 && groups.Count == 0) return RemoveBoxSelectedCables();
+        if (PluginBrowserBusy) { AppendLog(BusyPluginBrowserMessage()); return true; }
+        // Capture the entire operation before removing anything, so Back restores one selection.
+        foreach (var node in nodes.Concat(groups.SelectMany(GroupMembers)).DistinctBy(n => n.Slot)) CaptureNodeForUndo(node);
+        var previous = _settings.CanvasConnections.ToList();
+        DisconnectBoxSelectedCables();
+        foreach (var group in groups) DeletePluginGroupWithMembersCore(group);
+        foreach (var node in nodes) RemovePluginNodeCore(node);
+        ClearCanvasSelectionState();
         RefreshOpenGroupEditors(previous);
-        RefreshEngineCallbackMode(); RebuildRoutingCanvas(); QueueSave();
-        AppendLog($"Removed {cables.Count + directCount} selected cable(s). Nodes kept.");
+        FinishCanvasRemoval();
         return true;
+    }
+
+    private void FinishCanvasRemoval()
+    {
+        RefreshEngineCallbackMode();
+        RebuildVstNodeList();
+        RebuildRoutingCanvas();
+        QueueSave();
     }
 
     private void BringCanvasCardToFront(string key)

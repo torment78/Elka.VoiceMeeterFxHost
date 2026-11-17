@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 
 namespace Elka.VoiceMeeterFxHost.App;
 
@@ -75,6 +76,13 @@ public partial class MainWindow
     private ContextMenu BuildCanvasSelectionMenu()
     {
         var menu = new ContextMenu { PlacementTarget = RoutingCanvas, Placement = PlacementMode.MousePoint };
+        menu.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key is not Key.Delete and not Key.Back || Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
+            if (!DeleteCanvasSelection()) return;
+            menu.IsOpen = false;
+            e.Handled = true;
+        };
         var create = CreateNodeMenuItem("Create Group", CreateGroupFromCanvasSelection);
         create.IsEnabled = !PluginBrowserBusy && SelectedCanvasGroupMembers().Count > 0 && _quickGroupIds.Count == 0;
         menu.Items.Add(create);
@@ -89,8 +97,13 @@ public partial class MainWindow
         var remove = CreateNodeMenuItem("Remove Cables", () => RemoveBoxSelectedCables());
         remove.IsEnabled = !PluginBrowserBusy && (_boxCableKeys.Count > 0 || _boxDirectCableKeys.Count > 0);
         menu.Items.Add(remove);
+        var delete = CreateNodeMenuItem("Delete Selection", () => DeleteCanvasSelection());
+        delete.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+        delete.IsEnabled = !PluginBrowserBusy && (SelectedCanvasGroupMembers().Count > 0 ||
+            _quickGroupIds.Count > 0 || _boxCableKeys.Count > 0 || _boxDirectCableKeys.Count > 0);
+        menu.Items.Add(delete);
         menu.Items.Add(new Separator());
-        menu.Items.Add(CreateNodeMenuItem("Clear Selection", () => { ClearCanvasSelectionState(); RebuildVstNodeList(); RebuildRoutingCanvas(); }));
+        menu.Items.Add(CreateNodeMenuItem("Clear Selection", () => { ClearCanvasSelectionState(); RebuildVstNodeList(); RefreshCanvasMultiSelection(); }));
         menu.Items.Add(CreateNodeMenuItem("Close", () => menu.IsOpen = false));
         return menu;
     }

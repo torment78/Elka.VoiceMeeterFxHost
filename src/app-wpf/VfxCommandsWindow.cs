@@ -163,6 +163,10 @@ SendText("vban1", VFX.VST(0).Mode=Next;);
 SendText("vban1", VFX.VST(0).AB=B;);
 SendText("vban1", VFX.VST(0).AB=Toggle;);
 
+Path Switch nodes (A or B output pair):
+SendText("vban1", VFX.VST(0).Path=B;);
+SendText("vban1", VFX.VST(0).Path=Toggle;);
+
 Host programs/presets when the VST exposes more than one:
 SendText("vban1", VFX.VST(0).Program=1;);
 SendText("vban1", VFX.VST(0).Program=Next;);

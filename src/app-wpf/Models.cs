@@ -488,6 +488,16 @@ internal sealed class PluginNodeSnapshot
     public bool Sandboxed { get; set; }
     public bool MissingPlugin { get; set; }
     public CallbackMode Mode { get; set; } = CallbackMode.Input;
+    // Path Switch nodes only: "A" or "B". The native processor also stores it in its state.
+    public string SwitchPath { get; set; } = "A";
+
+    public const string PathSwitchFormat = "Internal";
+    public const string PathSwitchIdentifier = "elka:path-switch";
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPathSwitch =>
+        PluginFormat.Equals(PathSwitchFormat, StringComparison.OrdinalIgnoreCase) &&
+        PluginIdentifier.Equals(PathSwitchIdentifier, StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class PluginGroupSnapshot

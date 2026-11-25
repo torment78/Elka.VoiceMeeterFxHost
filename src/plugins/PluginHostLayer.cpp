@@ -23,6 +23,7 @@
 #if ELKA_ENABLE_JUCE_PLUGIN_HOST
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "plugins/PluginEditorWindow.h"
+#include "plugins/PathSwitchProcessor.h"
 #endif
 
 namespace elka
@@ -1487,6 +1488,31 @@ PluginSummary toSummary(const juce::PluginDescription& description)
     };
 }
 
+// Built-in nodes are not files on disk: keep them out of the cache and
+// re-append them after every list rebuild so they are always offered.
+void appendInternalPlugins(
+    std::vector<PluginSummary>& summaries,
+    std::vector<juce::PluginDescription>& descriptions,
+    std::vector<unsigned char>& lazyDescriptions)
+{
+    for (size_t index = descriptions.size(); index-- > 0;)
+    {
+        if (!PathSwitchProcessor::isPathSwitch(descriptions[index]))
+            continue;
+
+        descriptions.erase(descriptions.begin() + static_cast<std::ptrdiff_t>(index));
+        if (index < summaries.size())
+            summaries.erase(summaries.begin() + static_cast<std::ptrdiff_t>(index));
+        if (index < lazyDescriptions.size())
+            lazyDescriptions.erase(lazyDescriptions.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    const auto pathSwitch = PathSwitchProcessor::description();
+    descriptions.push_back(pathSwitch);
+    summaries.push_back(toSummary(pathSwitch));
+    lazyDescriptions.push_back(0);
+}
+
 juce::PluginDescription lazyDescriptionForCandidate(const juce::String& formatName, const juce::String& identifier)
 {
     juce::PluginDescription description;
@@ -1778,6 +1804,13 @@ std::unique_ptr<juce::AudioPluginInstance> createPluginInstanceForDescription(
     int blockSize,
     juce::String& creationError)
 {
+    if (PathSwitchProcessor::isPathSwitch(description))
+    {
+        auto instance = std::make_unique<PathSwitchProcessor>();
+        instance->setRateAndBufferSizeDetails(sampleRate, blockSize);
+        return instance;
+    }
+
     if (description.pluginFormatName.equalsIgnoreCase("VST3"))
     {
         juce::VST3PluginFormat vst3Format;
@@ -3692,6 +3725,9 @@ PluginHostLayer::PluginHostLayer()
     : impl(std::make_unique<Impl>())
 {
     loadCachedPlugins();
+#if ELKA_ENABLE_JUCE_PLUGIN_HOST
+    appendInternalPlugins(discoveredPlugins, impl->descriptions, impl->lazyDescriptions);
+#endif
 }
 
 PluginHostLayer::~PluginHostLayer() = default;
@@ -3999,6 +4035,7 @@ int PluginHostLayer::scanPluginPaths(const std::vector<std::string>& paths, bool
     }
 #endif
 
+    appendInternalPlugins(discoveredPlugins, impl->descriptions, impl->lazyDescriptions);
     saveCachedPlugins();
 
     report << "Plugin scan complete: " << discoveredPlugins.size() << " plugin(s).\n";
@@ -4120,6 +4157,9 @@ void PluginHostLayer::saveCachedPlugins() const
     for (size_t index = 0; index < impl->descriptions.size(); ++index)
     {
         const auto& description = impl->descriptions[index];
+        if (PathSwitchProcessor::isPathSwitch(description))
+            continue;
+
         const bool lazy = index < impl->lazyDescriptions.size() && impl->lazyDescriptions[index] != 0;
         if (lazy)
         {

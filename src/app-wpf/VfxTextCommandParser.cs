@@ -48,6 +48,7 @@ internal enum VfxTextCommandProperty
     Tone,
     Mode,
     Ab,
+    Path,
     Program,
     Editor,
     Reload,
@@ -242,6 +243,7 @@ internal static partial class VfxTextCommandParser
             "tone" => VfxTextCommandProperty.Tone,
             "mode" => VfxTextCommandProperty.Mode,
             "ab" or "compare" => VfxTextCommandProperty.Ab,
+            "path" => VfxTextCommandProperty.Path,
             "program" or "preset" => VfxTextCommandProperty.Program,
             "editor" => VfxTextCommandProperty.Editor,
             "reload" => VfxTextCommandProperty.Reload,
@@ -298,7 +300,7 @@ internal static partial class VfxTextCommandParser
     }
 
     [GeneratedRegex(
-        @"^\s*VFX\.VST\((?<target>\d+)\)\.(?:(?<property>Parameter)\((?<parameterIndex>\d+)\)|(?<property>Enable|Enabled|Bypass|Bypassed|InputGain|InGain|OutputGain|OutGain|MainGain|PluginGain|Gain|GainScale|Scale|DryGain|WetGain|Mix|DryWet|Width|StereoWidth|OutputWidth|InputPan|InPan|OutputPan|OutPan|DryPan|WetPan|Threshold|Thresh|Ratio|CompressionRatio|Attack|AttackTime|Release|ReleaseTime|Hold|HoldTime|Knee|KneeWidth|Range|ReductionRange|MakeupGain|Makeup|Ceiling|OutputCeiling|Lookahead|LookaheadTime|Rate|Speed|Depth|Feedback|Drive|Tone|Mode|AB|Compare|Program|Preset|Editor|Reload))\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",
+        @"^\s*VFX\.VST\((?<target>\d+)\)\.(?:(?<property>Parameter)\((?<parameterIndex>\d+)\)|(?<property>Enable|Enabled|Bypass|Bypassed|InputGain|InGain|OutputGain|OutGain|MainGain|PluginGain|Gain|GainScale|Scale|DryGain|WetGain|Mix|DryWet|Width|StereoWidth|OutputWidth|InputPan|InPan|OutputPan|OutPan|DryPan|WetPan|Threshold|Thresh|Ratio|CompressionRatio|Attack|AttackTime|Release|ReleaseTime|Hold|HoldTime|Knee|KneeWidth|Range|ReductionRange|MakeupGain|Makeup|Ceiling|OutputCeiling|Lookahead|LookaheadTime|Rate|Speed|Depth|Feedback|Drive|Tone|Mode|AB|Compare|Path|Program|Preset|Editor|Reload))\s*(?<op>\+=|-=|=)\s*(?<value>.+?)\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex VstCommandPattern();
 

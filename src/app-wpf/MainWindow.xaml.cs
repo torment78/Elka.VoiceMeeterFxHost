@@ -1868,6 +1868,7 @@ public partial class MainWindow : Window
             PlacementTarget = RoutingCanvas
         };
         menu.Items.Add(CreateNodeMenuItem("Create VST Group", CreatePluginGroupAtLastCanvasClick));
+        menu.Items.Add(CreateNodeMenuItem("Add Path Switch", AddPathSwitchAtLastCanvasClick));
         menu.IsOpen = true;
         e.Handled = true;
     }
@@ -2913,6 +2914,9 @@ public partial class MainWindow : Window
                 VfxTextCommandProperty.Tone => "Tone",
                 VfxTextCommandProperty.Mode => "Mode",
                 VfxTextCommandProperty.Ab => "AB",
+                VfxTextCommandProperty.Path => node.IsPathSwitch
+                    ? "Path"
+                    : throw new InvalidOperationException($"{command.SourceText}: Path only applies to Path Switch nodes."),
                 VfxTextCommandProperty.Program => "Program",
                 _ => throw new InvalidOperationException($"{command.SourceText}: unsupported VST property.")
             };
@@ -2929,6 +2933,10 @@ public partial class MainWindow : Window
         }
 
         AppendLog($"VST ID {instanceId} ({node.Name}): {status}");
+        if (node.IsPathSwitch)
+        {
+            UpdatePathSwitchFromStatus(node, status);
+        }
     }
 
     private IoEndpoint ResolveVfxEndpoint(VfxTextCommand command)
@@ -7095,6 +7103,8 @@ private void RefreshEndpointButtonSelection()
             }
 
             VerifyRestoredPluginState(restored, savedNode);
+            restored.SwitchPath = savedNode.SwitchPath;
+            ApplyPathSwitchToEngine(restored);
             if (!restored.Enabled)
             {
                 _engine.SetPluginNodePowered(restored.Slot, false);
@@ -7624,6 +7634,7 @@ private void RefreshEndpointButtonSelection()
             Enabled = node.Enabled,
             Bypassed = node.Bypassed,
             PinsCollapsed = node.PinsCollapsed,
+            SwitchPath = node.SwitchPath,
             Sandboxed = node.Sandboxed,
             MissingPlugin = node.MissingPlugin,
             MainInputLayoutId = node.MainInputLayoutId,
@@ -9489,7 +9500,11 @@ private void RefreshEndpointButtonSelection()
                 FontWeight = FontWeights.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-            stack.Children.Add(new TextBlock
+            if (node.IsPathSwitch && !node.MissingPlugin)
+            {
+                stack.Children.Add(BuildPathSwitchToggle(node));
+            }
+            else stack.Children.Add(new TextBlock
             {
                 Text = NodePinSummaryForCanvas(node),
                 Style = (Style)FindResource("MutedText"),
@@ -9527,6 +9542,13 @@ private void RefreshEndpointButtonSelection()
             missingRemove.Foreground = (Brush)FindResource("DangerBrush");
             menu.Items.Add(missingRemove);
             return menu;
+        }
+
+        if (node.IsPathSwitch)
+        {
+            var other = node.SwitchPath == "B" ? "A" : "B";
+            menu.Items.Add(CreateNodeMenuItem($"Switch To Path {other}", () => SetPathSwitch(node, other)));
+            menu.Items.Add(new Separator());
         }
 
         menu.Items.Add(CreateNodeMenuItem("Open Editor", () => OpenPluginEditorWithSavedData(node)));
@@ -9916,6 +9938,8 @@ private void RefreshEndpointButtonSelection()
             copy.Enabled = member.Enabled;
             copy.Bypassed = member.Bypassed;
             copy.PinsCollapsed = member.PinsCollapsed;
+            copy.SwitchPath = member.SwitchPath;
+            ApplyPathSwitchToEngine(copy);
             if (!copy.Enabled)
             {
                 _engine.SetPluginNodePowered(copy.Slot, false);
@@ -10286,6 +10310,7 @@ private void RefreshEndpointButtonSelection()
         node.Enabled = wasEnabled;
         node.Bypassed = wasBypassed;
         node.Sandboxed = replacement.Sandboxed;
+        ApplyPathSwitchToEngine(node);
         if (hadPendingSavedDataApply && HasSavedPluginData(node))
         {
             _pluginNodesPendingSavedDataApply.Add(node.Slot);
@@ -10754,6 +10779,18 @@ private void RefreshEndpointButtonSelection()
 
     private static string NodeOutputPinLabel(PluginNodeSnapshot node, int pin)
     {
+        if (node.IsPathSwitch)
+        {
+            return pin switch
+            {
+                0 => "AL",
+                1 => "AR",
+                2 => "BL",
+                3 => "BR",
+                _ => $"{pin + 1}"
+            };
+        }
+
         return NodeStereoOrNumberLabel(pin, node.OutputPins, node.OutputLayoutId);
     }
 

@@ -77,6 +77,12 @@ Reload one VST while preserving its state, stable VST ID, group membership, and 
 
     SendText("vban1", VFX.VST(0).Reload=1;);
 
+Select the active output of a built-in Path Switch node (A = AL/AR, B = BL/BR):
+
+    SendText("vban1", VFX.VST(0).Path=A;);
+    SendText("vban1", VFX.VST(0).Path=B;);
+    SendText("vban1", VFX.VST(0).Path=Toggle;);
+
 ## Exposed VST Parameter Commands
 
 Right-click a loaded VST and choose **Info** to see friendly VBAN-TEXT commands followed by every host-automatable parameter exposed by that exact VST instance. The window inserts the stable VST ID, parameter index, name, current value, and unit. Friendly controls that the VST does not expose are omitted.

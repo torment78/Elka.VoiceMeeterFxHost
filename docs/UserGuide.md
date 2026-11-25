@@ -121,6 +121,32 @@ source -> noise reduction -> EQ -> compressor -> destination
 Cables remain attached while nodes and groups move. Select a cable and press
 `Delete`, or right-click a connected pin and use **Disconnect Cable**.
 
+## Path Switch
+
+**Path Switch** is a built-in node that sends one stereo input to either path
+**A** or path **B**. Use it to flip between two processing chains with one
+click instead of rewiring.
+
+1. Right-click empty canvas space and choose **Add Path Switch**, or pick
+   **Path Switch** from the plugin list.
+2. Connect the source `L`/`R` to the switch inputs.
+3. Connect `AL`/`AR` to the first chain and `BL`/`BR` to the second chain.
+4. Connect the end of both chains to the same destination.
+
+```text
+                 +-- A --> EQ -> compressor -> reverb --+
+source -> Switch |                                       +--> destination
+                 +-- B --> EQ (different settings) -----+
+```
+
+Click **A** or **B** on the node, or right-click it and choose
+**Switch To Path A/B**. The change uses a 10 ms crossfade to avoid clicks. The
+inactive chain receives silence, so a reverb tail fades out naturally. The
+selected path is saved with the layout and can be changed from VoiceMeeter with
+`VFX.VST(n).Path=Toggle` (see [VFX Text Commands](../VFX_COMMANDS.md)).
+
+Bypass on a Path Switch passes the input straight to path A.
+
 ## Endpoint Pins And Colors
 
 Right-click an endpoint card for:
